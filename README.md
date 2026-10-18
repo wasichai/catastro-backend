@@ -104,6 +104,23 @@ líneas `#` que citan su fuente; las filas van tal como en la fuente. Las rutas 
 `.....` o `*` devuelve nulo, nunca cero. Los códigos de clase `090000`, `100000` y `100400` de `usos_predio` no tienen
 tabla (son agrupadores sin uso concreto).
 
+## Motor de valorización
+
+`catastro.valuacion.Valorizacion.valorizar(insumos, tablas)` es una función pura (sin base ni reloj) que devuelve el
+autoavalúo de un predio en un año, o el motivo por el que no lo tiene:
+
+- terreno = área de terreno × arancel por m²;
+- construcción, por piso: VU = muros y columnas + techos + puertas y ventanas (D4), +5 % si el predio es edificio y el
+  piso es el 5.° o más (único, antes de depreciar; un sótano `S1` no sube), × (1 − depreciación) × área construida;
+- obras: VU de la partida × cantidad × factor de oficialización × (1 − depreciación), con la tabla del uso del predio y
+  el material, estado y antigüedad de la obra (si la obra no dice material, el de su partida);
+- autoavalúo = (terreno + construcción + obras) × (1 + % de actualización). Cada cifra con 2 decimales, HALF_UP.
+
+Un dato que falta no es cero: el predio sale sin valor, con un `motivo` para leer y una `llave` para contar (por
+ejemplo `ARANCEL_FALTANTE`, `VU_SIN_VALOR:TECHOS:I`, `TABLA_DE_DEPRECIACION:990000`,
+`PARAMETRO_FALTANTE:FACTOR_OFICIALIZACION:2025`). Gana el primero, en el orden del motor de kamayuk: terreno, arancel,
+parámetros del año, casillas del cuadro de cada piso, tabla de depreciación del uso, depreciación y obras.
+
 ## Decisiones normativas por confirmar
 
 Valores por defecto adoptados hasta que la municipalidad los confirme. Todas están por confirmar.
