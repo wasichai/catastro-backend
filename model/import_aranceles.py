@@ -136,11 +136,13 @@ def main(argv=None):
         print(str(e), file=sys.stderr)
         return 2
     try:
-        frentes, problems = frentes_from(read_table(args.frentes), mapping)
-        aranceles, empty, found = aranceles_from(read_table(args.valores), mapping, frentes, args.anio)
+        frentes_rows = read_table(args.frentes)
+        valores_rows = read_table(args.valores)
     except INPUT_ERRORS as e:
         print(f"input: {e}", file=sys.stderr)
         return 2
+    frentes, problems = frentes_from(frentes_rows, mapping)
+    aranceles, empty, found = aranceles_from(valores_rows, mapping, frentes, args.anio)
     problems += found
     print(f"frentes: {len(frentes)}\naranceles: {len(aranceles)}\nsin valor: {empty}")
     if problems:

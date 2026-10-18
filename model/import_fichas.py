@@ -18,9 +18,9 @@ Default columns follow the MEF carga masiva contract (kamayuk ContratoDeImportac
 --map, --map-pisos and --map-obras field=column override those defaults (repeatable). material and
 estado_conservacion take the model's options in any case, with _ for a space (MUY_BUENO).
 
-Idempotent by codigo_municipal: a predio Core already has is skipped. Its pisos and obras are created with a new predio,
-or for an existing predio that has none (so a run that failed half way is repaired by running again); a predio that
-has any is never touched. Exit: 0 ok, 1 Core refused something, 2 the files do not fit the model (every bad row is listed, nothing
+Idempotent by codigo_municipal: a predio Core already has is skipped. Pisos and obras are idempotent by their own key,
+(predio, piso) and (predio, codigo_vu, anio_construccion): only the ones Core lacks are created, so a run that failed
+half way is completed by running again. A key repeated in the file is an error. Exit: 0 ok, 1 Core refused something, 2 the files do not fit the model (every bad row is listed, nothing
 is sent).
 
 Run: python3 import_fichas.py --fichas fichas.csv --pisos pisos.csv [--obras obras.csv] [--dry-run]
@@ -177,7 +177,7 @@ def obras_from(rows, mapping, enums, codigos):
     problems = missing_columns(rows, mapping, ["codigo_municipal", "codigo_vu"])
     if problems:
         return [], problems
-    obras = []
+    obras, seen = [], {}
     for row in rows:
         where, found = _where(row), []
         codigo = code_text(column_for(row, mapping, "codigo_municipal"))
@@ -188,6 +188,10 @@ def obras_from(rows, mapping, enums, codigos):
         if codigo not in codigos:
             found.append("codigo_municipal is not in the fichas")
         attributes = {"codigo_vu": codigo_vu, **_material_estado(row, mapping, enums, found)}
+        key = obra_key(codigo, attributes)
+        if key in seen:
+            found.append(f"obra {codigo_vu} of {attributes['anio_construccion']} repeated, first at row {seen[key]}")
+        seen.setdefault(key, row["_fila"])
         attributes["cantidad"], error = parse_decimal(column_for(row, mapping, "cantidad"))
         if error:
             found.append(f"cantidad {error}")
@@ -196,21 +200,35 @@ def obras_from(rows, mapping, enums, codigos):
     return obras, problems
 
 
+def relation_id(value):
+    """The id a RELATION reads back as. srtm's importers compare str(attributes["predio"]) with an id, so Core lists a
+    bare id; an object with an id is accepted too, in case a version embeds it."""
+    if isinstance(value, dict):
+        value = value.get("id")
+    return None if value is None else str(value)
+
+
+def piso_key(predio_id, a):
+    return predio_id, str(a["piso"])
+
+
+def obra_key(predio_id, a):
+    return predio_id, str(a["codigo_vu"]), str(a.get("anio_construccion"))
+
+
 def load(client, fichas, pisos, obras, workers):
-    """Creates the predios Core lacks, then the pisos and obras of the new predios and of the existing ones that have
-    none (a run that failed half way is repaired by running again). A predio that has any child is never touched.
-    Returns (created, skipped, construcciones, obras)."""
+    """Creates the predios Core lacks, then every piso and obra Core lacks, by natural key: a piso is (predio, piso), an
+    obra (predio, codigo_vu, anio_construccion). A run that failed half way is completed by running again, and a child
+    Core has is never touched or duplicated. Returns (created, skipped, construcciones, obras)."""
     existing = {r["attributes"]["codigo_municipal"]: r["id"] for r in client.list_all("predio_catastral")}
-    with_children = {r["attributes"].get("predio") for name in ("construccion", "obra_complementaria")
-                     for r in client.list_all(name)}
     todo = [(a["codigo_municipal"], fila, a) for fila, a in fichas if a["codigo_municipal"] not in existing]
-    ids = post_all(client, "predio_catastral", todo, workers)
-    # predio ids that take children: the new ones, and the existing ones still without any
-    open_ids = {**{c: i for c, i in existing.items() if i not in with_children}, **ids}
+    ids = {**existing, **post_all(client, "predio_catastral", todo, workers)}
     created = {}
-    for object_name, children in (("construccion", pisos), ("obra_complementaria", obras)):
-        items = [((i, codigo), fila, {**a, "predio": open_ids[codigo]}) for i, (fila, codigo, a) in enumerate(children)
-                 if codigo in open_ids]
+    for object_name, children, key in (("construccion", pisos, piso_key), ("obra_complementaria", obras, obra_key)):
+        have = {(relation_id(r["attributes"].get("predio")), *key(None, r["attributes"])[1:])
+                for r in client.list_all(object_name)}
+        items = [((i, codigo), fila, {**a, "predio": ids[codigo]}) for i, (fila, codigo, a) in enumerate(children)
+                 if codigo in ids and key(ids[codigo], a) not in have]
         post_all(client, object_name, items, workers)
         created[object_name] = len(items)
     return len(todo), len(fichas) - len(todo), created["construccion"], created["obra_complementaria"]
@@ -244,17 +262,17 @@ def main(argv=None):
         return 2
     try:
         enums = load_enums(args.model)
-        fichas, problems = fichas_from(read_table(args.fichas, args.sheet), ficha_map)
-        codigos = {a["codigo_municipal"] for _, a in fichas}
-        pisos, found = pisos_from(read_table(args.pisos, args.sheet), piso_map, enums, codigos)
-        problems += found
-        obras = []
-        if args.obras:
-            obras, found = obras_from(read_table(args.obras, args.sheet), obra_map, enums, codigos)
-            problems += found
+        ficha_rows = read_table(args.fichas, args.sheet)
+        piso_rows = read_table(args.pisos, args.sheet)
+        obra_rows = read_table(args.obras, args.sheet) if args.obras else []
     except INPUT_ERRORS as e:
         print(f"input: {e}", file=sys.stderr)
         return 2
+    fichas, problems = fichas_from(ficha_rows, ficha_map)
+    codigos = {a["codigo_municipal"] for _, a in fichas}
+    pisos, found = pisos_from(piso_rows, piso_map, enums, codigos)
+    obras, more = obras_from(obra_rows, obra_map, enums, codigos)
+    problems += found + more
     print(f"fichas: {len(fichas)}\npisos: {len(pisos)}\nobras: {len(obras)}")
     if problems:
         report_problems(problems)

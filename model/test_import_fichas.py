@@ -133,31 +133,59 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("done: 1 created, 1 skipped (3 construcciones, 0 obras)", out)
 
-    def test_a_failed_first_run_is_repaired_by_the_second(self):
-        # the pisos are refused after the predios were created
-        self.core.fail_on_record = "construccion"
+    def test_a_failing_obras_step_is_completed_by_the_second_run(self):
+        self.core.fail_on_record = "obra_complementaria"
         code, _, _ = self.cli("--obras", self.obras)
         self.assertEqual(code, 1)
         self.assertEqual(len(self.core.records["predio_catastral"]), 2)
-        self.assertNotIn("construccion", self.core.records)
+        self.assertEqual(len(self.core.records["construccion"]), 3)
         self.core.fail_on_record = None
         code, out, err = self.cli("--obras", self.obras)
         self.assertEqual(code, 0, err)
-        self.assertIn("done: 0 created, 2 skipped (3 construcciones, 1 obras)", out)
+        self.assertIn("done: 0 created, 2 skipped (0 construcciones, 1 obras)", out)
         self.assertEqual(len(self.core.records["construccion"]), 3)
         self.assertEqual(len(self.core.records["obra_complementaria"]), 1)
-        # a third run finds children everywhere and creates nothing
+        code, out, _ = self.cli("--obras", self.obras)
+        self.assertIn("(0 construcciones, 0 obras)", out)
+        self.assertEqual(len(self.core.records["obra_complementaria"]), 1)
+
+    def test_a_pisos_step_failing_half_way_is_completed_by_the_second_run(self):
+        self.core.fail_record_after = {"construccion": 1}
+        code, _, _ = self.cli("--obras", self.obras)
+        self.assertEqual(code, 1)
+        self.assertEqual(len(self.core.records["construccion"]), 1)
+        self.core.fail_record_after = {}
+        code, out, err = self.cli("--obras", self.obras)
+        self.assertEqual(code, 0, err)
+        self.assertIn("(2 construcciones, 1 obras)", out)
+        keys = [(r["attributes"]["predio"], r["attributes"]["piso"]) for r in self.core.records["construccion"]]
+        self.assertEqual(len(keys), 3)
+        self.assertEqual(len(set(keys)), 3)  # no duplicates
         code, out, _ = self.cli("--obras", self.obras)
         self.assertIn("(0 construcciones, 0 obras)", out)
         self.assertEqual(len(self.core.records["construccion"]), 3)
 
-    def test_a_predio_with_children_is_never_touched(self):
+    def test_only_the_missing_children_of_an_existing_predio_are_created(self):
         first = self.core.add_record("predio_catastral", {"codigo_municipal": "120302-0001"})
         self.core.add_record("construccion", {"piso": "1", "predio": first["id"]})
         code, out, err = self.cli()
         self.assertEqual(code, 0, err)
-        self.assertIn("done: 1 created, 1 skipped (1 construcciones, 0 obras)", out)
-        self.assertEqual(len(self.core.records["construccion"]), 2)
+        self.assertIn("done: 1 created, 1 skipped (2 construcciones, 0 obras)", out)  # piso 2 here, piso 1 of the new one
+        self.assertEqual(len(self.core.records["construccion"]), 3)
+
+    def test_a_relation_read_back_as_an_object_still_matches(self):
+        first = self.core.add_record("predio_catastral", {"codigo_municipal": "120302-0001"})
+        self.core.add_record("construccion", {"piso": "1", "predio": {"id": first["id"]}})
+        code, out, _ = self.cli()
+        self.assertIn("(2 construcciones, 0 obras)", out)
+
+    def test_a_repeated_obra_key_is_a_problem(self):
+        dup = write_csv(self, OBRAS + OBRAS.split("\n", 1)[1])
+        code, _, err = run(imf.main, ["--fichas", self.fichas, "--pisos", self.pisos, "--obras", dup,
+                                      "--core", self.core.base_url])
+        self.assertEqual(code, 2)
+        self.assertIn("repeated", err)
+        self.assertEqual(self.core.requests, [])
 
     def test_every_problem_is_listed(self):
         rows = "".join(f"A{n},1,x\n" for n in range(60))

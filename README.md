@@ -57,8 +57,9 @@ nada; un rechazo del Core sale con 1. Son idempotentes: correrlos dos veces no c
 del MEF (`cod_pre`, `cod_cpu`, `cod_sect`, `cod_mzn`, `cod_lote`, `id_aranc`, `area_terreno`, `longitud_frente`...);
 `--map`, `--map-pisos` y `--map-obras` `campo=columna` las cambian. Las siete categorías van en una columna
 `categorias` (`CCDCCDC`: muros y columnas, techos, pisos, puertas y ventanas, revestimientos, baños, instalaciones) o en
-siete columnas con el nombre del campo. Un predio que el Core ya tiene se salta, y sus pisos y obras solo se crean con
-un predio nuevo.
+siete columnas con el nombre del campo. Un predio que el Core ya tiene se salta; los pisos (llave predio y piso) y las obras
+(llave predio, `codigo_vu` y año de construcción) se crean solo si faltan, así que una carga que falló a medias se
+completa volviendo a correrla. Una llave repetida en el archivo es un error.
 
 ```sh
 python3 import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.csv --dry-run

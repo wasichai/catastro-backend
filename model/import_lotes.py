@@ -117,10 +117,10 @@ def main(argv=None):
     try:
         with open(args.geojson, encoding="utf-8") as f:
             collection = json.load(f)
-        lotes, problems = lotes_from(collection, mapping)
     except INPUT_ERRORS as e:
         print(f"input: {e}", file=sys.stderr)
         return 2
+    lotes, problems = lotes_from(collection, mapping)
     print(f"lotes: {len(lotes)}")
     if problems:
         report_problems(problems)
