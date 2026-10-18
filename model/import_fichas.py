@@ -18,8 +18,9 @@ Default columns follow the MEF carga masiva contract (kamayuk ContratoDeImportac
 --map, --map-pisos and --map-obras field=column override those defaults (repeatable). material and
 estado_conservacion take the model's options in any case, with _ for a space (MUY_BUENO).
 
-Idempotent by codigo_municipal: a predio Core already has is skipped, and its pisos and obras are only created with a
-new predio. Exit: 0 ok, 1 Core refused something, 2 the files do not fit the model (every bad row is listed, nothing
+Idempotent by codigo_municipal: a predio Core already has is skipped. Its pisos and obras are created with a new predio,
+or for an existing predio that has none (so a run that failed half way is repaired by running again); a predio that
+has any is never touched. Exit: 0 ok, 1 Core refused something, 2 the files do not fit the model (every bad row is listed, nothing
 is sent).
 
 Run: python3 import_fichas.py --fichas fichas.csv --pisos pisos.csv [--obras obras.csv] [--dry-run]
@@ -30,7 +31,7 @@ import re
 import sys
 
 from core_client import Client, CoreError
-from tabular import (HERE, LoadError, clean_text, code_text, column_for, enum_option, load_enums, missing_columns, parse_decimal,
+from tabular import (HERE, INPUT_ERRORS, LoadError, clean_text, code_text, column_for, enum_option, load_enums, missing_columns, parse_decimal,
                      parse_int, parse_map, post_all, read_table, report_problems)
 
 CATEGORIAS = ["muros_columnas", "techos", "pisos", "puertas_ventanas", "revestimientos", "banos", "instalaciones"]
@@ -196,17 +197,23 @@ def obras_from(rows, mapping, enums, codigos):
 
 
 def load(client, fichas, pisos, obras, workers):
-    """Creates the predios Core lacks, then their pisos and obras. Returns (created, skipped, construcciones, obras)."""
-    existing = {r["attributes"]["codigo_municipal"] for r in client.list_all("predio_catastral")}
+    """Creates the predios Core lacks, then the pisos and obras of the new predios and of the existing ones that have
+    none (a run that failed half way is repaired by running again). A predio that has any child is never touched.
+    Returns (created, skipped, construcciones, obras)."""
+    existing = {r["attributes"]["codigo_municipal"]: r["id"] for r in client.list_all("predio_catastral")}
+    with_children = {r["attributes"].get("predio") for name in ("construccion", "obra_complementaria")
+                     for r in client.list_all(name)}
     todo = [(a["codigo_municipal"], fila, a) for fila, a in fichas if a["codigo_municipal"] not in existing]
     ids = post_all(client, "predio_catastral", todo, workers)
+    # predio ids that take children: the new ones, and the existing ones still without any
+    open_ids = {**{c: i for c, i in existing.items() if i not in with_children}, **ids}
+    created = {}
     for object_name, children in (("construccion", pisos), ("obra_complementaria", obras)):
-        items = [((i, codigo), fila, {**a, "predio": ids[codigo]}) for i, (fila, codigo, a) in enumerate(children)
-                 if codigo in ids]
+        items = [((i, codigo), fila, {**a, "predio": open_ids[codigo]}) for i, (fila, codigo, a) in enumerate(children)
+                 if codigo in open_ids]
         post_all(client, object_name, items, workers)
-    new_pisos = sum(1 for _, codigo, _ in pisos if codigo in ids)
-    new_obras = sum(1 for _, codigo, _ in obras if codigo in ids)
-    return len(todo), len(fichas) - len(todo), new_pisos, new_obras
+        created[object_name] = len(items)
+    return len(todo), len(fichas) - len(todo), created["construccion"], created["obra_complementaria"]
 
 
 def _parse_args(argv):
@@ -235,15 +242,19 @@ def main(argv=None):
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
-    enums = load_enums(args.model)
-    fichas, problems = fichas_from(read_table(args.fichas, args.sheet), ficha_map)
-    codigos = {a["codigo_municipal"] for _, a in fichas}
-    pisos, found = pisos_from(read_table(args.pisos, args.sheet), piso_map, enums, codigos)
-    problems += found
-    obras = []
-    if args.obras:
-        obras, found = obras_from(read_table(args.obras, args.sheet), obra_map, enums, codigos)
+    try:
+        enums = load_enums(args.model)
+        fichas, problems = fichas_from(read_table(args.fichas, args.sheet), ficha_map)
+        codigos = {a["codigo_municipal"] for _, a in fichas}
+        pisos, found = pisos_from(read_table(args.pisos, args.sheet), piso_map, enums, codigos)
         problems += found
+        obras = []
+        if args.obras:
+            obras, found = obras_from(read_table(args.obras, args.sheet), obra_map, enums, codigos)
+            problems += found
+    except INPUT_ERRORS as e:
+        print(f"input: {e}", file=sys.stderr)
+        return 2
     print(f"fichas: {len(fichas)}\npisos: {len(pisos)}\nobras: {len(obras)}")
     if problems:
         report_problems(problems)

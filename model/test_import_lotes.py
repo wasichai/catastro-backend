@@ -86,6 +86,14 @@ class LoadTests(unittest.TestCase):
         self.assertIn("nothing was sent", err)
         self.assertEqual(self.core.requests, [])
 
+    def test_invalid_json_and_missing_file_exit_2(self):
+        path = write_csv(self, "{not json", ".geojson")
+        for geojson in (path, "/nonexistent/lotes.geojson"):
+            code, _, err = run(il.main, ["--geojson", geojson, "--core", self.core.base_url])
+            self.assertEqual(code, 2)
+            self.assertIn("input:", err)
+        self.assertEqual(self.core.requests, [])
+
     def test_core_refusal_exits_1(self):
         self.core.fail_on_update = "predio_catastral"
         code, _, err = self.cli({"features": [feature({"codigo_municipal": "A"})]})

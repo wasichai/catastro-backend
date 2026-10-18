@@ -19,7 +19,7 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 from core_client import Client, CoreError
-from tabular import LoadError, code_text, parse_map, payload, report_problems
+from tabular import INPUT_ERRORS, LoadError, code_text, parse_map, payload, report_problems
 
 PROPERTIES = {"codigo_municipal": "codigo_municipal", "codigo_cpu": "codigo_cpu"}
 GEOMETRY = "lote_geom"
@@ -114,9 +114,13 @@ def main(argv=None):
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
-    with open(args.geojson, encoding="utf-8") as f:
-        collection = json.load(f)
-    lotes, problems = lotes_from(collection, mapping)
+    try:
+        with open(args.geojson, encoding="utf-8") as f:
+            collection = json.load(f)
+        lotes, problems = lotes_from(collection, mapping)
+    except INPUT_ERRORS as e:
+        print(f"input: {e}", file=sys.stderr)
+        return 2
     print(f"lotes: {len(lotes)}")
     if problems:
         report_problems(problems)

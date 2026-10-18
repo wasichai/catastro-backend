@@ -16,6 +16,8 @@ from core_client import CoreError
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PROGRESS_EVERY = 500
+# what a missing or unreadable input raises: reported with exit 2, not as a traceback
+INPUT_ERRORS = (OSError, ValueError, KeyError, zipfile.BadZipFile, ET.ParseError, UnicodeDecodeError)
 
 XLSX_MAIN = "{http://schemas.openxmlformats.org/spreadsheetml/2006/main}"
 XLSX_REL = "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
@@ -222,6 +224,6 @@ def post_all(client, object_name, items, workers):
 
 
 def report_problems(problems):
-    for problem in problems[:50]:
+    for problem in problems:
         print(f"problem: {problem}", file=sys.stderr)
     print(f"{len(problems)} problems: nothing was sent to Core", file=sys.stderr)

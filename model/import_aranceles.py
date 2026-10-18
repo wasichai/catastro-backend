@@ -23,7 +23,7 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 
 from core_client import Client, CoreError
-from tabular import (LoadError, code_text, column_for, missing_columns, parse_decimal, parse_int, parse_map, payload, post_all,
+from tabular import (INPUT_ERRORS, LoadError, code_text, column_for, missing_columns, parse_decimal, parse_int, parse_map, payload, post_all,
                      read_table, report_problems)
 
 COLUMNS = {
@@ -135,8 +135,12 @@ def main(argv=None):
     except ValueError as e:
         print(str(e), file=sys.stderr)
         return 2
-    frentes, problems = frentes_from(read_table(args.frentes), mapping)
-    aranceles, empty, found = aranceles_from(read_table(args.valores), mapping, frentes, args.anio)
+    try:
+        frentes, problems = frentes_from(read_table(args.frentes), mapping)
+        aranceles, empty, found = aranceles_from(read_table(args.valores), mapping, frentes, args.anio)
+    except INPUT_ERRORS as e:
+        print(f"input: {e}", file=sys.stderr)
+        return 2
     problems += found
     print(f"frentes: {len(frentes)}\naranceles: {len(aranceles)}\nsin valor: {empty}")
     if problems:

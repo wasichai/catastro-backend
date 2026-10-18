@@ -83,6 +83,13 @@ class LoadTests(unittest.TestCase):
         self.assertIn("nothing was sent to Core", err)
         self.assertEqual(self.core.requests, [])
 
+    def test_missing_file_exits_2(self):
+        self.frentes = "/nonexistent/frentes.csv"
+        code, _, err = self.cli()
+        self.assertEqual(code, 2)
+        self.assertIn("input:", err)
+        self.assertEqual(self.core.requests, [])
+
     def test_core_refusal_exits_1(self):
         self.core.fail_on_record = "arancel"
         code, _, err = self.cli()
