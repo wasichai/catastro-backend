@@ -32,6 +32,57 @@ Una instalación real define `WASICHAI_JWT_SECRET` (>= 32 bytes), desactiva el s
 yarn install && yarn format:check
 ```
 
+## Modelo y carga
+
+El modelo (`model/model.json`) y los cargadores son Python solo con la biblioteca estándar, con la forma de los de
+srtm-backend. Cuatro objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
+`construccion` y `obra_complementaria` (cuelgan de un predio) y `arancel`. wasichai no tiene únicos compuestos, así que
+`arancel.clave` (`id_aranc|anio`) garantiza el par único. `codigo_vu` de una obra es `TIPO DE OBRA|número`, como
+`obra_categoria` de srtm (`model/data/obras_complementarias.csv`).
+
+```sh
+cd model
+python3 apply.py --validate-only          # valida el modelo, sin red
+python3 apply.py --diff                   # lo pendiente contra el Core (http://localhost:8091), sin escribir
+python3 apply.py                          # crea el modelo
+python3 -m unittest -v                    # pruebas contra fake_core
+```
+
+Todos los cargadores aceptan `--core`, `--email`, `--password` (o `WASICHAI_CORE`, `WASICHAI_EMAIL`,
+`WASICHAI_PASSWORD`) y `--dry-run`. Si algo no encaja en el modelo salen con código 2, listan cada fila mala y no envían
+nada; un rechazo del Core sale con 1. Son idempotentes: correrlos dos veces no cambia nada.
+
+**Fichas** (`import_fichas.py`): `--fichas` (un predio por fila), `--pisos` (un piso por fila, ligado por
+`codigo_municipal`) y `--obras` (opcional), en csv o xlsx. Las columnas por defecto salen del contrato de carga masiva
+del MEF (`cod_pre`, `cod_cpu`, `cod_sect`, `cod_mzn`, `cod_lote`, `id_aranc`, `area_terreno`, `longitud_frente`...);
+`--map`, `--map-pisos` y `--map-obras` `campo=columna` las cambian. Las siete categorías van en una columna
+`categorias` (`CCDCCDC`: muros y columnas, techos, pisos, puertas y ventanas, revestimientos, baños, instalaciones) o en
+siete columnas con el nombre del campo. Un predio que el Core ya tiene se salta, y sus pisos y obras solo se crean con
+un predio nuevo.
+
+```sh
+python3 import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.csv --dry-run
+```
+
+**Aranceles** (`import_aranceles.py`): dos csv sacados de la geodatabase (solo lectura) y unidos por `ID_ARANC`.
+`VAL_ACT` 0 se carga tal cual (el motor reporta un `motivo`); `VAL_ACT` vacío no tiene valor y se omite (el comando
+dice cuántos). `--anio` filtra un año (por defecto todos).
+
+```sh
+ogr2ogr -f CSV frentes.csv 120302_MD_Perene_ECF.gdb CF_ARANCEL_18 -select ID_ARANC,COD_VIA,CUADRA,LADO
+ogr2ogr -f CSV valores.csv 120302_MD_Perene_ECF.gdb TB_VALORACION_HIST -select ID_ARANC,ANO_EJEC,VAL_ACT
+python3 import_aranceles.py --frentes frentes.csv --valores valores.csv --anio 2026 --dry-run
+```
+
+**Lotes** (`import_lotes.py`): polígonos de un GeoJSON en EPSG:4326 hacia `predio_catastral.lote_geom`. Solo actualiza
+los predios que ya existen (por `codigo_municipal`, y si el lote no lo trae, por `codigo_cpu`); `--map` indica la
+propiedad. `CF_LOTES_POL_18` no trae esos códigos: hay que cruzarlos antes.
+
+```sh
+ogr2ogr -f GeoJSON -t_srs EPSG:4326 lotes.geojson 120302_MD_Perene_ECF.gdb CF_LOTES_POL_18
+python3 import_lotes.py --geojson lotes.geojson --map codigo_municipal=COD_PRE --dry-run
+```
+
 ## Decisiones normativas por confirmar
 
 Valores por defecto adoptados hasta que la municipalidad los confirme. Todas están por confirmar.
