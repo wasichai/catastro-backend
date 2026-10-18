@@ -110,7 +110,7 @@ Valores por defecto adoptados hasta que la municipalidad los confirme. Todas est
 
 - **D1** uso a tabla de depreciación, por prefijo del código de `usos_predio` de srtm: residencial a 01, comercio y
   depósitos a 02, oficinas a 03, salud, educación, industria y talleres a 04. CSV editable.
-- **D2** material: CONCRETO a Concreto, LADRILLO a Ladrillo, todo lo demás a la columna Adobe/Liviano.
+- **D2** material: CONCRETO a Concreto, LADRILLO a Ladrillo, todo lo demás a la columna `Liviano/Adobe`.
 - **D3** estado MUY MALO se trata como Malo; las celdas `*` (ausentes en `depreciacion.csv`) toman el último
   porcentaje publicado de su fila.
 - **D4** se suman las 3 partidas de Selva (muros y columnas, techos, puertas y ventanas).

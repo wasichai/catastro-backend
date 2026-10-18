@@ -44,6 +44,30 @@ class TablasTest {
     }
 
     @Test
+    fun `valores unitarios - el cuadro entero de la selva`() {
+        // N/valores-unitarios-2026.md:266-275, anexo I.4 fila por fila: muros y columnas | techos | puertas y ventanas.
+        // "-" is a "....." cell
+        val cuadro =
+            """
+            A 995.50 509.83 421.72
+            B 679.21 360.15 334.51
+            C 489.75 265.25 248.79
+            D 378.67 231.25 166.76
+            E 300.68 168.37 108.28
+            F 237.10 77.41 88.32
+            G 205.37 60.91 52.11
+            H 102.68 0.00 26.06
+            I 41.08 - 0.00
+            J 16.43 - -
+            """.trimIndent()
+        val cargado =
+            tablas.categorias.joinToString("\n") { categoria ->
+                (listOf(categoria) + Partida.entries.map { tablas.valorUnitario(it, categoria)?.toPlainString() ?: "-" }).joinToString(" ")
+            }
+        assertEquals(cuadro, cargado)
+    }
+
+    @Test
     fun `valores unitarios - los puntos no tienen valor, el 0_00 es cero`() {
         // N/valores-unitarios-2026.md:273-275: H techos 0.00, I techos ....., I puertas 0.00, J techos y puertas .....
         assertEquals(0, tablas.valorUnitario(Partida.TECHOS, "H")!!.compareTo(BigDecimal.ZERO))
@@ -158,6 +182,24 @@ class TablasTest {
         assertEquals(bd("5"), tablas.parametro(ClaveParametro.INCREMENTO_PISO_DESDE, 2026))
         assertEquals(bd("5"), tablas.parametro(ClaveParametro.INCREMENTO_PISO_PORCENTAJE, 2026))
         assertNull(tablas.parametro(ClaveParametro.FACTOR_OFICIALIZACION, 2025))
+    }
+
+    @Test
+    fun `cargar - un archivo con fin de línea crlf se lee igual`() {
+        val vu = "# fuente\r\npartida,categoria,valor_m2,fuente\r\nMUROS_COLUMNAS,A,1,x\r\nTECHOS,A,2,x\r\nPUERTAS_VENTANAS,A,,x\r\n"
+        // porcentaje and descripcion are last columns: with the '\r' kept their header names would not match
+        val depreciacion = "tabla,material,estado_conservacion,antiguedad_hasta,porcentaje\r\n01,Concreto,Bueno,5,3\r\n"
+        val tablas =
+            Tablas.cargar(
+                vu.reader(),
+                depreciacion.reader(),
+                "tipo_obra,numero,descripcion,unidad_medida,material,valor_unitario\r\n".reader(),
+                "prefijo,tabla,descripcion\r\n01,01,x\r\n".reader(),
+                "clave,anio,valor,fuente\r\n".reader()
+            )
+        assertEquals(bd("3"), tablas.depreciacion("01", "Concreto", "Bueno", 4))
+        assertEquals("x", tablas.usos.single().descripcion)
+        assertNull(tablas.valorUnitario(Partida.PUERTAS_VENTANAS, "A"))
     }
 
     @Test

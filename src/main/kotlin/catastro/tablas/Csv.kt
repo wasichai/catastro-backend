@@ -3,7 +3,9 @@ package catastro.tablas
 import java.io.Reader
 
 // the tablas' csv: leading '#' lines cite the source, then a header and rfc 4180 rows (quoted fields may hold commas;
-// no field spans lines). a hand parser keeps the loader free of a csv dependency for five small files
+// no field spans lines). a trailing '\r' is dropped so a file saved with crlf reads the same: readLine already splits
+// on crlf, the strip keeps that from being an accident of the reader. a hand parser keeps the loader free of a csv
+// dependency for five small files
 internal object Csv {
     fun leer(
         reader: Reader,
@@ -11,7 +13,11 @@ internal object Csv {
     ): List<Map<String, String>> {
         val lineas =
             reader.useLines { seq ->
-                seq.dropWhile { it.startsWith("#") }.filter { it.isNotEmpty() }.toList()
+                seq
+                    .map { it.removeSuffix("\r") }
+                    .dropWhile { it.startsWith("#") }
+                    .filter { it.isNotEmpty() }
+                    .toList()
             }
         require(lineas.isNotEmpty()) { "$nombre: sin cabecera" }
         val cabecera = campos(lineas.first(), nombre, 1)
