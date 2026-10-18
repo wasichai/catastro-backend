@@ -101,13 +101,17 @@ object Valorizacion {
         val terreno = area.multiply(arancel).redondeado()
 
         val unitarios = i.construcciones.map { valorUnitario(it, t) }
-        // lazy: only lo construido needs it, and only once every construction's cells are known to be there (java order)
-        val tabla by lazy {
-            i.uso?.let { t.tablaPorUso(it) } ?: falta(
-                "TABLA_DE_DEPRECIACION:${i.uso.orEmpty()}",
-                "No hay tabla de depreciación del RNT para el uso «${i.uso ?: "sin uso"}» (D1): sin ella lo construido no se deprecia"
-            )
-        }
+        // right after every construction's cells (java order) and before anything a piso or an obra declares. a bare lot
+        // needs no tabla: the empty one is never read
+        val tabla =
+            if (i.construcciones.isEmpty() && i.obras.isEmpty()) {
+                ""
+            } else {
+                i.uso?.let { t.tablaPorUso(it) } ?: falta(
+                    "TABLA_DE_DEPRECIACION:${i.uso.orEmpty()}",
+                    "No hay tabla de depreciación del RNT para el uso «${i.uso ?: "sin uso"}» (D1): sin ella lo construido no se deprecia"
+                )
+            }
 
         val construccion =
             i.construcciones
@@ -115,6 +119,7 @@ object Valorizacion {
                 .sumOf { (c, vu) ->
                     val donde = "la construcción del piso ${c.piso}"
                     val areaConstruida = c.areaConstruida ?: falta("AREA_CONSTRUIDA_FALTANTE", "$donde no declara área construida")
+                    if (areaConstruida.signum() < 0) falta("AREA_CONSTRUIDA_INVALIDA", "$donde declara un área construida negativa ($areaConstruida)")
                     val conIncremento = incremento?.takeIf { aplicaIncremento(c.piso, it.desde) }?.let { vu.multiply(it.factor) } ?: vu
                     val dep = depreciacion(t, tabla, c.material, c.estado, c.anioConstruccion, i.anio, donde)
                     conIncremento.multiply(dep).multiply(areaConstruida).redondeado()
@@ -127,6 +132,7 @@ object Valorizacion {
                 val partida =
                     t.obra(codigo) ?: falta("OBRA_DESCONOCIDA:$codigo", "El cuadro de obras complementarias de la selva no tiene la partida «$codigo»")
                 val cantidad = o.cantidad ?: falta("OBRA_CANTIDAD_FALTANTE", "$donde no declara cantidad")
+                if (cantidad.signum() < 0) falta("OBRA_CANTIDAD_INVALIDA", "$donde declara una cantidad negativa ($cantidad)")
                 // the partida itself names a material (a "muro de concreto"); the ficha's, when given, wins
                 val dep = depreciacion(t, tabla, o.material ?: partida.material, o.estado, o.anioConstruccion, i.anio, donde)
                 partida.valorUnitario
@@ -163,7 +169,7 @@ object Valorizacion {
         t: Tablas
     ): Incremento? {
         if (!i.esEdificio || i.construcciones.isEmpty()) return null
-        val desde = parametro(t, ClaveParametro.INCREMENTO_PISO_DESDE, i.anio).toInt()
+        val desde = parametro(t, ClaveParametro.INCREMENTO_PISO_DESDE, i.anio).intValueExact()
         val porcentaje = parametro(t, ClaveParametro.INCREMENTO_PISO_PORCENTAJE, i.anio)
         return Incremento(desde, BigDecimal.ONE + porcentaje.divide(CIEN))
     }
@@ -210,6 +216,7 @@ object Valorizacion {
         anio: Int,
         donde: String
     ): BigDecimal {
+        // fires only for obras: valorUnitario already asked every construcción for its year
         val construido = anioConstruccion ?: falta("ANIO_CONSTRUCCION_FALTANTE", "$donde no declara año de construcción")
         val antiguedad = anio - construido
         if (antiguedad < 0) falta("ANTIGUEDAD_NEGATIVA", "$donde declara el año $construido, posterior a $anio")

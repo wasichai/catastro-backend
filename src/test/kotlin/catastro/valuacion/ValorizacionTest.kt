@@ -206,6 +206,24 @@ class ValorizacionTest {
     }
 
     @Test
+    fun `la tabla del uso se revisa antes que lo que declara cada piso u obra`() {
+        // the documented order: cells, then the tabla, then área / material / estado / the obra's own data
+        assertEquals("TABLA_DE_DEPRECIACION:990000", sinValor(insumos(uso = "990000", construcciones = listOf(piso(area = null)))).llave)
+        assertEquals("TABLA_DE_DEPRECIACION:990000", sinValor(insumos(uso = "990000", construcciones = listOf(piso(estado = "PESIMO")))).llave)
+        val desconocida = Obra("CERCOS METALICOS|3", null, null, null, null)
+        assertEquals("TABLA_DE_DEPRECIACION:990000", sinValor(insumos(uso = "990000", obras = listOf(desconocida))).llave)
+    }
+
+    @Test
+    fun `un área construida o una cantidad negativa no se valoriza`() {
+        assertEquals("AREA_CONSTRUIDA_INVALIDA", sinValor(insumos(construcciones = listOf(piso(area = bd("-1"))))).llave)
+        val muro = Obra("MUROS PERIMETRICOS O CERCOS|1", bd("-30"), 2016, "CONCRETO", "BUENO")
+        assertEquals("OBRA_CANTIDAD_INVALIDA", sinValor(insumos(obras = listOf(muro))).llave)
+        // zero is a value: nothing built there
+        assertEquals(bd("9100.00"), valorizada(insumos(obras = listOf(muro.copy(cantidad = BigDecimal.ZERO)))).autoavaluo)
+    }
+
+    @Test
     fun `celda asterisco - toma el último porcentaje publicado de su fila`() {
         // ADOBE -> Liviano/Adobe (D2), MUY MALO -> Malo (D3). tabla 01 Liviano/Adobe Malo: 65 70 75 80 85 90 * * * * *
         // antigüedad 2026 - 1980 = 46 -> '*' -> last published = 90 %
