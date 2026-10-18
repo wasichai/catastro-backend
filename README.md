@@ -121,6 +121,73 @@ ejemplo `ARANCEL_FALTANTE`, `VU_SIN_VALOR:TECHOS:I`, `TABLA_DE_DEPRECIACION:9900
 `PARAMETRO_FALTANTE:FACTOR_OFICIALIZACION:2025`). Gana el primero, en el orden del motor de kamayuk: terreno, arancel,
 parámetros del año, casillas del cuadro de cada piso, tabla de depreciación del uso, depreciación y obras.
 
+## API para srtm
+
+srtm-backend lee las valuaciones de un año, página por página, con una cuenta de servicio de wasichai, para calcular la
+brecha de recaudación. Se valoriza al vuelo: no se guarda nada.
+
+```
+GET /api/catastro/valuaciones?anio=2026&page=0&size=200
+Authorization: Bearer <token de POST /api/auth/token>
+```
+
+- `anio` es obligatorio; `page` desde 0 (por defecto 0); `size` de 1 a 500 (por defecto 200). Un parámetro que falta,
+  sobra o se sale de rango es un **422** que lo nombra (`errors[0].field`).
+- Sin token, **401**. Lee como quien llama: sin `READ` sobre los cuatro objetos, **403** de core.
+- Los predios van ordenados por `codigo_municipal`, así que las páginas son estables. `total` es la cantidad de
+  predios que el llamador puede leer; se lee hasta que una página traiga menos de `size`.
+
+```json
+{
+  "anio": 2026,
+  "version": "valuacion-v1",
+  "page": 0,
+  "size": 200,
+  "total": 1,
+  "items": [
+    {
+      "codigoMunicipal": "0101001",
+      "codigoCpu": "12030200101001",
+      "sector": "01",
+      "manzana": "001",
+      "lote": "001",
+      "uso": "010101",
+      "areaTerreno": 200.0,
+      "areaConstruida": 100.0,
+      "longitudFrente": 10.5,
+      "terreno": 9100.0,
+      "construccion": 78781.6,
+      "obras": 8870.61,
+      "autoavaluo": 96752.21,
+      "motivo": null,
+      "llave": null,
+      "loteGeom": { "type": "Polygon", "coordinates": [[[-75.22, -10.95], [-75.2195, -10.95], [-75.2195, -10.9495], [-75.22, -10.9495], [-75.22, -10.95]]] }
+    }
+  ]
+}
+```
+
+Cada ítem trae siempre todas sus llaves. Sin valor, `terreno`, `construccion`, `obras` y `autoavaluo` son `null` y
+`motivo` (para leer) y `llave` (para agrupar) dicen por qué. `areaConstruida` es la suma de las áreas declaradas de los
+pisos (0 sin pisos). `loteGeom` es el polígono del lote como geometría GeoJSON en EPSG:4326 (se guarda en 32718), o
+`null`. El código del lote es `lote`, por eso la geometría se llama `loteGeom`. `version` cambia cuando cambia la
+aritmética del motor.
+
+**Puesta en marcha** (contra el Core del catastro, como admin):
+
+```sh
+cd model
+python3 apply_roles.py           # crea o sincroniza SRTM_LECTOR (model/roles.json): READ sobre los cuatro objetos
+python3 crear_cuenta_srtm.py     # crea la cuenta de servicio `srtm` con SRTM_LECTOR e imprime clientId y clientSecret
+```
+
+`crear_cuenta_srtm.py` imprime el `clientSecret` **una sola vez**: guárdalo en el entorno de srtm-backend como
+`SRTM_CATASTRO_CLIENT_ID` y `SRTM_CATASTRO_CLIENT_SECRET`. Es idempotente: si la cuenta ya existe solo le agrega el rol
+si le falta y dice su `clientId`; un secreto nuevo se pide con `POST /api/service-accounts/{id}/secret` (anula el
+anterior). srtm pide su token con `POST /api/auth/token {"clientId", "clientSecret"}` → `{"token", "expiresAt",
+"serviceAccount"}` y lo renueva al vencer. `apply_roles.py` deja el rol exactamente con los permisos de `roles.json`
+(un permiso dado a mano en el admin se pierde); los dos aceptan `--dry-run`, `--core`, `--email` y `--password`.
+
 ## Decisiones normativas por confirmar
 
 Valores por defecto adoptados hasta que la municipalidad los confirme. Todas están por confirmar.
