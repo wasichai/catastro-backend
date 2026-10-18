@@ -189,7 +189,7 @@
           "name": "codigo_vu",
           "label": "Código de valor unitario",
           "type": "TEXT",
-          "description": "La partida del cuadro: tipo de obra, barra y número, como en obra_categoria de srtm (model/data/obras_complementarias.csv), por ejemplo CERCOS METALICOS|3."
+          "description": "La partida del cuadro: tipo de obra, barra y número, como en obra_categoria de srtm (model/data/obras_complementarias.csv), por ejemplo CERCOS METALICOS|88."
         },
         {
           "name": "cantidad",

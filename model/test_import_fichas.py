@@ -24,7 +24,7 @@ PISOS = """cod_pre,piso,area_construida,anio_construccion,material,estado_conser
 120302-0002,1,50,2015,CONCRETO,REGULAR,AABAABA
 """
 OBRAS = """cod_pre,codigo_vu,cantidad,anio_construccion,material,estado_conservacion
-120302-0001,CERCOS METALICOS|3,42,1998,METAL,REGULAR
+120302-0001,CERCOS METALICOS|88,42,1998,METAL,REGULAR
 """
 
 
