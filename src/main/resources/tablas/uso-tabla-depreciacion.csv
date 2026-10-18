@@ -1,0 +1,30 @@
+# fuente: decisión D1 (por confirmar), sobre los códigos de srtm-backend/model/data/usos_predio.csv y los títulos de las tablas del Anexo I del Reglamento Nacional de Tasaciones: 01 casa habitación y departamentos; 02 tiendas, depósitos, centros de recreación y clubes sociales; 03 edificios y oficinas; 04 salud, cines, industrias, uso educativo y talleres
+# gana el prefijo más largo del código de uso. editable: cambiar una fila no toca el código
+prefijo,tabla,descripcion
+01,01,RESIDENCIAL: casa habitación y departamentos
+02,02,"COMERCIAL: almacén, depósito, tiendas y servicios"
+0204,03,OFICINA
+020507,04,SERVICIOS DE MECÁNICA AUTOMOTRIZ: taller
+020508,04,SERVICIOS DE MECÁNICA EN GENERAL Y ELECTRICIDAD: taller
+020509,04,SERVICIOS PARA APARATOS Y MUEBLES DE USO DOMÉSTICO: taller
+020510,04,SERVICIOS DE MECÁNICA FINA: taller
+03,04,INDUSTRIA
+04,02,RECREACIONAL: centros de recreación y clubes sociales
+040208,04,CINE
+05,04,EQUIPAMIENTO URBANO: salud y educación; el resto de la clase por confirmar
+0503,02,TRANSPORTE: terminales y depósitos
+0504,03,COMUNICACIÓN: oficinas
+0506,02,ALIMENTACIÓN: mercados (tiendas)
+06,03,INSTITUCIONAL: edificios y oficinas
+07,01,TERRENO: lo construido se trata como casa habitación (por confirmar)
+08,01,DESOCUPADO: lo construido se trata como casa habitación (por confirmar)
+0901,01,GARAGE RESIDENCIAL UNIFAMILIAR
+0902,01,GARAGE RESIDENCIAL MULTIFAMILIAR
+0903,02,GARAGE DE COMERCIO
+1001,01,BIENES COMUNES RESIDENCIALES
+1002,02,BIENES COMUNES COMERCIALES
+100203,03,BIENES COMUNES: OFICINA
+1003,04,BIENES COMUNES INDUSTRIALES
+100401,01,TERRENO COMÚN RESIDENCIAL
+100402,02,TERRENO COMÚN COMERCIAL
+100403,04,TERRENO COMÚN INDUSTRIAL

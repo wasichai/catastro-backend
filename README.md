@@ -84,6 +84,26 @@ ogr2ogr -f GeoJSON -t_srs EPSG:4326 lotes.geojson 120302_MD_Perene_ECF.gdb CF_LO
 python3 import_lotes.py --geojson lotes.geojson --map codigo_municipal=COD_PRE --dry-run
 ```
 
+## Tablas normativas
+
+Las tablas con que se valoriza viven en `src/main/resources/tablas/` y se cargan una vez al arrancar
+(`catastro.tablas.Tablas`, bean de `TablasConfig`); un archivo mal formado hace fallar el arranque. Cada archivo abre con
+líneas `#` que citan su fuente; las filas van tal como en la fuente. Las rutas de normativa son relativas a
+`normativa/docs/10-negocio/valores-normativos/`.
+
+| Archivo | Contenido | Fuente |
+|---|---|---|
+| `valores-unitarios-selva-2026.csv` | 30 celdas: 3 partidas × categorías A a J, en S/ por m² techado. `valor_m2` vacío es una celda `.....` (sin valor, no cero) | R.M. N.° 277-2025-VIVIENDA, Anexo I.4 Selva (`valores-unitarios-2026.md` §1.5.3) |
+| `depreciacion-rnt-2016.csv` | 492 filas de las tablas 01 a 04, copia exacta (sha256 verificado en las pruebas). Las 36 celdas `*` no tienen fila; `antiguedad_hasta` vacío es «más de 50» | Reglamento Nacional de Tasaciones, Anexo I (`fuentes/depreciacion-rnt-2016/depreciacion.csv`) |
+| `obras-complementarias-selva-2026.csv` | 96 partidas a costo directo, copia exacta de `model/data/obras_complementarias.csv` de srtm-backend. Llave `TIPO DE OBRA\|número`, la de `obra_complementaria.codigo_vu` | R.M. N.° 277-2025-VIVIENDA, Anexo III.4 Selva |
+| `uso-tabla-depreciacion.csv` | prefijo del código de `usos_predio` de srtm → tabla del RNT; gana el prefijo más largo. Editable | decisión D1 (por confirmar) |
+| `parametros.csv` | `FACTOR_OFICIALIZACION` 0.68, `PORCENTAJE_ACTUALIZACION` 0, `INCREMENTO_PISO_DESDE` 5 y `INCREMENTO_PISO_PORCENTAJE` 5, de 2026, cada uno con su fuente | `obras-complementarias-y-oficializacion-2026.md` §1.2, `predial-porcentaje-de-actualizacion.md` §1.6, `valores-unitarios-2026.md` §1.3 y §1.6 |
+
+`Tablas` responde con el vocabulario de la fuente (material `Concreto`, `Ladrillo`, `Liviano/Adobe`; estado `Muy Bueno`,
+`Bueno`, `Regular`, `Malo`): llevar a él los enums del catastro (D2, D3) es cosa del motor de valorización. Una celda
+`.....` o `*` devuelve nulo, nunca cero. Los códigos de clase `090000`, `100000` y `100400` de `usos_predio` no tienen
+tabla (son agrupadores sin uso concreto).
+
 ## Decisiones normativas por confirmar
 
 Valores por defecto adoptados hasta que la municipalidad los confirme. Todas están por confirmar.

@@ -1,0 +1,6 @@
+# fuente: cada fila cita su documento de normativa/docs/10-negocio/valores-normativos/ en la columna fuente
+clave,anio,valor,fuente
+FACTOR_OFICIALIZACION,2026,0.68,"R.M. 277-2025-VIVIENDA Anexo II: «FACTOR DE OFICIALIZACIÓN Fo = 0,68» (obras-complementarias-y-oficializacion-2026.md §1.2)"
+PORCENTAJE_ACTUALIZACION,2026,0,"TUO LTM art. 12: en 2026 se publicaron aranceles y valores unitarios, el supuesto no se cumple (predial-porcentaje-de-actualizacion.md §1.6)"
+INCREMENTO_PISO_DESDE,2026,5,"nota del cuadro de la R.M. 277-2025-VIVIENDA: «EN EDIFICIOS AUMENTAR EL VALOR POR M2 EN 5 % A PARTIR DEL 5° PISO»; único, no acumulativo, antes de depreciar (valores-unitarios-2026.md §1.3 y §1.6)"
+INCREMENTO_PISO_PORCENTAJE,2026,5,"nota del cuadro de la R.M. 277-2025-VIVIENDA: «EN EDIFICIOS AUMENTAR EL VALOR POR M2 EN 5 % A PARTIR DEL 5° PISO»; único, no acumulativo, antes de depreciar (valores-unitarios-2026.md §1.3 y §1.6)"
