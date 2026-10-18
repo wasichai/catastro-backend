@@ -1,0 +1,32 @@
+server:
+  # model/apply.py and the importers default to http://localhost:8091 (srtm-backend is on 8090)
+  port: 8091
+
+spring:
+  application:
+    name: catastro-backend
+
+wasichai:
+  database:
+    host: ${WASICHAI_DB_HOST:localhost}
+    # compose.yml publishes postgis on 5434. never 5432 (another app's postgres may live there) nor 5433 (srtm's)
+    port: ${WASICHAI_DB_PORT:5434}
+    name: ${WASICHAI_DB_NAME:catastro}
+    username: ${WASICHAI_DB_USERNAME:catastro}
+    password: ${WASICHAI_DB_PASSWORD:catastro}
+  seed:
+    # admin@wasichai.local / admin. development only: turn off anywhere real
+    dev: ${WASICHAI_SEED_DEV:true}
+  security:
+    jwt:
+      # development only. a real deployment sets WASICHAI_JWT_SECRET (>= 32 bytes)
+      secret: ${WASICHAI_JWT_SECRET:catastro-dev-only-secret-change-me-0123456789}
+      # a disabled user or a logout refuses the tokens already issued. off in dev, on in a real deployment
+      revocation: ${WASICHAI_JWT_REVOCATION:false}
+    login:
+      # sign-in attempt limits (429 over them). off in dev, on in a real deployment
+      enabled: ${WASICHAI_LOGIN_LIMIT:false}
+  gis:
+    geoserver:
+      # without GeoServer the lotes are served straight from PostGIS; only publishing WMS layers needs it
+      enabled: ${WASICHAI_GEOSERVER_ENABLED:false}

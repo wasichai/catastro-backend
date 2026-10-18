@@ -1,0 +1,14 @@
+{
+    "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+    "include-component-in-tag": false,
+    "packages": {
+        ".": {
+            "release-type": "simple",
+            "package-name": "catastro-backend",
+            "changelog-path": "CHANGELOG.md",
+            "bump-minor-pre-major": true,
+            "release-as": "0.1.0",
+            "extra-files": ["gradle.properties"]
+        }
+    }
+}

@@ -1,0 +1,44 @@
+# Gradle
+.gradle/
+build/
+!gradle/wrapper/gradle-wrapper.jar
+
+# Kotlin build metadata
+.kotlin/
+
+# IDE
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Env / secrets
+.env
+.env.local
+*.local.env
+
+# Logs
+*.log
+logs/
+
+# Python
+__pycache__/
+*.pyc
+
+# source data: the levantamiento carries personal data (names, addresses). never in the repo
+*.xlsx
+*.xls
+# model reports carry the same personal data
+model/reports/
+
+# node tooling (commitlint, husky, prettier)
+node_modules/
+
+# local data
+/data/
+.superpowers/

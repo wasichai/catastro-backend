@@ -1,0 +1,26 @@
+name: catastro
+
+services:
+  # postgis: wasichai-gis keeps the lotes' polygons
+  postgres:
+    image: postgis/postgis:18-3.6
+    container_name: catastro-postgres
+    environment:
+      POSTGRES_USER: catastro
+      POSTGRES_PASSWORD: catastro
+      POSTGRES_DB: catastro
+    ports:
+      # 5434, never 5432 (another app's postgres) nor 5433 (srtm's). loopback only: with a remote DOCKER_HOST this
+      # would otherwise open the db on the server's public ip
+      - '127.0.0.1:${CATASTRO_PG_PORT:-5434}:5432'
+    volumes:
+      # pg18 images want the mount one level up, data lands in a version subdir
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U catastro -d catastro']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  postgres-data:
