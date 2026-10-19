@@ -168,6 +168,16 @@ class TablasTest {
         assertEquals("04", tablas.tablaPorUso("050202"))
         assertEquals("03", tablas.tablaPorUso("100203"))
         assertEquals("02", tablas.tablaPorUso("100204"))
+        // D1 (2026-10-20): institucional va a la 02 («instituciones»), salvo oficinas públicas (03) e instrucción (04)
+        assertEquals("02", tablas.tablaPorUso("060201"))
+        assertEquals("03", tablas.tablaPorUso("060101"))
+        assertEquals("04", tablas.tablaPorUso("060203"))
+        assertEquals("04", tablas.tablaPorUso("040205"))
+        assertEquals("02", tablas.tablaPorUso("050209"))
+        // códigos de solo clase que el padrón importa
+        assertEquals("01", tablas.tablaPorUso("090000"))
+        assertEquals("01", tablas.tablaPorUso("100000"))
+        assertEquals("01", tablas.tablaPorUso("100400"))
         assertNull(tablas.tablaPorUso("990000"))
         assertNull(tablas.tablaPorUso(""))
     }
