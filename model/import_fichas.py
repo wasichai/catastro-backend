@@ -25,9 +25,10 @@ Default columns follow the MEF carga masiva contract (kamayuk ContratoDeImportac
 estado_conservacion take the model's options in any case, with _ for a space (MUY_BUENO).
 
 Idempotent by codigo_municipal: a predio Core already has is skipped. Pisos and obras are idempotent by their own key,
-(predio, piso, seccion) and (predio, codigo_vu, anio_construccion), a piso without seccion being seccion 1: only the ones Core lacks are created, so a run that failed
-half way is completed by running again. A key repeated in the file is an error. Exit: 0 ok, 1 Core refused something, 2 the files do not fit the model (every bad row is listed, nothing
-is sent).
+(predio, piso, seccion) and (predio, codigo_vu, anio_construccion), a piso without seccion being seccion 1: only the
+ones Core lacks are created, so a run that failed half way is completed by running again. A key repeated in the file is
+an error. Exit: 0 ok, 1 Core refused something, 2 the files do not fit the model (every bad row is listed, nothing is
+sent).
 
 Run: python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv [--obras obras.csv] [--dry-run]
 """
@@ -71,7 +72,8 @@ OBRA_COLUMNS = {
 TRUE = {"true", "t", "si", "sí", "s", "yes", "y", "1", "x"}
 FALSE = {"false", "f", "no", "n", "0"}
 CATEGORIA = re.compile(r"[A-J]")
-# the RNT's table number (1-4 or 01-04): model.json lists the enum clasificacion in the order of the tables
+# the RNT's table number (1-4 or 01-04): model.json lists the enum clasificacion in the order of the tables, which
+# test_model.py pins and Valorizacion.TABLA_POR_CLASIFICACION checks against the same file
 TABLA_RNT = re.compile(r"0?([1-4])")
 
 
@@ -87,12 +89,12 @@ def parse_bool(value):
 
 
 def parse_clasificacion(value, options):
-    """(option, error): an option of the enum clasificacion, or the number of its RNT table."""
-    text = clean_text(value)
+    """(option, error): an option of the enum clasificacion, or the number of its RNT table (an xlsx 3.0 is 3)."""
+    text = code_text(value)
     if text is None:
         return None, None
     if not options:
-        return None, f"'{text}': the model has no enum clasificacion (python3 apply.py first)"
+        return None, f"'{text}': the model file (--model) has no enum clasificacion"
     tabla = TABLA_RNT.fullmatch(text)
     if tabla:
         return options[int(tabla.group(1)) - 1], None
@@ -198,9 +200,11 @@ def pisos_from(rows, mapping, enums, codigos):
         if error:
             found.append(f"seccion {error}")
         key = (codigo, piso, seccion or 1)
-        if key in seen:
+        # an unreadable seccion is its own problem, not also a repeated seccion 1
+        if error is None and key in seen:
             found.append(f"piso {piso} seccion {seccion or 1} repeated, first at row {seen[key]}")
-        seen.setdefault(key, row["_fila"])
+        if error is None:
+            seen.setdefault(key, row["_fila"])
         attributes = {"piso": piso, "seccion": seccion, **_material_estado(row, mapping, enums, found)}
         attributes["area_construida"], error = parse_decimal(column_for(row, mapping, "area_construida"))
         if error:
@@ -268,8 +272,8 @@ def obra_key(predio_id, a):
 
 def load(client, fichas, pisos, obras, workers):
     """Creates the predios Core lacks, then every piso and obra Core lacks, by natural key: a piso is (predio, piso,
-    seccion), an obra (predio, codigo_vu, anio_construccion). A run that failed half way is completed by running again, and a child
-    Core has is never touched or duplicated. Returns (created, skipped, construcciones, obras)."""
+    seccion), an obra (predio, codigo_vu, anio_construccion). A run that failed half way is completed by running again,
+    and a child Core has is never touched or duplicated. Returns (created, skipped, construcciones, obras)."""
     existing = {r["attributes"]["codigo_municipal"]: r["id"] for r in client.list_all("predio_catastral")}
     todo = [(a["codigo_municipal"], fila, a) for fila, a in fichas if a["codigo_municipal"] not in existing]
     ids = {**existing, **post_all(client, "predio_catastral", todo, workers)}

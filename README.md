@@ -75,7 +75,9 @@ vacías no se envían:
 Un predio que el Core ya tiene se salta; los pisos (llave predio, piso y sección; un piso sin sección, como los que se
 cargaron antes, es la sección 1) y las obras (llave predio, `codigo_vu` y año de construcción) se crean solo si
 faltan, así que una carga que falló a medias se completa volviendo a correrla. Un piso que el Core ya tiene no se
-actualiza: para cambiarle `techo_incluido` hay que editarlo en el Core. Una llave repetida en el archivo es un error.
+actualiza: para cambiarle `techo_incluido` o `clasificacion` (por ejemplo, clasificar después los pisos de Perené) hay
+que editarlo en el Core; volver a correr la carga no los toca. Una llave repetida en el archivo es un error, y también un
+`clasificacion` que no se lee: el `0` de Ica (sin tabla) va vacío.
 
 ```sh
 python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.csv --dry-run

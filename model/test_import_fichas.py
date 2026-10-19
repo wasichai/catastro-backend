@@ -116,6 +116,19 @@ class ParseTests(unittest.TestCase):
         opciones = ENUMS["clasificacion"]
         self.assertEqual([p[2]["clasificacion"] for p in pisos], [opciones[2], opciones[0], opciones[1], opciones[3], None])
 
+    def test_a_numeric_xlsx_clasificacion_is_its_table(self):
+        # an xlsx number comes as 3.0 (tabular.code_text)
+        path = write_xlsx(self, ["COD_PRE", "PISO", "CLASIFICACION", "SECCION"], [["A", "1", "3.0", "2.0"]])
+        pisos, problems = imf.pisos_from(read_table(path), parse_map([], imf.PISO_COLUMNS), ENUMS, {"A"})
+        self.assertEqual(problems, [])
+        self.assertEqual((pisos[0][2]["clasificacion"], pisos[0][2]["seccion"]), ("EDIFICIO-OFICINAS", 2))
+
+    def test_a_bad_seccion_is_one_problem_not_also_a_repeated_piso(self):
+        rows = read_table(write_csv(self, "cod_pre,piso,seccion\nA,1,\nA,1,0\n"))
+        _, problems = imf.pisos_from(rows, parse_map([], imf.PISO_COLUMNS), ENUMS, {"A"})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("seccion", problems[0])
+
     def test_an_unknown_clasificacion_is_a_problem(self):
         rows = read_table(write_csv(self, "cod_pre,piso,clasificacion\nA,1,MUSEOS\nA,2,0\nA,3,5\n"))
         _, problems = imf.pisos_from(rows, parse_map([], imf.PISO_COLUMNS), ENUMS, {"A"})
