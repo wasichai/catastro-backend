@@ -62,6 +62,7 @@ sealed interface Valuacion {
 // cuadro cells, then the uso's depreciation tabla (RT-004), then the obras
 object Valorizacion {
     private const val ESCALA = 2
+    private const val MUROS_SIN_TECHOS = 'A'
     private val CIEN = BigDecimal(100)
 
     fun valorizar(
@@ -180,7 +181,9 @@ object Valorizacion {
         desde: Int
     ): Boolean = piso.trim().toIntOrNull()?.let { it >= desde } ?: false
 
-    // D4: muros y columnas + techos + puertas y ventanas. a "....." cell is no value (D5), not zero
+    // D4: muros y columnas + techos + puertas y ventanas. a "....." cell is no value (D5), not zero. muros A
+    // (estructuras laminares curvadas, cimentación y techo en una sola armadura) leaves techos out: «PARA ESTE CASO NO SE
+    // CONSIDERA LOS VALORES DE LA COLUMNA N° 2», so its letter is neither asked nor added
     private fun valorUnitario(
         c: Construccion,
         t: Tablas
@@ -189,7 +192,9 @@ object Valorizacion {
         if (c.anioConstruccion == null) {
             falta("ANIO_CONSTRUCCION_FALTANTE", "$donde no declara año de construcción: sin él no hay antigüedad con que depreciar")
         }
-        val letras = mapOf(Partida.MUROS_COLUMNAS to c.muros, Partida.TECHOS to c.techos, Partida.PUERTAS_VENTANAS to c.puertas)
+        val letras =
+            mapOf(Partida.MUROS_COLUMNAS to c.muros, Partida.TECHOS to c.techos, Partida.PUERTAS_VENTANAS to c.puertas)
+                .filterKeys { !(it == Partida.TECHOS && c.muros == MUROS_SIN_TECHOS) }
         return letras.entries.sumOf { (partida, letra) ->
             val categoria =
                 letra?.toString() ?: falta(
