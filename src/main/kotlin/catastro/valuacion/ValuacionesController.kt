@@ -7,8 +7,9 @@ import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 // srtm-backend's door into the catastro: the valuations of a year, page by page. it needs a token (401 without one)
-// and READ on the four objects (core's 403 otherwise): the service account `srtm` gets both through SRTM_LECTOR
-// (model/roles.json, model/crear_cuenta_srtm.py). a parameter it does not know, or cannot read, is a 422 that names it
+// and READ on the five objects (core's 403 otherwise): the service account `srtm` gets both through SRTM_LECTOR
+// (model/roles.json, model/crear_cuenta_srtm.py). a parameter it does not know, or cannot read, is a 422 that names it;
+// an organization without its region (configuracion_catastro) is a 409 (RegionNoConfigurada)
 @RestController
 @RequestMapping("/api/catastro")
 class ValuacionesController(

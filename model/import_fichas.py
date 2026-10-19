@@ -14,7 +14,8 @@ Default columns follow the MEF carga masiva contract (kamayuk ContratoDeImportac
           the seven categories either as one 7-letter text in `categorias` (e.g. CCDCCDC, in the order muros_columnas,
           techos, pisos, puertas_ventanas, revestimientos, banos, instalaciones) or in seven columns named as the fields,
           and optionally techo_incluido (SI/NO, S/N, TRUE/FALSE, 1/0; empty = not sent): the muros D are drywall that
-          includes the techo (Anexo I.4, llamada 5), so the valuation leaves the techos category out
+          includes the techo (llamada 5 of every regional cuadro, Anexos I.1-I.4), so the valuation leaves the techos
+          category out
   obras:  cod_pre -> codigo_municipal, codigo_vu (TIPO DE OBRA|numero, as obra_categoria in srtm), cantidad,
           anio_construccion, material, estado_conservacion
 --map, --map-pisos and --map-obras field=column override those defaults (repeatable). material and

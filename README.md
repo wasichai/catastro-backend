@@ -192,6 +192,7 @@ Authorization: Bearer <token de POST /api/auth/token>
 {
   "anio": 2026,
   "version": "valuacion-v1",
+  "region": "SELVA",
   "page": 0,
   "size": 200,
   "total": 1,
@@ -222,12 +223,13 @@ Cada ítem trae siempre todas sus llaves. Sin valor, `terreno`, `construccion`, 
 `motivo` (para leer) y `llave` (para agrupar) dicen por qué. `areaConstruida` es la suma de las áreas declaradas de los
 pisos (0 sin pisos). `loteGeom` es el polígono del lote como geometría GeoJSON en EPSG:4326 (se guarda en 32718), o
 `null`. El código del lote es `lote`, por eso la geometría se llama `loteGeom`. `version` cambia cuando cambia la
-aritmética del motor.
+aritmética del motor; `region` es la de la organización, la de los cuadros con que se valorizó la página.
 
 **Puesta en marcha** (contra el Core del catastro, como admin):
 
 ```sh
 cd model
+python3 apply.py                 # el modelo, con configuracion_catastro
 python3 apply_roles.py           # crea o sincroniza SRTM_LECTOR (model/roles.json): READ sobre los cinco objetos
 python3 configurar_region.py --region SELVA   # la región de la organización (Perené); COSTA para Ica
 python3 crear_cuenta_srtm.py     # crea la cuenta de servicio `srtm` con SRTM_LECTOR e imprime clientId y clientSecret
@@ -239,6 +241,18 @@ si le falta y dice su `clientId`; un secreto nuevo se pide con `POST /api/servic
 anterior). srtm pide su token con `POST /api/auth/token {"clientId", "clientSecret"}` → `{"token", "expiresAt",
 "serviceAccount"}` y lo renueva al vencer. `apply_roles.py` deja el rol exactamente con los permisos de `roles.json`
 (un permiso dado a mano en el admin se pierde); los dos aceptan `--dry-run`, `--core`, `--email` y `--password`.
+
+**Actualizar un despliegue que ya existe** a la versión con región por organización (Perené en dev, la organización
+`demo`): con el jar viejo todavía corriendo, que ignora el objeto nuevo, y cada paso primero con `--dry-run`
+(`apply.py --diff`) y el OK de quien opera la base:
+
+1. `python3 apply.py` crea `configuracion_catastro` (sin él, core responde 404 a las valuaciones);
+2. `python3 apply_roles.py` da a SRTM_LECTOR el `READ` sobre él (sin él, 403);
+3. `python3 configurar_region.py --region SELVA` crea el registro (sin él, 409);
+4. recién entonces se cambia el jar.
+
+Si se cambia el jar antes, cada corrida de la brecha de srtm falla en la página 0 con uno de esos códigos, y srtm solo
+muestra el código (no el cuerpo, que dice `configuracion_catastro.region`).
 
 ## Decisiones normativas
 

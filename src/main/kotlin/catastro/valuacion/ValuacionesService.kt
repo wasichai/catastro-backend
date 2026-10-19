@@ -56,7 +56,7 @@ class ValuacionesService(
             predios.content.map { p ->
                 item(p, anio, pisos[p.id].orEmpty(), obras[p.id].orEmpty(), p.idAranc?.let { aranceles[it] }, tablas)
             }
-        return Valuaciones(anio, VERSION, page, size, predios.totalElements ?: 0L, items)
+        return Valuaciones(anio, VERSION, tablas.region.name, page, size, predios.totalElements ?: 0L, items)
     }
 
     private fun item(
@@ -113,27 +113,33 @@ class ValuacionesService(
         )
     }
 
-    // the tables of the region in the caller's configuracion_catastro (core scopes the read to its organization). no
-    // record, two, or a region without tables here: RegionNoConfigurada, never a default region
+    // the tables of the region in the caller's configuracion_catastro (core scopes the read to its organization)
     private suspend fun tablasDeLaOrganizacion(): Tablas {
-        val conocidas = Region.entries.joinToString(" o ")
         val configuraciones =
             registros
-                .pagina(CONFIGURACION_CATASTRO, ConfiguracionCatastro::class.java, RecordQuery(page = PageRequest(0, 2)))
+                .pagina(CONFIGURACION_CATASTRO, ConfiguracionCatastro::class.java, RecordQuery(page = PageRequest(0, 2), count = false))
                 .content
-        val region =
-            when (configuraciones.size) {
-                0 -> throw RegionNoConfigurada("no hay un registro de $CONFIGURACION_CATASTRO con la región ($conocidas)")
-                1 -> configuraciones.single().region
-                else -> throw RegionNoConfigurada("hay más de un registro de $CONFIGURACION_CATASTRO; debe haber uno solo ($conocidas)")
-            }
-        val conocida =
-            Region.entries.firstOrNull { it.name == region }
-                ?: throw RegionNoConfigurada("$CONFIGURACION_CATASTRO dice la región «${region.orEmpty()}», sin tablas en el motor ($conocidas)")
-        return tablasPorRegion.de(conocida)
+        return tablasPorRegion.de(regionDe(configuraciones))
     }
 
     companion object {
+        // the region an organization's configuracion_catastro records give: exactly one record, with a region the
+        // engine has tables for. no record, two, a blank region (or one the caller may not read: core leaves it out)
+        // or an option of region_catastro without tables here: RegionNoConfigurada, never a default region
+        internal fun regionDe(configuraciones: List<ConfiguracionCatastro>): Region {
+            val conocidas = Region.entries.joinToString(" o ")
+            val region =
+                when (configuraciones.size) {
+                    0 -> throw RegionNoConfigurada("no hay un registro de $CONFIGURACION_CATASTRO con la región ($conocidas)")
+                    1 -> configuraciones.single().region
+                    else -> throw RegionNoConfigurada("hay más de un registro de $CONFIGURACION_CATASTRO; debe haber uno solo ($conocidas)")
+                } ?: throw RegionNoConfigurada(
+                    "el registro de $CONFIGURACION_CATASTRO no tiene región, o quien llama no puede leer el campo ($conocidas)"
+                )
+            return Region.entries.firstOrNull { it.name == region }
+                ?: throw RegionNoConfigurada("$CONFIGURACION_CATASTRO dice la región «$region», sin tablas en el motor ($conocidas)")
+        }
+
         // the engine's version: srtm stores it with each corrida, so a change in the arithmetic is visible there
         const val VERSION = "valuacion-v1"
 
