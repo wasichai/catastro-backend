@@ -1,7 +1,9 @@
 package catastro.valuacion
 
+import catastro.RegionNoConfigurada
 import catastro.Registros
 import catastro.tablas.Region
+import catastro.tablas.Tablas
 import catastro.tablas.TablasPorRegion
 import org.springframework.stereotype.Service
 import wasichai.core.common.PageRequest
@@ -10,17 +12,19 @@ import java.math.BigDecimal
 import java.util.UUID
 
 // the autoavalúo of one page of predios for a year, valued on the fly (nothing is stored). every read goes through
-// core as the caller: the predios, then their construcciones, obras and aranceles in one batch per object
+// core as the caller: the organization's region, the predios, then their construcciones, obras and aranceles in one
+// batch per object
 @Service
 class ValuacionesService(
     private val registros: Registros,
-    private val tablas: TablasPorRegion
+    private val tablasPorRegion: TablasPorRegion
 ) {
     suspend fun pagina(
         anio: Int,
         page: Int,
         size: Int
     ): Valuaciones {
+        val tablas = tablasDeLaOrganizacion()
         // by codigo_municipal (unique) so pages are stable. PageRequest's own guard stops at 200; this endpoint allows 500
         val predios =
             registros.pagina(PREDIO_CATASTRAL, PredioCatastral::class.java, RecordQuery(page = PageRequest(page, size), sort = "codigo_municipal"))
@@ -50,7 +54,7 @@ class ValuacionesService(
             }
         val items =
             predios.content.map { p ->
-                item(p, anio, pisos[p.id].orEmpty(), obras[p.id].orEmpty(), p.idAranc?.let { aranceles[it] })
+                item(p, anio, pisos[p.id].orEmpty(), obras[p.id].orEmpty(), p.idAranc?.let { aranceles[it] }, tablas)
             }
         return Valuaciones(anio, VERSION, page, size, predios.totalElements ?: 0L, items)
     }
@@ -60,7 +64,8 @@ class ValuacionesService(
         anio: Int,
         pisos: List<FichaConstruccion>,
         obras: List<FichaObra>,
-        arancel: Arancel?
+        arancel: Arancel?,
+        tablas: Tablas
     ): ItemValuacion {
         val insumos =
             Insumos(
@@ -85,8 +90,7 @@ class ValuacionesService(
                     },
                 obras = obras.map { Obra(it.codigoVu, it.cantidad, it.anioConstruccion, it.material, it.estadoConservacion) }
             )
-        // perené's region until the organization's own is read
-        val v = Valorizacion.valorizar(insumos, tablas.de(Region.SELVA))
+        val v = Valorizacion.valorizar(insumos, tablas)
         val valor = v as? Valuacion.Valorizada
         val falta = v as? Valuacion.SinValorizar
         return ItemValuacion(
@@ -107,6 +111,26 @@ class ValuacionesService(
             llave = falta?.llave,
             loteGeom = p.loteGeom
         )
+    }
+
+    // the tables of the region in the caller's configuracion_catastro (core scopes the read to its organization). no
+    // record, two, or a region without tables here: RegionNoConfigurada, never a default region
+    private suspend fun tablasDeLaOrganizacion(): Tablas {
+        val conocidas = Region.entries.joinToString(" o ")
+        val configuraciones =
+            registros
+                .pagina(CONFIGURACION_CATASTRO, ConfiguracionCatastro::class.java, RecordQuery(page = PageRequest(0, 2)))
+                .content
+        val region =
+            when (configuraciones.size) {
+                0 -> throw RegionNoConfigurada("no hay un registro de $CONFIGURACION_CATASTRO con la región ($conocidas)")
+                1 -> configuraciones.single().region
+                else -> throw RegionNoConfigurada("hay más de un registro de $CONFIGURACION_CATASTRO; debe haber uno solo ($conocidas)")
+            }
+        val conocida =
+            Region.entries.firstOrNull { it.name == region }
+                ?: throw RegionNoConfigurada("$CONFIGURACION_CATASTRO dice la región «${region.orEmpty()}», sin tablas en el motor ($conocidas)")
+        return tablasPorRegion.de(conocida)
     }
 
     companion object {
