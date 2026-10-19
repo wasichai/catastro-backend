@@ -134,26 +134,37 @@ class ValorizacionTest {
 
     @Test
     fun `edificio - el quinto piso sube 5 por ciento antes de depreciar`() {
-        // uso 020401 (oficina) -> tabla 03. VU = A 995.50 + A 509.83 + A 421.72 = 1927.05
+        // uso 020401 (oficina) -> tabla 03. VU = B 679.21 + A 509.83 + A 421.72 = 1610.76
         // antigüedad 2026 - 2021 = 5 -> tramo hasta 5; tabla 03 Concreto Muy Bueno = 0 %
-        // piso 4: 1927.05 x 50 = 96352.50
-        // piso 5: 1927.05 x 1.05 = 2023.4025; x 50 = 101170.125 -> 101170.13
-        // construcción = 197522.63; terreno 100 x 80 = 8000.00; autoavalúo = 205522.63
+        // piso 4: 1610.76 x 50 = 80538.00
+        // piso 5: 1610.76 x 1.05 = 1691.298; x 50 = 84564.90
+        // construcción = 165102.90; terreno 100 x 80 = 8000.00; autoavalúo = 173102.90
         val dos =
             listOf("4", "5").map {
-                piso(piso = it, area = bd("50"), anio = 2021, estado = "MUY BUENO", muros = 'A', techos = 'A', puertas = 'A')
+                piso(piso = it, area = bd("50"), anio = 2021, estado = "MUY BUENO", muros = 'B', techos = 'A', puertas = 'A')
             }
         val v =
             valorizada(
                 insumos(areaTerreno = bd("100"), arancelM2 = bd("80"), uso = "020401", esEdificio = true, construcciones = dos)
             )
-        assertEquals(bd("197522.63"), v.construccion)
-        assertEquals(bd("205522.63"), v.autoavaluo)
-        // not an edificio: both pisos at 96352.50 = 192705.00
+        assertEquals(bd("165102.90"), v.construccion)
+        assertEquals(bd("173102.90"), v.autoavaluo)
+        // not an edificio: both pisos at 80538.00 = 161076.00
         assertEquals(
-            bd("192705.00"),
+            bd("161076.00"),
             valorizada(insumos(uso = "020401", esEdificio = false, construcciones = dos)).construccion
         )
+    }
+
+    @Test
+    fun `muros A no considera techos`() {
+        // anexo I.4, muros A: «PARA ESTE CASO NO SE CONSIDERA LOS VALORES DE LA COLUMNA N° 2» (techos)
+        // VU = muros A 995.50 + puertas E 108.28 = 1103.78; x 0.95 x 100 = 104859.10
+        val esperado = bd("104859.10")
+        assertEquals(esperado, valorizada(insumos(construcciones = listOf(piso(muros = 'A', techos = 'A')))).construccion)
+        // techos sin declarar, o en una celda de puntos, no importa: no se pide
+        assertEquals(esperado, valorizada(insumos(construcciones = listOf(piso(muros = 'A', techos = null)))).construccion)
+        assertEquals(esperado, valorizada(insumos(construcciones = listOf(piso(muros = 'A', techos = 'I')))).construccion)
     }
 
     @Test

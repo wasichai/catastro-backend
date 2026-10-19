@@ -1,30 +1,41 @@
-# fuente: decisión D1 (por confirmar), sobre los códigos de srtm-backend/model/data/usos_predio.csv y los títulos de las tablas del Anexo I del Reglamento Nacional de Tasaciones: 01 casa habitación y departamentos; 02 tiendas, depósitos, centros de recreación y clubes sociales; 03 edificios y oficinas; 04 salud, cines, industrias, uso educativo y talleres
+# fuente: decisión D1, investigada el 2026-10-20. Ninguna norma asigna usos a tablas: el RNT (R.M. 172-2016-VIVIENDA, art. 13.4 y títulos de las Tablas 01 a 04 del Anexo I) solo dice «en función de su uso». Filas con NORMA siguen el título de una tabla; PRÁCTICA, el padrón de Perené o el parámetro «Uso Predio – Depreciación» del SRTM del MEF (M21-1-003 §5.2.21); CRITERIO, una analogía propia. Lo dudoso está en el README (D1)
 # gana el prefijo más largo del código de uso. editable: cambiar una fila no toca el código
-prefijo,tabla,descripcion
-01,01,RESIDENCIAL: casa habitación y departamentos
-02,02,"COMERCIAL: almacén, depósito, tiendas y servicios"
-0204,03,OFICINA
-020507,04,SERVICIOS DE MECÁNICA AUTOMOTRIZ: taller
-020508,04,SERVICIOS DE MECÁNICA EN GENERAL Y ELECTRICIDAD: taller
-020509,04,SERVICIOS PARA APARATOS Y MUEBLES DE USO DOMÉSTICO: taller
-020510,04,SERVICIOS DE MECÁNICA FINA: taller
-03,04,INDUSTRIA
-04,02,RECREACIONAL: centros de recreación y clubes sociales
-040208,04,CINE
-05,04,EQUIPAMIENTO URBANO: salud y educación; el resto de la clase por confirmar
-0503,02,TRANSPORTE: terminales y depósitos
-0504,03,COMUNICACIÓN: oficinas
-0506,02,ALIMENTACIÓN: mercados (tiendas)
-06,03,INSTITUCIONAL: edificios y oficinas
-07,01,TERRENO: lo construido se trata como casa habitación (por confirmar)
-08,01,DESOCUPADO: lo construido se trata como casa habitación (por confirmar)
-0901,01,GARAGE RESIDENCIAL UNIFAMILIAR
-0902,01,GARAGE RESIDENCIAL MULTIFAMILIAR
-0903,02,GARAGE DE COMERCIO
-1001,01,BIENES COMUNES RESIDENCIALES
-1002,02,BIENES COMUNES COMERCIALES
-100203,03,BIENES COMUNES: OFICINA
-1003,04,BIENES COMUNES INDUSTRIALES
-100401,01,TERRENO COMÚN RESIDENCIAL
-100402,02,TERRENO COMÚN COMERCIAL
-100403,04,TERRENO COMÚN INDUSTRIAL
+prefijo,tabla,descripcion,fuente
+01,01,"RESIDENCIAL: casa habitación y departamentos, incluidos los de edificios",NORMA: título Tabla 01 RNT; SRTM-MEF (M21-1-003 pág. 265-277) asigna 010101-010209 a CASA HABITACIÓN - DEPARTAMENTOS
+02,02,"COMERCIAL: almacén, depósito, tiendas y servicios",NORMA: título Tabla 02 (tiendas y depósitos); SRTM-MEF asigna 020101-020303 a Tienda-Depósito; servicios por analogía (criterio)
+0204,03,OFICINA,NORMA: título Tabla 03 (oficinas)
+020507,04,SERVICIOS DE MECÁNICA AUTOMOTRIZ: taller,NORMA: Tabla 04 (talleres)
+020508,04,SERVICIOS DE MECÁNICA EN GENERAL Y ELECTRICIDAD: taller,NORMA: Tabla 04 (talleres)
+020509,04,SERVICIOS PARA APARATOS Y MUEBLES DE USO DOMÉSTICO: taller,NORMA: Tabla 04 (talleres)
+020510,04,SERVICIOS DE MECÁNICA FINA: taller,NORMA: Tabla 04 (talleres)
+03,04,INDUSTRIA,NORMA: Tabla 04 (industrias)
+04,02,RECREACIONAL: centros de recreación o esparcimiento y clubes sociales,NORMA: título Tabla 02
+040205,04,TEATRO: sala de espectáculos como el cine,CRITERIO: analogía con cines (Tabla 04)
+040208,04,CINE,NORMA: Tabla 04 (cines)
+05,04,"EQUIPAMIENTO URBANO: educación, salud y plantas de servicios públicos",NORMA: Tabla 04 (salud y uso educativo); 0505 por analogía con industrias (criterio)
+050209,02,CEMENTERIO: no es edificación de salud,CRITERIO: no es salud; se asimila a Tabla 02 (instituciones)
+050210,02,FUNERARIA: local comercial de servicios,CRITERIO: no es salud; local de servicios como 0205 (Tabla 02)
+0503,02,TRANSPORTE: terminales y depósitos,CRITERIO: terminales por analogía con depósitos/locales de público (Tabla 02); 050305 literal depósito
+0504,03,COMUNICACIÓN: oficinas,CRITERIO: analogía con oficinas (Tabla 03)
+0506,02,ALIMENTACIÓN: mercados (tiendas),NORMA: tiendas (Tabla 02)
+06,02,INSTITUCIONAL: instituciones,NORMA: título Tabla 02 («instituciones»); PRÁCTICA Perené: padrón INSTITUCIONAL 30 de 57 en Tabla 02 y solo 3 en Tabla 03
+0601,03,ADMINISTRACIÓN PÚBLICA: oficinas públicas,CRITERIO: sedes administrativas = oficinas (Tabla 03)
+060203,04,CENTRO DE INSTRUCCIÓN DE LAS FUERZAS ARMADAS: uso educativo,NORMA: Tabla 04 (edificaciones de uso educativo)
+060204,04,CENTRO DE INSTRUCCIÓN DE LAS FUERZAS POLICIALES: uso educativo,NORMA: Tabla 04 (edificaciones de uso educativo)
+0603,03,ESTABLECIMIENTOS FINANCIEROS Y MONETARIOS: oficinas,CRITERIO: bancos y financieras = oficinas (Tabla 03)
+0605,03,GOBIERNO EXTRANJERO: oficinas,CRITERIO: embajadas y consulados = oficinas (Tabla 03)
+060708,04,GUARDERÍA: uso educativo inicial,CRITERIO: como educación inicial 050101-050102 (Tabla 04)
+07,01,TERRENO: lo construido se trata como casa habitación,PRÁCTICA Perené: padrón TERRENO con clasificación 23 de 24 en Tabla 01; el SRTM-MEF pide elegir la clasificación (SRTM escritorio: Manual de Cambios Registro y Determinación v03.15.04 §2.3.1)
+08,01,DESOCUPADO: lo construido se trata como casa habitación,PRÁCTICA Perené: padrón DESOCUPADO 45 de 62 en Tabla 01; RNT art. 35 (desuso: según su aprovechamiento)
+09,01,GARAGE sin subclase: como cochera de vivienda,CRITERIO: cubre el código 090000 que el padrón importa (ESTACIONAMIENTO); padrón 1 de 1 en Tabla 01
+0901,01,GARAGE RESIDENCIAL UNIFAMILIAR,CRITERIO: anexo de la vivienda (Tabla 01)
+0902,01,GARAGE RESIDENCIAL MULTIFAMILIAR,CRITERIO: anexo de la vivienda (Tabla 01)
+0903,02,GARAGE DE COMERCIO,CRITERIO: como playa de estacionamiento/depósito (Tabla 02)
+10,01,BIENES COMUNES sin subclase: como residencial,CRITERIO: cubre el código 100000 que el padrón importa; RNT art. 40.2 (lo común va con la unidad)
+1001,01,BIENES COMUNES RESIDENCIALES,NORMA: RNT art. 40.2 + Tabla 01
+1002,02,BIENES COMUNES COMERCIALES,NORMA: RNT art. 40.2 + Tabla 02
+100203,03,BIENES COMUNES: OFICINA,NORMA: RNT art. 40.2 + Tabla 03
+1003,04,BIENES COMUNES INDUSTRIALES,NORMA: RNT art. 40.2 + Tabla 04
+100401,01,TERRENO COMÚN RESIDENCIAL,NORMA: RNT art. 40.2 + Tabla 01
+100402,02,TERRENO COMÚN COMERCIAL,NORMA: RNT art. 40.2 + Tabla 02
+100403,04,TERRENO COMÚN INDUSTRIAL,NORMA: RNT art. 40.2 + Tabla 04
