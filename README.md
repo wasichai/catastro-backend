@@ -52,6 +52,8 @@ python3 -m unittest -v                    # pruebas contra fake_core
 Todos los cargadores aceptan `--core`, `--email`, `--password` (o `WASICHAI_CORE`, `WASICHAI_EMAIL`,
 `WASICHAI_PASSWORD`) y `--dry-run`. Si algo no encaja en el modelo salen con código 2, listan cada fila mala y no envían
 nada; un rechazo del Core sale con 1. Son idempotentes: correrlos dos veces no cambia nada.
+Se corren con `python3 -I`, porque leen archivos de afuera: así ni el directorio actual ni `PYTHONPATH` entran al
+`sys.path`, y cada comando vuelve a poner solo su propio directorio (`model/`), así que corre desde cualquier lado.
 
 **Fichas** (`import_fichas.py`): `--fichas` (un predio por fila), `--pisos` (un piso por fila, ligado por
 `codigo_municipal`) y `--obras` (opcional), en csv o xlsx. Las columnas por defecto salen del contrato de carga masiva
@@ -66,7 +68,7 @@ faltan, así que una carga que falló a medias se completa volviendo a correrla.
 actualiza: para cambiarle `techo_incluido` hay que editarlo en el Core. Una llave repetida en el archivo es un error.
 
 ```sh
-python3 import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.csv --dry-run
+python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.csv --dry-run
 ```
 
 **Aranceles** (`import_aranceles.py`): dos csv sacados de la geodatabase (solo lectura) y unidos por `ID_ARANC`.
@@ -76,7 +78,7 @@ dice cuántos). `--anio` filtra un año (por defecto todos).
 ```sh
 ogr2ogr -f CSV frentes.csv 120302_MD_Perene_ECF.gdb CF_ARANCEL_18 -select ID_ARANC,COD_VIA,CUADRA,LADO
 ogr2ogr -f CSV valores.csv 120302_MD_Perene_ECF.gdb TB_VALORACION_HIST -select ID_ARANC,ANO_EJEC,VAL_ACT
-python3 import_aranceles.py --frentes frentes.csv --valores valores.csv --anio 2026 --dry-run
+python3 -I import_aranceles.py --frentes frentes.csv --valores valores.csv --anio 2026 --dry-run
 ```
 
 **Lotes** (`import_lotes.py`): polígonos de un GeoJSON en EPSG:4326 hacia `predio_catastral.lote_geom`. Solo actualiza
@@ -85,7 +87,7 @@ propiedad. `CF_LOTES_POL_18` no trae esos códigos: hay que cruzarlos antes.
 
 ```sh
 ogr2ogr -f GeoJSON -t_srs EPSG:4326 lotes.geojson 120302_MD_Perene_ECF.gdb CF_LOTES_POL_18
-python3 import_lotes.py --geojson lotes.geojson --map codigo_municipal=COD_PRE --dry-run
+python3 -I import_lotes.py --geojson lotes.geojson --map codigo_municipal=COD_PRE --dry-run
 ```
 
 ## Región de la organización
@@ -232,11 +234,24 @@ cd model
 python3 apply.py                 # el modelo, con configuracion_catastro
 python3 apply_roles.py           # crea o sincroniza SRTM_LECTOR (model/roles.json): READ sobre los cinco objetos
 python3 configurar_region.py --region SELVA   # la región de la organización (Perené); COSTA para Ica
-python3 crear_cuenta_srtm.py     # crea la cuenta de servicio `srtm` con SRTM_LECTOR e imprime clientId y clientSecret
+python3 crear_cuenta_srtm.py --clave perene   # la cuenta `srtm` con SRTM_LECTOR; imprime clientId y clientSecret
 ```
 
-`crear_cuenta_srtm.py` imprime el `clientSecret` **una sola vez**: guárdalo en el entorno de srtm-backend como
-`SRTM_CATASTRO_CLIENT_ID` y `SRTM_CATASTRO_CLIENT_SECRET`. Es idempotente: si la cuenta ya existe solo le agrega el rol
+`crear_cuenta_srtm.py` imprime el `clientSecret` **una sola vez**: guárdalo en el entorno de srtm-backend, que lee un
+catastro por organización (srtm-backend#130), en la entrada de esta organización:
+
+```sh
+SRTM_CATASTRO_ORGANIZACIONES_PERENE_URL=http://catastro-perene:8091   # este catastro, visto desde srtm
+SRTM_CATASTRO_ORGANIZACIONES_PERENE_CLIENT_ID=...
+SRTM_CATASTRO_ORGANIZACIONES_PERENE_CLIENT_SECRET=...
+# opcional: SRTM_CATASTRO_ORGANIZACIONES_PERENE_TIMEOUT=60s
+```
+
+La clave (`PERENE`, la de `--clave`, que solo pone el nombre en lo que imprime) es el slug de la organización en srtm.
+srtm la recibe en minúsculas y no admite guiones ni guiones bajos: un id (UUID) o un slug que los lleve va en
+`SRTM_CATASTRO_ORGANIZACIONES_<CLAVE>_ORGANIZACION`, bajo una clave cualquiera (por ejemplo `_ICA_ORGANIZACION=<id>`).
+La forma de una sola organización (`SRTM_CATASTRO_URL`, `SRTM_CATASTRO_CLIENT_ID`, `SRTM_CATASTRO_CLIENT_SECRET` y
+`SRTM_CATASTRO_ORGANIZACION`) sigue valiendo, como una entrada más. Es idempotente: si la cuenta ya existe solo le agrega el rol
 si le falta y dice su `clientId`; un secreto nuevo se pide con `POST /api/service-accounts/{id}/secret` (anula el
 anterior). srtm pide su token con `POST /api/auth/token {"clientId", "clientSecret"}` → `{"token", "expiresAt",
 "serviceAccount"}` y lo renueva al vencer. `apply_roles.py` deja el rol exactamente con los permisos de `roles.json`
