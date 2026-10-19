@@ -113,9 +113,9 @@ tabla (son agrupadores sin uso concreto).
 autoavalúo de un predio en un año, o el motivo por el que no lo tiene:
 
 - terreno = área de terreno × arancel por m²;
-- construcción, por piso: VU = muros y columnas + techos + puertas y ventanas (D4; con muros A, o D con techo incluido, sin techos), +5 % si
-  el predio es edificio y el piso es el 5.° o más (único, antes de depreciar; un sótano `S1` no sube),
-  × (1 − depreciación) × área construida;
+- construcción, por piso: VU = muros y columnas + techos + puertas y ventanas (D4; sin techos con muros A, o con
+  muros D de techo incluido), +5 % si el predio es edificio y el piso es el 5.° o más (único, antes de depreciar; un
+  sótano `S1` no sube), × (1 − depreciación) × área construida;
 - obras: VU de la partida × cantidad × factor de oficialización × (1 − depreciación), con la tabla del uso del predio y
   el material, estado y antigüedad de la obra (si la obra no dice material, el de su partida);
 - autoavalúo = (terreno + construcción + obras) × (1 + % de actualización). Cada cifra con 2 decimales, HALF_UP.
