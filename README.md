@@ -62,8 +62,18 @@ del MEF (`cod_pre`, `cod_cpu`, `cod_sect`, `cod_mzn`, `cod_lote`, `id_aranc`, `a
 `categorias` (`CCDCCDC`: muros y columnas, techos, pisos, puertas y ventanas, revestimientos, baños, instalaciones) o en
 siete columnas con el nombre del campo. La columna opcional `techo_incluido` (`SI`/`NO`, `S`/`N`, `TRUE`/`FALSE`,
 `1`/`0`, sin distinguir mayúsculas; vacía no se envía) marca los muros D de drywall que incluyen el techo (llamada 5 del
-Anexo I.4, ver D4); un valor que no se lee es un error de validación (código 2). Un predio que el Core ya tiene se
-salta; los pisos (llave predio y piso) y las obras (llave predio, `codigo_vu` y año de construcción) se crean solo si
+Anexo I.4, ver D4); un valor que no se lee es un error de validación (código 2). Dos columnas opcionales más, las dos
+vacías no se envían:
+
+- `clasificacion`: la tabla de depreciación del RNT de esa construcción. Va como una opción del enum `clasificacion`
+  (las mismas cuatro de srtm, sin distinguir mayúsculas), o como el número de la tabla, `1` a `4` o `01` a `04`. Si
+  viene, manda sobre la del uso del predio (D1). Así un padrón que clasifica cada nivel, como el de Ica (su
+  `clasificacion_construccion` 1 a 4 es la tabla 01 a 04), pasa tal cual.
+- `seccion`: un entero desde 1 (vacía vale 1), para las partes de un mismo piso con características distintas. El piso
+  sigue siendo solo su número (`5`, no `5-2`), así que el +5 % de edificio alcanza a cada sección.
+
+Un predio que el Core ya tiene se salta; los pisos (llave predio, piso y sección; un piso sin sección, como los que se
+cargaron antes, es la sección 1) y las obras (llave predio, `codigo_vu` y año de construcción) se crean solo si
 faltan, así que una carga que falló a medias se completa volviendo a correrla. Un piso que el Core ya tiene no se
 actualiza: para cambiarle `techo_incluido` hay que editarlo en el Core. Una llave repetida en el archivo es un error.
 
@@ -154,7 +164,9 @@ autoavalúo de un predio en un año, con las tablas de la región de su organiza
 - terreno = área de terreno × arancel por m²;
 - construcción, por piso: VU = muros y columnas + techos + puertas y ventanas (D4; sin techos con muros A, o con
   muros D de techo incluido), +5 % si el predio es edificio y el piso es el 5.° o más (único, antes de depreciar; un
-  sótano `S1` no sube), × (1 − depreciación) × área construida;
+  sótano `S1` no sube), × (1 − depreciación) × área construida. Cada sección de un piso (`seccion`) es una
+  construcción más, con el mismo piso. La depreciación es la de la tabla de la `clasificacion` de la construcción, si
+  la tiene, y si no la del uso del predio (D1);
 - obras: VU de la partida × cantidad × factor de oficialización × (1 − depreciación), con la tabla del uso del predio y
   el material, estado y antigüedad de la obra (si la obra no dice material, el de su partida);
 - autoavalúo = (terreno + construcción + obras) × (1 + % de actualización). Cada cifra con 2 decimales, HALF_UP.
@@ -163,7 +175,8 @@ Un dato que falta no es cero: el predio sale sin valor, con un `motivo` para lee
 ejemplo `ARANCEL_FALTANTE`, `VU_SIN_VALOR:TECHOS:I`, `TABLA_DE_DEPRECIACION:990000`,
 `PARAMETRO_FALTANTE:FACTOR_OFICIALIZACION:2025`, `OBRAS_SIN_CUADRO:<REGION>`); el motivo nombra el cuadro de la región. Gana
 el primero, en el orden del motor de kamayuk: terreno, arancel, parámetros del año, casillas del cuadro de cada piso,
-tabla de depreciación del uso, depreciación y obras.
+tabla de depreciación del uso (solo si algo la usa: una construcción sin `clasificacion` o una obra), la de cada
+`clasificacion` (`CLASIFICACION_DESCONOCIDA:<valor>` si el motor no la conoce), depreciación y obras.
 
 **Contra el padrón de Ica** (`ValorizacionCostaTest`): con muros C, techos C y puertas F el VU es 387.43 + 285.80 +
 90.81 = 764.04, el del padrón, y cinco niveles reales dan exactamente su `valor_total_nivel`. Leídos sus códigos contra
@@ -281,7 +294,8 @@ Confirmadas por la municipalidad el 2026-10-19, salvo lo que se dice abierto. D1
   desocupado, garage y bienes comunes sin subclase a 01. Cubre los 324 códigos. **Abierto**, para la administración
   tributaria con catastro: institucional en 02 o 03, hoteles (020503), consultorios médicos (03 o 04), servicios que
   pueden ser taller u oficina, conventos y asilos. Conviene pedir el parámetro «Uso Predio – Depreciación» del SRTM del
-  MEF (Exportar a Excel) y cotejarlo.
+  MEF (Exportar a Excel) y cotejarlo. Cuando el levantamiento clasifica cada construcción (`construccion.clasificacion`,
+  como Ica, que lo hace por nivel), esa clasificación manda y el uso solo decide las construcciones sin ella y las obras.
 - **D2** material: CONCRETO a Concreto, LADRILLO a Ladrillo, todo lo demás a la columna `Liviano/Adobe`.
 - **D3** estado MUY MALO se trata como Malo; las celdas `*` (ausentes en `depreciacion.csv`) toman el último
   porcentaje publicado de su fila.

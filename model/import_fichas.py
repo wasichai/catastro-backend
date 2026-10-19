@@ -15,14 +15,17 @@ Default columns follow the MEF carga masiva contract (kamayuk ContratoDeImportac
           techos, pisos, puertas_ventanas, revestimientos, banos, instalaciones) or in seven columns named as the fields,
           and optionally techo_incluido (SI/NO, S/N, TRUE/FALSE, 1/0; empty = not sent): the muros D are drywall that
           includes the techo (llamada 5 of every regional cuadro, Anexos I.1-I.4), so the valuation leaves the techos
-          category out
+          category out. Two more optional columns: clasificacion, the RNT depreciation table of that construction (an
+          option of the model's enum clasificacion, srtm's same four, or the table number 1-4; empty = the predio's
+          uso table, not sent), and seccion, an integer >= 1 for the parts of one piso that differ (empty = 1, not
+          sent); the piso stays the floor number, so the edificio increment still reaches it
   obras:  cod_pre -> codigo_municipal, codigo_vu (TIPO DE OBRA|numero, as obra_categoria in srtm), cantidad,
           anio_construccion, material, estado_conservacion
 --map, --map-pisos and --map-obras field=column override those defaults (repeatable). material and
 estado_conservacion take the model's options in any case, with _ for a space (MUY_BUENO).
 
 Idempotent by codigo_municipal: a predio Core already has is skipped. Pisos and obras are idempotent by their own key,
-(predio, piso) and (predio, codigo_vu, anio_construccion): only the ones Core lacks are created, so a run that failed
+(predio, piso, seccion) and (predio, codigo_vu, anio_construccion), a piso without seccion being seccion 1: only the ones Core lacks are created, so a run that failed
 half way is completed by running again. A key repeated in the file is an error. Exit: 0 ok, 1 Core refused something, 2 the files do not fit the model (every bad row is listed, nothing
 is sent).
 
@@ -58,6 +61,7 @@ PISO_COLUMNS = {
     "codigo_municipal": "cod_pre", "piso": "piso", "area_construida": "area_construida",
     "anio_construccion": "anio_construccion", "material": "material", "estado_conservacion": "estado_conservacion",
     "categorias": "categorias", **{c: c for c in CATEGORIAS}, "techo_incluido": "techo_incluido",
+    "clasificacion": "clasificacion", "seccion": "seccion",
 }
 OBRA_COLUMNS = {
     "codigo_municipal": "cod_pre", "codigo_vu": "codigo_vu", "cantidad": "cantidad",
@@ -67,6 +71,8 @@ OBRA_COLUMNS = {
 TRUE = {"true", "t", "si", "sí", "s", "yes", "y", "1", "x"}
 FALSE = {"false", "f", "no", "n", "0"}
 CATEGORIA = re.compile(r"[A-J]")
+# the RNT's table number (1-4 or 01-04): model.json lists the enum clasificacion in the order of the tables
+TABLA_RNT = re.compile(r"0?([1-4])")
 
 
 def parse_bool(value):
@@ -78,6 +84,29 @@ def parse_bool(value):
     if text.lower() in FALSE:
         return False, None
     return None, f"'{text}' is not a yes/no"
+
+
+def parse_clasificacion(value, options):
+    """(option, error): an option of the enum clasificacion, or the number of its RNT table."""
+    text = clean_text(value)
+    if text is None:
+        return None, None
+    if not options:
+        return None, f"'{text}': the model has no enum clasificacion (python3 apply.py first)"
+    tabla = TABLA_RNT.fullmatch(text)
+    if tabla:
+        return options[int(tabla.group(1)) - 1], None
+    option, error = enum_option(text, options)
+    if error:
+        return None, f"'{text}' is neither an RNT table 1-4 nor one of {', '.join(options)}"
+    return option, None
+
+
+def parse_seccion(value):
+    seccion, error = parse_int(value)
+    if error is None and seccion is not None and seccion < 1:
+        return None, f"'{seccion}' is not 1 or more"
+    return seccion, error
 
 
 def _where(row):
@@ -165,10 +194,14 @@ def pisos_from(rows, mapping, enums, codigos):
             continue
         if codigo not in codigos:
             found.append("codigo_municipal is not in the fichas")
-        if (codigo, piso) in seen:
-            found.append(f"piso {piso} repeated, first at row {seen[(codigo, piso)]}")
-        seen.setdefault((codigo, piso), row["_fila"])
-        attributes = {"piso": piso, **_material_estado(row, mapping, enums, found)}
+        seccion, error = parse_seccion(column_for(row, mapping, "seccion"))
+        if error:
+            found.append(f"seccion {error}")
+        key = (codigo, piso, seccion or 1)
+        if key in seen:
+            found.append(f"piso {piso} seccion {seccion or 1} repeated, first at row {seen[key]}")
+        seen.setdefault(key, row["_fila"])
+        attributes = {"piso": piso, "seccion": seccion, **_material_estado(row, mapping, enums, found)}
         attributes["area_construida"], error = parse_decimal(column_for(row, mapping, "area_construida"))
         if error:
             found.append(f"area_construida {error}")
@@ -179,6 +212,10 @@ def pisos_from(rows, mapping, enums, codigos):
         attributes["techo_incluido"], error = parse_bool(column_for(row, mapping, "techo_incluido"))
         if error:
             found.append(f"techo_incluido {error}")
+        attributes["clasificacion"], error = parse_clasificacion(column_for(row, mapping, "clasificacion"),
+                                                                 enums.get("clasificacion"))
+        if error:
+            found.append(f"clasificacion {error}")
         problems.extend(f"pisos {where} ({codigo}): {f}" for f in found)
         pisos.append((row["_fila"], codigo, attributes))
     return pisos, problems
@@ -221,7 +258,8 @@ def relation_id(value):
 
 
 def piso_key(predio_id, a):
-    return predio_id, str(a["piso"])
+    # a piso Core has without seccion (loaded before it existed) is seccion 1
+    return predio_id, str(a["piso"]), int(a.get("seccion") or 1)
 
 
 def obra_key(predio_id, a):
@@ -229,8 +267,8 @@ def obra_key(predio_id, a):
 
 
 def load(client, fichas, pisos, obras, workers):
-    """Creates the predios Core lacks, then every piso and obra Core lacks, by natural key: a piso is (predio, piso), an
-    obra (predio, codigo_vu, anio_construccion). A run that failed half way is completed by running again, and a child
+    """Creates the predios Core lacks, then every piso and obra Core lacks, by natural key: a piso is (predio, piso,
+    seccion), an obra (predio, codigo_vu, anio_construccion). A run that failed half way is completed by running again, and a child
     Core has is never touched or duplicated. Returns (created, skipped, construcciones, obras)."""
     existing = {r["attributes"]["codigo_municipal"]: r["id"] for r in client.list_all("predio_catastral")}
     todo = [(a["codigo_municipal"], fila, a) for fila, a in fichas if a["codigo_municipal"] not in existing]
