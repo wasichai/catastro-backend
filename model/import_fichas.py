@@ -12,7 +12,9 @@ Default columns follow the MEF carga masiva contract (kamayuk ContratoDeImportac
           cod_via, cuadra, lado, uso, area_terreno, longitud_frente, anio_levantamiento, es_edificio
   pisos:  cod_pre -> codigo_municipal, piso, area_construida, anio_construccion, material, estado_conservacion, and
           the seven categories either as one 7-letter text in `categorias` (e.g. CCDCCDC, in the order muros_columnas,
-          techos, pisos, puertas_ventanas, revestimientos, banos, instalaciones) or in seven columns named as the fields
+          techos, pisos, puertas_ventanas, revestimientos, banos, instalaciones) or in seven columns named as the fields,
+          and optionally techo_incluido (SI/NO, S/N, TRUE/FALSE, 1/0; empty = not sent): the muros D are drywall that
+          includes the techo (Anexo I.4, llamada 5), so the valuation leaves the techos category out
   obras:  cod_pre -> codigo_municipal, codigo_vu (TIPO DE OBRA|numero, as obra_categoria in srtm), cantidad,
           anio_construccion, material, estado_conservacion
 --map, --map-pisos and --map-obras field=column override those defaults (repeatable). material and
@@ -48,7 +50,7 @@ FICHA_DECIMAL = ["area_terreno", "longitud_frente"]
 PISO_COLUMNS = {
     "codigo_municipal": "cod_pre", "piso": "piso", "area_construida": "area_construida",
     "anio_construccion": "anio_construccion", "material": "material", "estado_conservacion": "estado_conservacion",
-    "categorias": "categorias", **{c: c for c in CATEGORIAS},
+    "categorias": "categorias", **{c: c for c in CATEGORIAS}, "techo_incluido": "techo_incluido",
 }
 OBRA_COLUMNS = {
     "codigo_municipal": "cod_pre", "codigo_vu": "codigo_vu", "cantidad": "cantidad",
@@ -167,6 +169,9 @@ def pisos_from(rows, mapping, enums, codigos):
         if error:
             found.append(error)
         attributes.update(letters)
+        attributes["techo_incluido"], error = parse_bool(column_for(row, mapping, "techo_incluido"))
+        if error:
+            found.append(f"techo_incluido {error}")
         problems.extend(f"pisos {where} ({codigo}): {f}" for f in found)
         pisos.append((row["_fila"], codigo, attributes))
     return pisos, problems

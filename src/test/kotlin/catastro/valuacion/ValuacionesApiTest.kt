@@ -66,6 +66,14 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         materiales.forEachIndexed { n, material -> piso(variado, "${n + 1}", material, estados[n % estados.size], area = 10, anio = 2000) }
         estados.forEachIndexed { n, estado -> piso(variado, "S${n + 1}", "LADRILLO", estado, area = 10, anio = 2000) }
 
+        // muros D drywall that includes the techo (llamada 5): the techos D 231.25 stays out, and the flag round-trips
+        // through core. VU = 378.67 + 108.28 = 486.95; x 0.95 x 100 = 46260.25 (ValorizacionTest); + terreno 9100.00
+        val drywall = predio("$marca-4", idAranc)
+        piso(drywall, "1", "CONCRETO", "BUENO", muros = "D", techoIncluido = true)
+        // the same flag on muros C is a capture error
+        val invalido = predio("$marca-5", idAranc)
+        piso(invalido, "1", "CONCRETO", "BUENO", techoIncluido = true)
+
         val todos = leerTodo(srtm, 500)
         val items = todos.associateBy { it["codigoMunicipal"].asString() }
 
@@ -98,6 +106,12 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         for (campo in listOf("terreno", "construccion", "obras", "autoavaluo")) assertTrue(b[campo].isNull, campo)
         assertTrue(b["loteGeom"].isNull)
         numero("100", b["areaConstruida"])
+
+        val d = items.getValue("$marca-4")
+        assertTrue(d["llave"].isNull, d.toString())
+        numero("46260.25", d["construccion"])
+        numero("55360.25", d["autoavaluo"])
+        assertEquals("TECHO_INCLUIDO_INVALIDO:C", items.getValue("$marca-5")["llave"].asString())
 
         val c = items.getValue("$marca-3")
         assertTrue(c["llave"].isNull, c.toString())
@@ -202,7 +216,9 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         estado: String,
         techos: String = "D",
         area: Int = 100,
-        anio: Int = 2016
+        anio: Int = 2016,
+        muros: String = "C",
+        techoIncluido: Boolean? = null
     ) = registro(
         CONSTRUCCION,
         mapOf(
@@ -212,10 +228,10 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
             "anio_construccion" to anio,
             "material" to material,
             "estado_conservacion" to estado,
-            "muros_columnas" to "C",
+            "muros_columnas" to muros,
             "techos" to techos,
             "puertas_ventanas" to "E"
-        )
+        ) + (techoIncluido?.let { mapOf("techo_incluido" to it) } ?: emptyMap())
     )
 
     // a record created by the seeded admin: its id

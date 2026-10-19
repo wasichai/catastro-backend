@@ -57,9 +57,12 @@ nada; un rechazo del Core sale con 1. Son idempotentes: correrlos dos veces no c
 del MEF (`cod_pre`, `cod_cpu`, `cod_sect`, `cod_mzn`, `cod_lote`, `id_aranc`, `area_terreno`, `longitud_frente`...);
 `--map`, `--map-pisos` y `--map-obras` `campo=columna` las cambian. Las siete categorías van en una columna
 `categorias` (`CCDCCDC`: muros y columnas, techos, pisos, puertas y ventanas, revestimientos, baños, instalaciones) o en
-siete columnas con el nombre del campo. Un predio que el Core ya tiene se salta; los pisos (llave predio y piso) y las obras
-(llave predio, `codigo_vu` y año de construcción) se crean solo si faltan, así que una carga que falló a medias se
-completa volviendo a correrla. Una llave repetida en el archivo es un error.
+siete columnas con el nombre del campo. La columna opcional `techo_incluido` (`SI`/`NO`, `S`/`N`, `TRUE`/`FALSE`,
+`1`/`0`, sin distinguir mayúsculas; vacía no se envía) marca los muros D de drywall que incluyen el techo (llamada 5 del
+Anexo I.4, ver D4); un valor que no se lee es un error de validación (código 2). Un predio que el Core ya tiene se
+salta; los pisos (llave predio y piso) y las obras (llave predio, `codigo_vu` y año de construcción) se crean solo si
+faltan, así que una carga que falló a medias se completa volviendo a correrla. Un piso que el Core ya tiene no se
+actualiza: para cambiarle `techo_incluido` hay que editarlo en el Core. Una llave repetida en el archivo es un error.
 
 ```sh
 python3 import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.csv --dry-run
@@ -110,7 +113,7 @@ tabla (son agrupadores sin uso concreto).
 autoavalúo de un predio en un año, o el motivo por el que no lo tiene:
 
 - terreno = área de terreno × arancel por m²;
-- construcción, por piso: VU = muros y columnas + techos + puertas y ventanas (D4; con muros A, sin techos), +5 % si
+- construcción, por piso: VU = muros y columnas + techos + puertas y ventanas (D4; con muros A, o D con techo incluido, sin techos), +5 % si
   el predio es edificio y el piso es el 5.° o más (único, antes de depreciar; un sótano `S1` no sube),
   × (1 − depreciación) × área construida;
 - obras: VU de la partida × cantidad × factor de oficialización × (1 − depreciación), con la tabla del uso del predio y
@@ -208,9 +211,11 @@ Confirmadas por la municipalidad el 2026-10-19, salvo lo que se dice abierto. D1
 - **D4** se suman las 3 partidas (muros y columnas, techos, puertas y ventanas), cada una con su categoría. La nota del
   Anexo I.4 dice «UNA DE LAS 3 COLUMNAS», sin «CADA»: es una errata que la Selva arrastra desde los cuadros de 7
   columnas (la Sierra se corrigió), y el propio cuadro solo tiene sentido sumando. Con **muros A** no se considera
-  techos (nota de la casilla: «NO SE CONSIDERA LOS VALORES DE LA COLUMNA N° 2»). **Abierto:** muros D «drywall o
-  similar incluye techo» (llamada 5) tampoco suma techos, pero la letra D sola no lo distingue del ladrillo; hoy se
-  suma.
+  techos (nota de la casilla: «NO SE CONSIDERA LOS VALORES DE LA COLUMNA N° 2»). Los muros D «drywall o similar incluye
+  techo» (llamada 5) tampoco suman techos, pero la letra D sola no los distingue del ladrillo, que también es D: lo
+  resuelve el campo `techo_incluido` de la ficha del piso. Sin él (o en falso), D suma techos, que es el caso del
+  ladrillo. Marcarlo con muros que no sean A ni D es un error de captura: el predio queda sin valorizar con la llave
+  `TECHO_INCLUIDO_INVALIDO:<letra>`.
 - **D5** las celdas `.....` no son cero: el predio recibe un `motivo` (sin valor).
 - **D6** porcentaje de actualización 2026 = 0.
 - **D7** llave de cruce catastro y srtm: código municipal (= `predio.codigo` de srtm), luego `codigo_cpu`, luego

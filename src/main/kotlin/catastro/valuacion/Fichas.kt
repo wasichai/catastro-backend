@@ -46,7 +46,8 @@ data class FichaConstruccion(
     val estadoConservacion: String? = null,
     val murosColumnas: String? = null,
     val techos: String? = null,
-    val puertasVentanas: String? = null
+    val puertasVentanas: String? = null,
+    val techoIncluido: Boolean? = null
 )
 
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)

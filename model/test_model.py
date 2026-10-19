@@ -18,7 +18,8 @@ OBJETOS = {
         ["codigo_municipal", "codigo_cpu", "sector", "manzana", "lote", "id_aranc", "cod_via", "cuadra", "lado", "uso",
          "area_terreno", "longitud_frente", "anio_levantamiento", "es_edificio", "lote_geom"],
         {"codigo_municipal"}, {"codigo_municipal"}),
-    "construccion": (["piso", "area_construida", "anio_construccion", "material", "estado_conservacion", *CATEGORIAS], set(), set()),
+    "construccion": (["piso", "area_construida", "anio_construccion", "material", "estado_conservacion", *CATEGORIAS,
+                      "techo_incluido"], set(), set()),
     "obra_complementaria": (["codigo_vu", "cantidad", "anio_construccion", "material", "estado_conservacion"], set(), set()),
     "arancel": (["clave", "id_aranc", "anio", "valor_m2", "cod_via", "cuadra", "lado"],
                 {"clave", "id_aranc", "anio", "valor_m2"}, {"clave"}),
@@ -56,6 +57,8 @@ class ModelTests(unittest.TestCase):
         self.assertEqual(types["area_terreno"], "DECIMAL")
         self.assertEqual(types["anio_levantamiento"], "INTEGER")
         self.assertEqual(types["es_edificio"], "BOOLEAN")
+        self.assertEqual(next(f["type"] for f in self.objects["construccion"]["fields"] if f["name"] == "techo_incluido"),
+                         "BOOLEAN")
         geom = next(f for f in self.objects["predio_catastral"]["fields"] if f["name"] == "lote_geom")
         self.assertEqual((geom["type"], geom["geometryType"], geom["srid"]), ("GEOMETRY", "POLYGON", 32718))
 

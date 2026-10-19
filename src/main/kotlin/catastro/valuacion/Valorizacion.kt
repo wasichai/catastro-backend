@@ -20,7 +20,8 @@ data class Insumos(
 )
 
 // one piso. material and estado in catastro's enum spelling (CONCRETO, MUY BUENO …); the letters are the three
-// partidas the selva cuadro prices (the other four categorías do not enter the VU)
+// partidas the selva cuadro prices (the other four categorías do not enter the VU). techoIncluido marks the muros D
+// that are drywall including the techo (anexo I.4, llamada 5); null is "not declared", the ladrillo case
 data class Construccion(
     val piso: String,
     val areaConstruida: BigDecimal?,
@@ -29,7 +30,8 @@ data class Construccion(
     val estado: String?,
     val muros: Char?,
     val techos: Char?,
-    val puertas: Char?
+    val puertas: Char?,
+    val techoIncluido: Boolean? = null
 )
 
 // codigoVu is "TIPO DE OBRA|numero", the key of Tablas.obra
@@ -63,6 +65,7 @@ sealed interface Valuacion {
 object Valorizacion {
     private const val ESCALA = 2
     private const val MUROS_SIN_TECHOS = 'A'
+    private const val MUROS_DRYWALL = 'D'
     private val CIEN = BigDecimal(100)
 
     fun valorizar(
@@ -183,7 +186,9 @@ object Valorizacion {
 
     // D4: muros y columnas + techos + puertas y ventanas. a "....." cell is no value (D5), not zero. muros A
     // (estructuras laminares curvadas, cimentación y techo en una sola armadura) leaves techos out: «PARA ESTE CASO NO SE
-    // CONSIDERA LOS VALORES DE LA COLUMNA N° 2», so its letter is neither asked nor added
+    // CONSIDERA LOS VALORES DE LA COLUMNA N° 2», so its letter is neither asked nor added. muros D is the same only for
+    // «DRYWALL O SIMILAR INCLUYE TECHO (5)», which the ficha flags with techoIncluido (the ladrillo, also D, keeps its
+    // techos); the flag on any other muros is a capture error, not something to guess
     private fun valorUnitario(
         c: Construccion,
         t: Tablas
@@ -192,9 +197,17 @@ object Valorizacion {
         if (c.anioConstruccion == null) {
             falta("ANIO_CONSTRUCCION_FALTANTE", "$donde no declara año de construcción: sin él no hay antigüedad con que depreciar")
         }
+        if (c.techoIncluido == true && c.muros != null && c.muros != MUROS_SIN_TECHOS && c.muros != MUROS_DRYWALL) {
+            falta(
+                "TECHO_INCLUIDO_INVALIDO:${c.muros}",
+                "$donde marca el techo incluido en los muros, pero sus muros son de categoría ${c.muros}: " +
+                    "solo la A y la D (drywall) lo incluyen según el cuadro"
+            )
+        }
+        val sinTecho = c.muros == MUROS_SIN_TECHOS || (c.muros == MUROS_DRYWALL && c.techoIncluido == true)
         val letras =
             mapOf(Partida.MUROS_COLUMNAS to c.muros, Partida.TECHOS to c.techos, Partida.PUERTAS_VENTANAS to c.puertas)
-                .filterKeys { !(it == Partida.TECHOS && c.muros == MUROS_SIN_TECHOS) }
+                .filterKeys { !(it == Partida.TECHOS && sinTecho) }
         return letras.entries.sumOf { (partida, letra) ->
             val categoria =
                 letra?.toString() ?: falta(
