@@ -78,6 +78,34 @@ class ParseTests(unittest.TestCase):
         _, problems = imf.pisos_from(rows, pm, ENUMS, {"A"})
         self.assertEqual(len(problems), 7, problems)
 
+    def test_techo_incluido_accepts_the_usual_yes_no_spellings(self):
+        pm = parse_map([], imf.PISO_COLUMNS)
+        values = ["SI", "no", "S", "n", "TRUE", "False", "1", "0", ""]
+        rows = read_table(write_csv(self, "cod_pre,piso,categorias,techo_incluido\n" +
+                                    "".join(f"A,{i},DCDCCDC,{v}\n" for i, v in enumerate(values))))
+        pisos, problems = imf.pisos_from(rows, pm, ENUMS, {"A"})
+        self.assertEqual(problems, [])
+        self.assertEqual([p[2]["techo_incluido"] for p in pisos],
+                         [True, False, True, False, True, False, True, False, None])
+
+    def test_techo_incluido_is_optional(self):
+        rows = read_table(write_csv(self, "cod_pre,piso,categorias\nA,1,DCDCCDC\n"))
+        pisos, problems = imf.pisos_from(rows, parse_map([], imf.PISO_COLUMNS), ENUMS, {"A"})
+        self.assertEqual(problems, [])
+        self.assertIsNone(pisos[0][2]["techo_incluido"])
+
+    def test_an_unreadable_techo_incluido_is_a_problem(self):
+        rows = read_table(write_csv(self, "cod_pre,piso,categorias,techo_incluido\nA,1,DCDCCDC,quizas\n"))
+        _, problems = imf.pisos_from(rows, parse_map([], imf.PISO_COLUMNS), ENUMS, {"A"})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("techo_incluido", problems[0])
+
+    def test_techo_incluido_column_can_be_remapped(self):
+        pm = parse_map(["techo_incluido=INCLUYE_TECHO"], imf.PISO_COLUMNS)
+        rows = read_table(write_csv(self, "cod_pre,piso,categorias,INCLUYE_TECHO\nA,1,DCDCCDC,si\n"))
+        pisos, problems = imf.pisos_from(rows, pm, ENUMS, {"A"})
+        self.assertEqual((problems, pisos[0][2]["techo_incluido"]), ([], True))
+
     def test_obras_and_orphans(self):
         om = parse_map([], imf.OBRA_COLUMNS)
         rows = read_table(write_csv(self, OBRAS + "Z,X|1,1,2000,METAL,BUENO\nA,X|1,uno,2000,METAL,BUENO\n"))
@@ -118,6 +146,14 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(piso["attributes"]["estado_conservacion"], "MUY BUENO")
         self.assertEqual(piso["attributes"]["muros_columnas"], "B")
         self.assertEqual(self.core.records["obra_complementaria"][0]["attributes"]["predio"], predios["120302-0001"]["id"])
+
+    def test_techo_incluido_reaches_core_and_is_omitted_when_empty(self):
+        pisos = write_csv(self, "cod_pre,piso,categorias,techo_incluido\n120302-0001,1,DCDCCDC,si\n120302-0001,2,DCDCCDC,\n")
+        code, _, err = self.cli(pisos=pisos)
+        self.assertEqual(code, 0, err)
+        by_piso = {r["attributes"]["piso"]: r["attributes"] for r in self.core.records["construccion"]}
+        self.assertIs(by_piso["1"]["techo_incluido"], True)
+        self.assertNotIn("techo_incluido", by_piso["2"])
 
     def test_second_run_creates_nothing(self):
         self.cli("--obras", self.obras)

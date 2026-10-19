@@ -32,8 +32,9 @@ class ValorizacionTest {
         estado: String? = "BUENO",
         muros: Char? = 'C',
         techos: Char? = 'D',
-        puertas: Char? = 'E'
-    ) = Construccion(piso, area, anio, material, estado, muros, techos, puertas)
+        puertas: Char? = 'E',
+        techoIncluido: Boolean? = null
+    ) = Construccion(piso, area, anio, material, estado, muros, techos, puertas, techoIncluido)
 
     private fun valorizada(
         i: Insumos,
@@ -165,6 +166,49 @@ class ValorizacionTest {
         // techos sin declarar, o en una celda de puntos, no importa: no se pide
         assertEquals(esperado, valorizada(insumos(construcciones = listOf(piso(muros = 'A', techos = null)))).construccion)
         assertEquals(esperado, valorizada(insumos(construcciones = listOf(piso(muros = 'A', techos = 'I')))).construccion)
+    }
+
+    @Test
+    fun `muros D de drywall que incluye techo no considera techos`() {
+        // anexo I.4, muros D «DRYWALL O SIMILAR INCLUYE TECHO (5)»; llamada (5): no se considera la columna N° 2 (techos)
+        // VU = muros D 378.67 + puertas E 108.28 = 486.95; x 0.95 (concreto bueno hasta 10) x 100 = 462.6025 x 100 = 46260.25
+        val esperado = bd("46260.25")
+        val incluido = piso(muros = 'D', techos = 'D', techoIncluido = true)
+        assertEquals(esperado, valorizada(insumos(construcciones = listOf(incluido))).construccion)
+        // techos sin declarar, o en una celda de puntos, no importa: no se pide
+        assertEquals(esperado, valorizada(insumos(construcciones = listOf(piso(muros = 'D', techos = null, techoIncluido = true)))).construccion)
+        assertEquals(esperado, valorizada(insumos(construcciones = listOf(piso(muros = 'D', techos = 'I', techoIncluido = true)))).construccion)
+    }
+
+    @Test
+    fun `muros D sin el indicador suma techos - es el caso del ladrillo`() {
+        // VU = muros D 378.67 + techos D 231.25 + puertas E 108.28 = 718.20; x 0.95 x 100 = 682.29 x 100 = 68229.00
+        val esperado = bd("68229.00")
+        assertEquals(esperado, valorizada(insumos(construcciones = listOf(piso(muros = 'D')))).construccion)
+        // un indicador en falso o vacío es lo mismo que no declararlo
+        assertEquals(esperado, valorizada(insumos(construcciones = listOf(piso(muros = 'D', techoIncluido = false)))).construccion)
+        // y sin techos declarados el predio no se valoriza: la categoría sin declarar no es «sin techo»
+        assertEquals(
+            "CATEGORIA_FALTANTE:TECHOS",
+            sinValor(insumos(construcciones = listOf(piso(muros = 'D', techos = null)))).llave
+        )
+    }
+
+    @Test
+    fun `muros A con el indicador es redundante pero válido`() {
+        // muros A ya excluye techos: VU = 995.50 + 108.28 = 1103.78; x 0.95 x 100 = 104859.10, igual que sin indicador
+        val v = valorizada(insumos(construcciones = listOf(piso(muros = 'A', techos = 'A', techoIncluido = true))))
+        assertEquals(bd("104859.10"), v.construccion)
+    }
+
+    @Test
+    fun `el indicador de techo incluido con muros que no son A ni D es un error de captura`() {
+        // el cuadro solo incluye techo en muros A (estructuras laminares) y D (drywall): con C no hay que adivinar
+        val v = sinValor(insumos(construcciones = listOf(piso(muros = 'C', techoIncluido = true))))
+        assertEquals("TECHO_INCLUIDO_INVALIDO:C", v.llave)
+        assertTrue(v.motivo.contains("piso 1"))
+        // en falso, con C, es el caso corriente: VU 829.28 (829.28 x 0.95 x 100 = 78781.60)
+        assertEquals(bd("78781.60"), valorizada(insumos(construcciones = listOf(piso(techoIncluido = false)))).construccion)
     }
 
     @Test

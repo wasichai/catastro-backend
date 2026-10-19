@@ -176,6 +176,12 @@
           "label": "Instalaciones eléctricas y sanitarias",
           "type": "ENUM",
           "enum": "letra_categoria"
+        },
+        {
+          "name": "techo_incluido",
+          "label": "Techo incluido en los muros",
+          "type": "BOOLEAN",
+          "description": "Muros categoría D de drywall o similar que incluyen el techo: según la llamada (5) del Anexo I.4 no se considera la columna 2 (Techos). No aplica al ladrillo, que también es D."
         }
       ]
     },

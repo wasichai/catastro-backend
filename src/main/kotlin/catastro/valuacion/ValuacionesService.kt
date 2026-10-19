@@ -78,7 +78,8 @@ class ValuacionesService(
                             estado = it.estadoConservacion,
                             muros = it.murosColumnas?.singleOrNull(),
                             techos = it.techos?.singleOrNull(),
-                            puertas = it.puertasVentanas?.singleOrNull()
+                            puertas = it.puertasVentanas?.singleOrNull(),
+                            techoIncluido = it.techoIncluido
                         )
                     },
                 obras = obras.map { Obra(it.codigoVu, it.cantidad, it.anioConstruccion, it.material, it.estadoConservacion) }
