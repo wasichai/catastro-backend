@@ -1,6 +1,7 @@
 package catastro.valuacion
 
 import catastro.tablas.ClaveParametro
+import catastro.tablas.Region
 import catastro.tablas.Tablas
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -10,7 +11,7 @@ import java.math.BigDecimal
 // the engine against the shipped tables. every figure is worked by hand in the comment above its assertion, with the
 // cells read from src/main/resources/tablas (VU = anexo I.4 selva, dep = RNT anexo I, obras = anexo III.4 selva)
 class ValorizacionTest {
-    private val tablas = Tablas.desdeClasspath()
+    private val tablas = Tablas.de(Region.SELVA)
 
     private fun bd(valor: String) = BigDecimal(valor)
 
@@ -99,6 +100,7 @@ class ValorizacionTest {
     fun `el porcentaje de actualización incrementa el autoavalúo`() {
         val conDiez =
             Tablas(
+                tablas.region,
                 tablas.valoresUnitarios,
                 tablas.depreciaciones,
                 tablas.obras,

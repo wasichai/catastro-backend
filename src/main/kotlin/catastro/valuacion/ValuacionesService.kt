@@ -1,7 +1,8 @@
 package catastro.valuacion
 
 import catastro.Registros
-import catastro.tablas.Tablas
+import catastro.tablas.Region
+import catastro.tablas.TablasPorRegion
 import org.springframework.stereotype.Service
 import wasichai.core.common.PageRequest
 import wasichai.core.data.RecordQuery
@@ -13,7 +14,7 @@ import java.util.UUID
 @Service
 class ValuacionesService(
     private val registros: Registros,
-    private val tablas: Tablas
+    private val tablas: TablasPorRegion
 ) {
     suspend fun pagina(
         anio: Int,
@@ -84,7 +85,8 @@ class ValuacionesService(
                     },
                 obras = obras.map { Obra(it.codigoVu, it.cantidad, it.anioConstruccion, it.material, it.estadoConservacion) }
             )
-        val v = Valorizacion.valorizar(insumos, tablas)
+        // perené's region until the organization's own is read
+        val v = Valorizacion.valorizar(insumos, tablas.de(Region.SELVA))
         val valor = v as? Valuacion.Valorizada
         val falta = v as? Valuacion.SinValorizar
         return ItemValuacion(
