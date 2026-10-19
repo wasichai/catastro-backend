@@ -19,9 +19,11 @@ data class Insumos(
     val obras: List<Obra>
 )
 
-// one piso. material and estado in catastro's enum spelling (CONCRETO, MUY BUENO …); the letters are the three
-// partidas every regional cuadro prices (the other four categorías do not enter the VU). techoIncluido marks the muros D
-// that are drywall including the techo (llamada 5 of anexos I.1-I.4); null is "not declared", the ladrillo case
+// one piso, or one seccion of a piso. material and estado in catastro's enum spelling (CONCRETO, MUY BUENO …); the
+// letters are the three partidas every regional cuadro prices (the other four categorías do not enter the VU).
+// techoIncluido marks the muros D that are drywall including the techo (llamada 5 of anexos I.1-I.4); null is "not
+// declared", the ladrillo case. clasificacion, an option of the model's enum clasificacion, is the RNT tabla this
+// construction depreciates with; null takes the predio's uso tabla (D1). seccion null is 1; piso keeps only the floor
 data class Construccion(
     val piso: String,
     val areaConstruida: BigDecimal?,
@@ -31,7 +33,9 @@ data class Construccion(
     val muros: Char?,
     val techos: Char?,
     val puertas: Char?,
-    val techoIncluido: Boolean? = null
+    val techoIncluido: Boolean? = null,
+    val clasificacion: String? = null,
+    val seccion: Int? = null
 )
 
 // codigoVu is "TIPO DE OBRA|numero", the key of Tablas.obra
@@ -61,8 +65,17 @@ sealed interface Valuacion {
 
 // the autoavalúo of one predio: pure, no clock, no db. the first thing that keeps the predio from a value wins, in the
 // order of kamayuk's ValorizacionDelPredio: the ficha's land, the arancel, the year's parameters, every construction's
-// cuadro cells, then the uso's depreciation tabla (RT-004), then the obras
+// cuadro cells, then the depreciation tablas (the uso's, RT-004, then each construction's clasificación), then the obras
 object Valorizacion {
+    // the model's enum clasificacion (srtm-backend's same four options) to the RNT's tables of anexo I, by their titles
+    val TABLA_POR_CLASIFICACION: Map<String, String> =
+        linkedMapOf(
+            "CASA HABITACION Y DEPARTAMENTOS PARA VIVIENDA" to "01",
+            "TIENDAS DEPOSITOS CENTROS DE RECREACION CLUBES E INSTITUCIONES" to "02",
+            "EDIFICIO-OFICINAS" to "03",
+            "CLINICAS HOSPITALES CINES INDUSTRIAS COLEGIOS TALLERES" to "04"
+        )
+
     private const val ESCALA = 2
     private const val MUROS_SIN_TECHOS = 'A'
     private const val MUROS_DRYWALL = 'D'
@@ -105,10 +118,11 @@ object Valorizacion {
         val terreno = area.multiply(arancel).redondeado()
 
         val unitarios = i.construcciones.map { valorUnitario(it, t) }
-        // right after every construction's cells (java order) and before anything a piso or an obra declares. a bare lot
-        // needs no tabla: the empty one is never read
+        // right after every construction's cells (java order) and before anything a piso or an obra declares. the uso's
+        // tabla is asked only when something depreciates with it: an obra, or a construction without a clasificación (a
+        // bare lot needs none, and the empty one is never read)
         val tabla =
-            if (i.construcciones.isEmpty() && i.obras.isEmpty()) {
+            if (i.construcciones.all { it.clasificacion != null } && i.obras.isEmpty()) {
                 ""
             } else {
                 i.uso?.let { t.tablaPorUso(it) } ?: falta(
@@ -116,16 +130,18 @@ object Valorizacion {
                     "No hay tabla de depreciación del RNT para el uso «${i.uso ?: "sin uso"}» (D1): sin ella lo construido no se deprecia"
                 )
             }
+        val tablas = i.construcciones.map { c -> c.clasificacion?.let { tablaPorClasificacion(it, donde(c)) } ?: tabla }
 
         val construccion =
-            i.construcciones
-                .zip(unitarios)
-                .sumOf { (c, vu) ->
-                    val donde = "la construcción del piso ${c.piso}"
+            i.construcciones.indices
+                .sumOf { n ->
+                    val c = i.construcciones[n]
+                    val vu = unitarios[n]
+                    val donde = donde(c)
                     val areaConstruida = c.areaConstruida ?: falta("AREA_CONSTRUIDA_FALTANTE", "$donde no declara área construida")
                     if (areaConstruida.signum() < 0) falta("AREA_CONSTRUIDA_INVALIDA", "$donde declara un área construida negativa ($areaConstruida)")
                     val conIncremento = incremento?.takeIf { aplicaIncremento(c.piso, it.desde) }?.let { vu.multiply(it.factor) } ?: vu
-                    val dep = depreciacion(t, tabla, c.material, c.estado, c.anioConstruccion, i.anio, donde)
+                    val dep = depreciacion(t, tablas[n], c.material, c.estado, c.anioConstruccion, i.anio, donde)
                     conIncremento.multiply(dep).multiply(areaConstruida).redondeado()
                 }
 
@@ -162,6 +178,17 @@ object Valorizacion {
             if (actualizacion.signum() == 0) suma else suma.add(suma.multiply(actualizacion).divide(CIEN)).redondeado()
         return Valuacion.Valorizada(terreno, construccion.redondeado(), obras.redondeado(), autoavaluo)
     }
+
+    private fun donde(c: Construccion): String = "la construcción del piso ${c.piso}" + (c.seccion?.takeIf { it != 1 }?.let { ", sección $it" } ?: "")
+
+    private fun tablaPorClasificacion(
+        clasificacion: String,
+        donde: String
+    ): String =
+        TABLA_POR_CLASIFICACION[clasificacion.trim().uppercase()] ?: falta(
+            "CLASIFICACION_DESCONOCIDA:$clasificacion",
+            "$donde declara la clasificación «$clasificacion», que no es ninguna de las tablas de depreciación 01 a 04 del RNT"
+        )
 
     private fun parametro(
         t: Tablas,
@@ -203,7 +230,7 @@ object Valorizacion {
         c: Construccion,
         t: Tablas
     ): BigDecimal {
-        val donde = "la construcción del piso ${c.piso}"
+        val donde = donde(c)
         if (c.anioConstruccion == null) {
             falta("ANIO_CONSTRUCCION_FALTANTE", "$donde no declara año de construcción: sin él no hay antigüedad con que depreciar")
         }

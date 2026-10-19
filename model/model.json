@@ -3,7 +3,13 @@
     "material": ["CONCRETO", "LADRILLO", "ADOBE", "MADERA", "QUINCHA", "DRYWALL", "ESTERA", "METAL", "OTROS"],
     "estado_conservacion": ["MUY BUENO", "BUENO", "REGULAR", "MALO", "MUY MALO"],
     "letra_categoria": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
-    "region_catastro": ["COSTA", "SELVA"]
+    "region_catastro": ["COSTA", "SELVA"],
+    "clasificacion": [
+      "CASA HABITACION Y DEPARTAMENTOS PARA VIVIENDA",
+      "TIENDAS DEPOSITOS CENTROS DE RECREACION CLUBES E INSTITUCIONES",
+      "EDIFICIO-OFICINAS",
+      "CLINICAS HOSPITALES CINES INDUSTRIAS COLEGIOS TALLERES"
+    ]
   },
   "objects": [
     {
@@ -183,6 +189,19 @@
           "label": "Techo incluido en los muros",
           "type": "BOOLEAN",
           "description": "Muros categoría D de drywall o similar que incluyen el techo: según la llamada (5) del Anexo I.4 no se considera la columna 2 (Techos). No aplica al ladrillo, que también es D."
+        },
+        {
+          "name": "clasificacion",
+          "label": "Clasificación (tabla de depreciación)",
+          "type": "ENUM",
+          "enum": "clasificacion",
+          "description": "La tabla de depreciación del RNT (Anexo I, tablas 01 a 04, en ese orden) de esta construcción, como la clasifica el padrón (las mismas opciones que la clasificación de srtm). Si viene, manda sobre la que da el uso del predio; vacía, se usa la del uso."
+        },
+        {
+          "name": "seccion",
+          "label": "Sección",
+          "type": "INTEGER",
+          "description": "Número de sección dentro del piso, cuando un piso tiene partes con características distintas (1, 2…). Vacía vale 1. El piso sigue siendo solo el número de piso."
         }
       ]
     },
