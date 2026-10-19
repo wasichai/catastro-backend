@@ -82,6 +82,18 @@ class ValorizacionCostaTest {
     }
 
     @Test
+    fun `muros D con techo incluido tampoco suma techos en la costa`() {
+        // anexo I.2, muros D: «DRYWALL O SIMILAR INCLUYE TECHO (5)», llamada (5) «PARA ESTE CASO NO SE CONSIDERA LA
+        // COLUMNA N° 2» (normativa, valores-unitarios-2026.md:98 y :135). the rule is the engine's, for every region
+        // VU = muros D 374.68 + puertas F 90.81 = 465.49; tabla 01 Ladrillo Bueno hasta 10 = 11 %; x 0.89 x 50 = 20714.305 -> 20714.31
+        val base = nivel("010101", "LADRILLO", "BUENO", 2016, "50")
+        val drywall = base.copy(construcciones = listOf(base.construcciones[0].copy(muros = 'D', techoIncluido = true)))
+        assertEquals(bd("20714.31"), construccion(drywall))
+        // the ladrillo D keeps its techos C 285.80: (465.49 + 285.80) x 0.89 x 50 = 33432.405 -> 33432.41
+        assertEquals(bd("33432.41"), construccion(base.copy(construcciones = listOf(base.construcciones[0].copy(muros = 'D')))))
+    }
+
+    @Test
     fun `una celda de puntos de la costa no es cero`() {
         // anexo I.2: muros H is «......»
         val i = nivel("010101", "LADRILLO", "BUENO", 2016, "50").let { it.copy(construcciones = listOf(it.construcciones[0].copy(muros = 'H'))) }
