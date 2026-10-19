@@ -26,16 +26,22 @@ Idempotent by codigo_municipal: a predio Core already has is skipped. Pisos and 
 half way is completed by running again. A key repeated in the file is an error. Exit: 0 ok, 1 Core refused something, 2 the files do not fit the model (every bad row is listed, nothing
 is sent).
 
-Run: python3 import_fichas.py --fichas fichas.csv --pisos pisos.csv [--obras obras.csv] [--dry-run]
+Run: python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv [--obras obras.csv] [--dry-run]
 """
 import argparse
 import os
 import re
 import sys
 
-from core_client import Client, CoreError
-from tabular import (HERE, INPUT_ERRORS, LoadError, clean_text, code_text, column_for, enum_option, load_enums, missing_columns, parse_decimal,
-                     parse_int, parse_map, post_all, read_table, report_problems)
+HERE = os.path.dirname(os.path.abspath(__file__))
+# under python3 -I (the files it reads are untrusted) neither the cwd nor the script's directory is on sys.path: put
+# back only the latter, for core_client and tabular
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+from core_client import Client, CoreError  # noqa: E402
+from tabular import (INPUT_ERRORS, LoadError, clean_text, code_text, column_for, enum_option, load_enums,  # noqa: E402
+                     missing_columns, parse_decimal, parse_int, parse_map, post_all, read_table, report_problems)
 
 CATEGORIAS = ["muros_columnas", "techos", "pisos", "puertas_ventanas", "revestimientos", "banos", "instalaciones"]
 

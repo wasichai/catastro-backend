@@ -14,7 +14,7 @@ Idempotent upsert by (id_aranc, anio), kept in arancel.clave = "id_aranc|anio": 
 whose valor_m2, cod_via, cuadra or lado differ is updated, the rest are skipped. Exit: 0 ok, 1 Core refused something,
 2 the files do not fit the model (every bad row is listed, nothing is sent).
 
-Run: python3 import_aranceles.py --frentes frentes.csv --valores valores.csv [--anio 2026] [--dry-run]
+Run: python3 -I import_aranceles.py --frentes frentes.csv --valores valores.csv [--anio 2026] [--dry-run]
 """
 import argparse
 import os
@@ -22,9 +22,15 @@ import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from decimal import Decimal
 
-from core_client import Client, CoreError
-from tabular import (INPUT_ERRORS, LoadError, code_text, column_for, missing_columns, parse_decimal, parse_int, parse_map, payload, post_all,
-                     read_table, report_problems)
+HERE = os.path.dirname(os.path.abspath(__file__))
+# under python3 -I (the files it reads are untrusted) neither the cwd nor the script's directory is on sys.path: put
+# back only the latter, for core_client and tabular
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+from core_client import Client, CoreError  # noqa: E402
+from tabular import (INPUT_ERRORS, LoadError, code_text, column_for, missing_columns, parse_decimal,  # noqa: E402
+                     parse_int, parse_map, payload, post_all, read_table, report_problems)
 
 COLUMNS = {
     "id_aranc": "id_aranc", "anio": "ano_ejec", "valor_m2": "val_act", "cod_via": "cod_via", "cuadra": "cuadra",
