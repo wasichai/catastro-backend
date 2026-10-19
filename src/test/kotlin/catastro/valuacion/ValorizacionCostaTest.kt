@@ -14,7 +14,7 @@ import java.math.BigDecimal
 // clasificacion_construccion 1-4 is the RNT tabla 01-04, material_predominante 1 concreto, 2 ladrillo, 3 adobe,
 // estado_de_conservacion 1-4 muy bueno to malo, antigüedad 2026 - año: with them the depreciation implied by
 // valor_total_nivel is the RNT's in 3742 of its 3755 niveles (the '*' cells as D3). its depreciacion column is not:
-// it lags a tramo behind in a third of the rows, so the tests compare the total, never that column
+// it differs in 1078 of them (mostly a tramo behind), so the tests compare the total, never that column
 class ValorizacionCostaTest {
     private val costa = Tablas.de(Region.COSTA)
 
@@ -77,7 +77,7 @@ class ValorizacionCostaTest {
     fun `el padrón de Ica redondea el VU depreciado antes del área - el motor no`() {
         // clasificación 1, ladrillo, bueno, 2022, 114.89 m2: antigüedad 4, tabla 01 Ladrillo Bueno hasta 5 = 8 %.
         // motor: 764.04 x 0.92 x 114.89 = 80758.1112 -> 80758.11. padrón: 80758.48 = round(764.04 x 0.92, 2) = 702.92,
-        // x 114.89. the same rounding explains 3653 of its 3712 niveles; the engine keeps perené's arithmetic (open)
+        // x 114.89. the same rounding explains 3696 of its 3755 niveles; the engine keeps perené's arithmetic (open)
         assertEquals(bd("80758.11"), construccion(nivel("010101", "LADRILLO", "BUENO", 2022, "114.89")))
     }
 
