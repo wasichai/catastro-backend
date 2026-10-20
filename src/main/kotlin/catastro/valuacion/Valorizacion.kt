@@ -53,7 +53,9 @@ sealed interface Valuacion {
         val terreno: BigDecimal,
         val construccion: BigDecimal,
         val obras: BigDecimal,
-        val autoavaluo: BigDecimal
+        val autoavaluo: BigDecimal,
+        // how the engine got to construccion and obras; Σ valor of each list is that total
+        val detalle: Detalle = Detalle(emptyList(), emptyList())
     ) : Valuacion
 
     // motivo is for a person; llave groups predios by what is missing (e.g. "VU_SIN_VALOR:TECHOS:I")
@@ -62,6 +64,40 @@ sealed interface Valuacion {
         val llave: String
     ) : Valuacion
 }
+
+// the steps of a valued predio, in the order of its construcciones and obras
+data class Detalle(
+    val pisos: List<DetallePiso>,
+    val obras: List<DetalleObra>
+)
+
+// one construction: valorUnitario is the cuadro's Σ of its partidas; incremento the amount the edificio's 5 % adds
+// (0 below its floor); valorUnitarioDepreciado = (valorUnitario + incremento) x (1 - porcentajeDepreciacion / 100), to
+// the céntimo where the region rounds; valor = valorUnitarioDepreciado x areaConstruida, 2 decimals
+data class DetallePiso(
+    val piso: String,
+    val seccion: Int?,
+    val areaConstruida: BigDecimal,
+    val valorUnitario: BigDecimal,
+    val incremento: BigDecimal,
+    val tablaDepreciacion: String,
+    val antiguedad: Int,
+    val porcentajeDepreciacion: BigDecimal,
+    val valorUnitarioDepreciado: BigDecimal,
+    val valor: BigDecimal
+)
+
+// one obra: valor = valorUnitario x cantidad x factorOficializacion x (1 - porcentajeDepreciacion / 100), 2 decimals
+data class DetalleObra(
+    val codigoVu: String,
+    val cantidad: BigDecimal,
+    val valorUnitario: BigDecimal,
+    val factorOficializacion: BigDecimal,
+    val tablaDepreciacion: String,
+    val antiguedad: Int,
+    val porcentajeDepreciacion: BigDecimal,
+    val valor: BigDecimal
+)
 
 // the autoavalúo of one predio: pure, no clock, no db. the first thing that keeps the predio from a value wins, in the
 // order of kamayuk's ValorizacionDelPredio: the ficha's land, the arancel, the year's parameters, every construction's
@@ -132,9 +168,9 @@ object Valorizacion {
             }
         val tablas = i.construcciones.map { c -> c.clasificacion?.let { tablaPorClasificacion(it, donde(c)) } ?: tabla }
 
-        val construccion =
+        val pisos =
             i.construcciones.indices
-                .sumOf { n ->
+                .map { n ->
                     val c = i.construcciones[n]
                     val vu = unitarios[n]
                     val donde = donde(c)
@@ -143,12 +179,21 @@ object Valorizacion {
                     val conIncremento =
                         incremento?.takeIf { aplicaIncremento(c.piso, it.desde) }?.let { vu.multiply(it.factor).alCentimo(t) } ?: vu
                     val dep = depreciacion(t, tablas[n], c.material, c.estado, c.anioConstruccion, i.anio, donde)
-                    conIncremento
-                        .multiply(dep)
-                        .alCentimo(t)
-                        .multiply(areaConstruida)
-                        .redondeado()
+                    val depreciado = conIncremento.multiply(dep.factor).alCentimo(t)
+                    DetallePiso(
+                        piso = c.piso,
+                        seccion = c.seccion,
+                        areaConstruida = areaConstruida,
+                        valorUnitario = vu,
+                        incremento = conIncremento - vu,
+                        tablaDepreciacion = tablas[n],
+                        antiguedad = dep.antiguedad,
+                        porcentajeDepreciacion = dep.porcentaje,
+                        valorUnitarioDepreciado = depreciado,
+                        valor = depreciado.multiply(areaConstruida).redondeado()
+                    )
                 }
+        val construccion = pisos.sumOf { it.valor }
 
         // a region whose obras cuadro is not shipped cannot value an obra: skipping it would undervalue the predio
         if (i.obras.isNotEmpty() && t.obras == null) {
@@ -157,8 +202,8 @@ object Valorizacion {
                 "No hay cuadro de obras complementarias de la ${t.region.nombre} (${t.region.obras}): el predio declara obras y sin él no se valorizan"
             )
         }
-        val obras =
-            i.obras.sumOf { o ->
+        val detalleObras =
+            i.obras.map { o ->
                 val codigo = o.codigoVu.orEmpty()
                 val donde = "la obra complementaria $codigo"
                 val partida =
@@ -170,18 +215,29 @@ object Valorizacion {
                 if (cantidad.signum() < 0) falta("OBRA_CANTIDAD_INVALIDA", "$donde declara una cantidad negativa ($cantidad)")
                 // the partida itself names a material (a "muro de concreto"); the ficha's, when given, wins
                 val dep = depreciacion(t, tabla, o.material ?: partida.material, o.estado, o.anioConstruccion, i.anio, donde)
-                partida.valorUnitario
-                    .multiply(cantidad)
-                    .multiply(factor)
-                    .multiply(dep)
-                    .redondeado()
+                DetalleObra(
+                    codigoVu = codigo,
+                    cantidad = cantidad,
+                    valorUnitario = partida.valorUnitario,
+                    factorOficializacion = factor,
+                    tablaDepreciacion = tabla,
+                    antiguedad = dep.antiguedad,
+                    porcentajeDepreciacion = dep.porcentaje,
+                    valor =
+                        partida.valorUnitario
+                            .multiply(cantidad)
+                            .multiply(factor)
+                            .multiply(dep.factor)
+                            .redondeado()
+                )
             }
+        val obras = detalleObras.sumOf { it.valor }
 
         val suma = terreno + construccion + obras
         // a zero increment leaves the figure as it is (kamayuk: x + x·0 is x, without touching the scale)
         val autoavaluo =
             if (actualizacion.signum() == 0) suma else suma.add(suma.multiply(actualizacion).divide(CIEN)).redondeado()
-        return Valuacion.Valorizada(terreno, construccion.redondeado(), obras.redondeado(), autoavaluo)
+        return Valuacion.Valorizada(terreno, construccion.redondeado(), obras.redondeado(), autoavaluo, Detalle(pisos, detalleObras))
     }
 
     private fun donde(c: Construccion): String = "la construcción del piso ${c.piso}" + (c.seccion?.takeIf { it != 1 }?.let { ", sección $it" } ?: "")
@@ -269,7 +325,15 @@ object Valorizacion {
         }
     }
 
-    // 1 - dep%/100 for the RNT row (tabla, material, estado) at the construction's age
+    // the RNT row's percentage at an age; factor = 1 - porcentaje/100 is what multiplies the VU
+    private class Depreciacion(
+        val antiguedad: Int,
+        val porcentaje: BigDecimal
+    ) {
+        val factor: BigDecimal get() = BigDecimal.ONE - porcentaje.divide(CIEN)
+    }
+
+    // the RNT row (tabla, material, estado) at the construction's age
     private fun depreciacion(
         t: Tablas,
         tabla: String,
@@ -278,7 +342,7 @@ object Valorizacion {
         anioConstruccion: Int?,
         anio: Int,
         donde: String
-    ): BigDecimal {
+    ): Depreciacion {
         // fires only for obras: valorUnitario already asked every construcción for its year
         val construido = anioConstruccion ?: falta("ANIO_CONSTRUCCION_FALTANTE", "$donde no declara año de construcción")
         val antiguedad = anio - construido
@@ -299,7 +363,7 @@ object Valorizacion {
             }
         // D3: a '*' cell takes the last percentage its row publishes
         val porcentaje = t.depreciacion(tabla, materialRnt, estadoRnt, antiguedad) ?: serie.last().porcentaje
-        return BigDecimal.ONE - porcentaje.divide(CIEN)
+        return Depreciacion(antiguedad, porcentaje)
     }
 
     // D2: the RNT has three columns; everything that is neither concreto nor ladrillo goes to the light one

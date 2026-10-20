@@ -232,6 +232,124 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         }
     }
 
+    @Test
+    fun `POST valuacion con los insumos de una ficha da el mismo autoavalúo que GET valuaciones`() {
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        val marca = uniqueName("t16").uppercase()
+        val idAranc = "$marca-A"
+        registro(ARANCEL, mapOf("clave" to "$idAranc|2026", "id_aranc" to idAranc, "anio" to 2026, "valor_m2" to 45.50))
+        val casa = predio("$marca-1", idAranc)
+        piso(casa, "1", "CONCRETO", "BUENO")
+        registro(
+            OBRA_COMPLEMENTARIA,
+            mapOf(
+                "predio" to casa,
+                "codigo_vu" to "MUROS PERIMETRICOS O CERCOS|1",
+                "cantidad" to 30,
+                "anio_construccion" to 2016,
+                "material" to "CONCRETO",
+                "estado_conservacion" to "BUENO"
+            )
+        )
+        val guardado = leerTodo(srtm, 500).first { it["codigoMunicipal"].asString() == "$marca-1" }
+        // the same ficha as json: casa de un piso 78781.60 + muro 8870.61 + terreno 9100.00 = 96752.21
+        val insumos =
+            mapOf(
+                "anio" to 2026,
+                "areaTerreno" to 200,
+                "arancelM2" to 45.50,
+                "uso" to "010101",
+                "esEdificio" to false,
+                "construcciones" to
+                    listOf(
+                        mapOf(
+                            "piso" to "1",
+                            "areaConstruida" to 100,
+                            "anioConstruccion" to 2016,
+                            "material" to "CONCRETO",
+                            "estado" to "BUENO",
+                            "muros" to "C",
+                            "techos" to "D",
+                            "puertas" to "E"
+                        )
+                    ),
+                "obras" to
+                    listOf(
+                        mapOf(
+                            "codigoVu" to "MUROS PERIMETRICOS O CERCOS|1",
+                            "cantidad" to 30,
+                            "anioConstruccion" to 2016,
+                            "material" to "CONCRETO",
+                            "estado" to "BUENO"
+                        )
+                    )
+            )
+        val v = valuacion(srtm, insumos)
+        numero(guardado["autoavaluo"].decimalValue().toPlainString(), v["autoavaluo"])
+        numero("96752.21", v["autoavaluo"])
+        for (campo in listOf("terreno", "construccion", "obras")) numero(guardado[campo].decimalValue().toPlainString(), v[campo])
+        assertEquals(2026, v["anio"].asInt())
+        assertEquals("valuacion-v2", v["version"].asString())
+        assertEquals("SELVA", v["region"].asString())
+        assertEquals("CUERPO", v["origenArancel"].asString())
+        numero("45.50", v["arancelM2"])
+        assertTrue(v["motivo"].isNull && v["llave"].isNull, v.toString())
+        val p = v["detalle"]["pisos"][0]
+        numero("829.28", p["valorUnitario"])
+        numero("5", p["porcentajeDepreciacion"])
+        numero("78781.60", p["valor"])
+        numero("8870.61", v["detalle"]["obras"][0]["valor"])
+
+        // without arancelM2, the ficha's by its codigo municipal: the same figure
+        val deLaFicha = valuacion(srtm, insumos - "arancelM2" + ("codigoMunicipal" to "$marca-1"))
+        numero("96752.21", deLaFicha["autoavaluo"])
+        assertEquals("FICHA", deLaFicha["origenArancel"].asString())
+        numero("45.50", deLaFicha["arancelM2"])
+        assertEquals("$marca-1", deLaFicha["codigoMunicipal"].asString())
+        // a code the catastro does not have, or no code at all: the engine's motivo, no detalle
+        for (cuerpo in listOf(insumos - "arancelM2" + ("codigoMunicipal" to "$marca-NO"), insumos - "arancelM2")) {
+            val sin = valuacion(srtm, cuerpo)
+            assertEquals("ARANCEL_FALTANTE", sin["llave"].asString(), sin.toString())
+            assertTrue(sin["origenArancel"].isNull && sin["arancelM2"].isNull && sin["detalle"].isNull, sin.toString())
+            for (campo in listOf("terreno", "construccion", "obras", "autoavaluo")) assertTrue(sin[campo].isNull, campo)
+        }
+        // a year without tables is a motivo, never 2026's figures
+        val (status, cuerpo) = exchange("POST", "/api/catastro/valuacion", insumos + ("anio" to 2027), srtm)
+        assertEquals(HttpStatus.OK, status, cuerpo)
+        assertEquals("PARAMETRO_FALTANTE:PORCENTAJE_ACTUALIZACION:2027", arbol(cuerpo)["llave"].asString(), cuerpo)
+    }
+
+    @Test
+    fun `POST valuacion - 401 sin token, 403 sin el rol, 409 sin región, 422 con un cuerpo mal formado`() {
+        val cuerpo = mapOf("anio" to 2026, "areaTerreno" to 200, "arancelM2" to 45.50)
+        client
+            .post()
+            .uri("/api/catastro/valuacion")
+            .bodyValue(cuerpo)
+            .exchange()
+            .expectStatus()
+            .isUnauthorized
+        assertEquals(HttpStatus.FORBIDDEN, exchange("POST", "/api/catastro/valuacion", cuerpo, cuentaDeServicio(emptyList())).first)
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        for ((malo, campo) in listOf(
+            mapOf("areaTerreno" to 200) to "anio",
+            cuerpo + ("construcciones" to listOf(mapOf("piso" to "1", "muros" to "CC"))) to "construcciones[0].muros",
+            cuerpo + ("sobra" to 1) to "sobra"
+        )) {
+            val (status, body) = exchange("POST", "/api/catastro/valuacion", malo, srtm)
+            assertEquals(HttpStatus.UNPROCESSABLE_CONTENT, status, body)
+            assertEquals(campo, arbol(body)["errors"][0]["field"].asString(), body)
+        }
+        try {
+            region(null)
+            val (sin, body) = exchange("POST", "/api/catastro/valuacion", cuerpo, srtm)
+            assertEquals(HttpStatus.CONFLICT, sin, body)
+            assertEquals("configuracion_catastro.region", arbol(body)["errors"][0]["field"].asString(), body)
+        } finally {
+            region("SELVA")
+        }
+    }
+
     // every page of the year, in order, as srtm reads them
     private fun leerTodo(
         token: String,
@@ -251,6 +369,11 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         token: String,
         query: String
     ): JsonNode = arbol(send("GET", "/api/catastro/valuaciones?$query", null, HttpStatus.OK, token))
+
+    private fun valuacion(
+        token: String,
+        cuerpo: Map<String, Any?>
+    ): JsonNode = arbol(send("POST", "/api/catastro/valuacion", cuerpo, HttpStatus.OK, token))
 
     private fun numero(
         esperado: String,
