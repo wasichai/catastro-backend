@@ -45,16 +45,7 @@ class ValuacionesService(
             } else {
                 registros.conCampoEn(OBRA_COMPLEMENTARIA, FichaObra::class.java, PREDIO, ids, sort = "codigo_vu").groupBy { it.predio }
             }
-        // the arancel is unique per (id_aranc, anio); arancel.clave guards that pair on write
-        val idsArancel = predios.content.mapNotNull { it.idAranc }.distinct()
-        val aranceles =
-            if (idsArancel.isEmpty()) {
-                emptyMap()
-            } else {
-                registros
-                    .conCampoEn(ARANCEL, Arancel::class.java, "id_aranc", idsArancel, filters = mapOf("anio" to anio.toString()))
-                    .associateBy { it.idAranc }
-            }
+        val aranceles = aranceles(predios.content.mapNotNull { it.idAranc }, anio)
         val items =
             predios.content.map { p ->
                 item(p, anio, pisos[p.id].orEmpty(), obras[p.id].orEmpty(), p.idAranc?.let { aranceles[it] }, tablas)
@@ -117,6 +108,62 @@ class ValuacionesService(
             loteGeom = p.loteGeom
         )
     }
+
+    // one predio's insumos sent whole (POST /api/catastro/valuacion), valued with the organization's tables like a
+    // page. without arancelM2, the arancel of the stored ficha whose codigo_municipal the body names, as a page finds it;
+    // a code the catastro does not have (or the caller cannot read) leaves it null, the engine's ARANCEL_FALTANTE
+    suspend fun valuar(pedido: PedidoValuacion): ValuacionDeInsumos {
+        val tablas = tablasDeLaOrganizacion()
+        val dado = pedido.insumos.arancelM2
+        val codigo = pedido.codigoMunicipal
+        val deLaFicha =
+            if (dado != null || codigo.isNullOrBlank()) {
+                null
+            } else {
+                registros
+                    .conCampoEn(PREDIO_CATASTRAL, PredioCatastral::class.java, "codigo_municipal", listOf(codigo))
+                    .firstOrNull()
+                    ?.idAranc
+                    ?.let { aranceles(listOf(it), pedido.insumos.anio)[it]?.valorM2 }
+            }
+        val insumos = if (deLaFicha == null) pedido.insumos else pedido.insumos.copy(arancelM2 = deLaFicha)
+        val v = Valorizacion.valorizar(insumos, tablas)
+        val valor = v as? Valuacion.Valorizada
+        val falta = v as? Valuacion.SinValorizar
+        return ValuacionDeInsumos(
+            anio = insumos.anio,
+            version = VERSION,
+            region = tablas.region.name,
+            codigoMunicipal = codigo,
+            arancelM2 = insumos.arancelM2,
+            origenArancel =
+                when {
+                    dado != null -> ValuacionDeInsumos.CUERPO
+                    deLaFicha != null -> ValuacionDeInsumos.FICHA
+                    else -> null
+                },
+            terreno = valor?.terreno,
+            construccion = valor?.construccion,
+            obras = valor?.obras,
+            autoavaluo = valor?.autoavaluo,
+            motivo = falta?.motivo,
+            llave = falta?.llave,
+            detalle = valor?.detalle
+        )
+    }
+
+    // the year's arancel of each vía, by id_aranc. unique per (id_aranc, anio); arancel.clave guards that pair on write
+    private suspend fun aranceles(
+        idsArancel: List<String>,
+        anio: Int
+    ): Map<String?, Arancel> =
+        if (idsArancel.isEmpty()) {
+            emptyMap()
+        } else {
+            registros
+                .conCampoEn(ARANCEL, Arancel::class.java, "id_aranc", idsArancel.distinct(), filters = mapOf("anio" to anio.toString()))
+                .associateBy { it.idAranc }
+        }
 
     // the tables of the region in the caller's configuracion_catastro (core scopes the read to its organization)
     private suspend fun tablasDeLaOrganizacion(): Tablas {

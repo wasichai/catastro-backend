@@ -260,6 +260,80 @@ pisos (0 sin pisos). `loteGeom` es el polígono del lote como geometría GeoJSON
 `null`. El código del lote es `lote`, por eso la geometría se llama `loteGeom`. `version` cambia cuando cambia la
 aritmética del motor; `region` es la de la organización, la de los cuadros con que se valorizó la página.
 
+**Valuar insumos sueltos.** srtm también valúa los datos de un predio que no están en el catastro (la DJ de un
+contribuyente, por ejemplo), con el mismo motor y las tablas de la región de la organización. No se guarda nada:
+
+```
+POST /api/catastro/valuacion
+Authorization: Bearer <token de POST /api/auth/token>
+Content-Type: application/json
+```
+
+```json
+{
+  "anio": 2026,
+  "areaTerreno": 200,
+  "arancelM2": 45.5,
+  "uso": "010101",
+  "esEdificio": false,
+  "construcciones": [
+    { "piso": "1", "areaConstruida": 100, "anioConstruccion": 2016, "material": "CONCRETO", "estado": "BUENO",
+      "muros": "C", "techos": "D", "puertas": "E", "techoIncluido": null, "clasificacion": null, "seccion": null }
+  ],
+  "obras": [
+    { "codigoVu": "MUROS PERIMETRICOS O CERCOS|1", "cantidad": 30, "anioConstruccion": 2016, "material": "CONCRETO", "estado": "BUENO" }
+  ],
+  "codigoMunicipal": null
+}
+```
+
+- Los campos son los de `Insumos`, con los nombres y la ortografía de los enums del modelo (material, estado y
+  `clasificacion`). Solo `anio` (1900 a 2100) es obligatorio, y `piso` en cada construcción. Lo que falta o viene `null`
+  queda sin declarar: el predio sale con su `motivo`, nunca con un cero. Las letras (`muros`, `techos`, `puertas`) son
+  una sola mayúscula de la A a la J; `seccion`, un entero desde 1. Un campo que sobra, o de otro tipo, es un **422**
+  que lo nombra (`errors[0].field`, por ejemplo `construcciones[0].muros`).
+- Sin `arancelM2`, con `codigoMunicipal`, toma el arancel del año de esa ficha del catastro (`origenArancel` =
+  `FICHA`). Si la ficha no existe o no tiene arancel, `ARANCEL_FALTANTE`. Solo se toma el arancel; lo demás es del
+  cuerpo.
+- Mismo permiso que `GET /valuaciones` (SRTM_LECTOR basta): **401** sin token, **403** sin `READ` y **409** sin región.
+- Un año sin tablas (hoy solo hay 2026) da `PARAMETRO_FALTANTE:PORCENTAJE_ACTUALIZACION:<año>`; no se valúa con
+  otro año.
+- **El área común no se valúa:** el motor no tiene ese insumo.
+
+```json
+{
+  "anio": 2026,
+  "version": "valuacion-v2",
+  "region": "SELVA",
+  "codigoMunicipal": null,
+  "arancelM2": 45.5,
+  "origenArancel": "CUERPO",
+  "terreno": 9100.0,
+  "construccion": 78781.6,
+  "obras": 8870.61,
+  "autoavaluo": 96752.21,
+  "motivo": null,
+  "llave": null,
+  "detalle": {
+    "pisos": [
+      { "piso": "1", "seccion": null, "areaConstruida": 100, "valorUnitario": 829.28, "incremento": 0.0,
+        "tablaDepreciacion": "01", "antiguedad": 10, "porcentajeDepreciacion": 5, "valorUnitarioDepreciado": 787.816,
+        "valor": 78781.6 }
+    ],
+    "obras": [
+      { "codigoVu": "MUROS PERIMETRICOS O CERCOS|1", "cantidad": 30, "valorUnitario": 457.72, "factorOficializacion": 0.68,
+        "tablaDepreciacion": "01", "antiguedad": 10, "porcentajeDepreciacion": 5, "valor": 8870.61 }
+    ]
+  }
+}
+```
+
+`detalle` muestra cómo se llegó a `construccion` y `obras` (la suma de sus `valor`), en el orden del cuerpo:
+`incremento` es lo que suma el 5 % de edificio al VU (0 debajo del 5.° piso), y `valorUnitarioDepreciado` =
+(`valorUnitario` + `incremento`) × (1 − `porcentajeDepreciacion` / 100), al céntimo en la costa. Sin valor, `terreno`,
+`construccion`, `obras`, `autoavaluo` y `detalle` son `null`. `GET /valuaciones` no trae `detalle`: su contrato no
+cambia.
+
 **Puesta en marcha** (contra el Core del catastro, como admin):
 
 ```sh
