@@ -43,9 +43,10 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
             numero("78781.60", construccion())
             assertEquals("SELVA", valuaciones(srtm, "anio=2026&size=1")["region"].asString())
             // costa, same piso: VU = muros C 387.43 + techos D 181.40 + puertas E 120.98 = 689.81 (anexo I.2);
-            // tabla 01 Concreto Bueno hasta 10 = 5 %: 689.81 x 0.95 x 100 = 65531.95
+            // tabla 01 Concreto Bueno hasta 10 = 5 %; the costa rounds the depreciated VU (Region.redondeaValorUnitario):
+            // round(689.81 x 0.95, 2) = round(655.3195, 2) = 655.32; x 100 = 65532.00 (65531.95 unrounded, valuacion-v1)
             region("COSTA")
-            numero("65531.95", construccion())
+            numero("65532.00", construccion())
             assertEquals("COSTA", valuaciones(srtm, "anio=2026&size=1")["region"].asString())
 
             // no region: no valuations at all, a 409 that names the missing configuration
@@ -197,7 +198,7 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         val primera = valuaciones(srtm, "anio=2026&page=0&size=3")
         val total = primera["total"].asLong()
         assertEquals(2026, primera["anio"].asInt())
-        assertEquals("valuacion-v1", primera["version"].asString())
+        assertEquals("valuacion-v2", primera["version"].asString())
         assertEquals(0, primera["page"].asInt())
         assertEquals(3, primera["size"].asInt())
         val codigos = leerTodo(srtm, 3).map { it["codigoMunicipal"].asString() }

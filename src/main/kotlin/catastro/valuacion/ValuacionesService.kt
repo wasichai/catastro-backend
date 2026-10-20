@@ -145,8 +145,10 @@ class ValuacionesService(
                 ?: throw RegionNoConfigurada("$CONFIGURACION_CATASTRO dice la región «$region», sin tablas en el motor ($conocidas)")
         }
 
-        // the engine's version: srtm stores it with each corrida, so a change in the arithmetic is visible there
-        const val VERSION = "valuacion-v1"
+        // the engine's version: srtm stores it with each corrida, so a change in the arithmetic is visible there.
+        // v1: the RNT tabla of the predio's uso, unrounded VU. v2: the tabla of each construction's clasificación, and the
+        // costa's VU to the céntimo (Region.redondeaValorUnitario). a selva predio without clasificaciones keeps v1's figure
+        const val VERSION = "valuacion-v2"
 
         const val TAMANO = 200
         const val TAMANO_MAXIMO = 500

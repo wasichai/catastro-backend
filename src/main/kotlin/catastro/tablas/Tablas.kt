@@ -6,12 +6,17 @@ import java.util.concurrent.ConcurrentHashMap
 
 // the regions of the R.M. 277-2025-VIVIENDA anexos (I.1-I.4, III.1-III.4) that have tables here. an organization's
 // region is its configuracion_catastro record; there is no default. adding SIERRA or LIMA_CALLAO: an option of the
-// model's region_catastro enum, a constant here and its two files. nombre is how the motivos call its cuadro
+// model's region_catastro enum, a constant here and its two files. nombre is how the motivos call its cuadro.
+// redondeaValorUnitario: a construction's VU is rounded to the céntimo (HALF_UP) after the edificio's 5 % and again
+// after depreciation, before it is multiplied by the área. the costa does it as the padrón de Ica does
+// (PADRON_CONSTRUCCION.xlsx: incremento_5 and valor_total_nivel; práctica del padrón de Ica, decisión del usuario
+// 2026-10-20); the selva keeps kamayuk's unrounded product, the one Perené's figures were checked against
 enum class Region(
-    val nombre: String
+    val nombre: String,
+    val redondeaValorUnitario: Boolean
 ) {
-    COSTA("costa"),
-    SELVA("selva");
+    COSTA("costa", redondeaValorUnitario = true),
+    SELVA("selva", redondeaValorUnitario = false);
 
     // file names: valores-unitarios-<region>-2026.csv, obras-complementarias-<region>-2026.csv (LIMA_CALLAO -> lima-callao)
     private val archivo = name.lowercase().replace('_', '-')

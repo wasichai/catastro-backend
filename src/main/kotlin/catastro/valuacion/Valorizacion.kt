@@ -140,9 +140,14 @@ object Valorizacion {
                     val donde = donde(c)
                     val areaConstruida = c.areaConstruida ?: falta("AREA_CONSTRUIDA_FALTANTE", "$donde no declara área construida")
                     if (areaConstruida.signum() < 0) falta("AREA_CONSTRUIDA_INVALIDA", "$donde declara un área construida negativa ($areaConstruida)")
-                    val conIncremento = incremento?.takeIf { aplicaIncremento(c.piso, it.desde) }?.let { vu.multiply(it.factor) } ?: vu
+                    val conIncremento =
+                        incremento?.takeIf { aplicaIncremento(c.piso, it.desde) }?.let { vu.multiply(it.factor).alCentimo(t) } ?: vu
                     val dep = depreciacion(t, tablas[n], c.material, c.estado, c.anioConstruccion, i.anio, donde)
-                    conIncremento.multiply(dep).multiply(areaConstruida).redondeado()
+                    conIncremento
+                        .multiply(dep)
+                        .alCentimo(t)
+                        .multiply(areaConstruida)
+                        .redondeado()
                 }
 
         // a region whose obras cuadro is not shipped cannot value an obra: skipping it would undervalue the predio
@@ -316,4 +321,9 @@ object Valorizacion {
         }
 
     private fun BigDecimal.redondeado(): BigDecimal = setScale(ESCALA, RoundingMode.HALF_UP)
+
+    // a step of a construction's VU: to the céntimo where the region rounds it (Region.redondeaValorUnitario), unchanged
+    // elsewhere. round(VU x 1.05) is the padrón's VU + round(VU x 5 %) because the cuadro's cells, and so VU, are
+    // céntimos. the obras are not touched: no padrón has shown how a region rounds them
+    private fun BigDecimal.alCentimo(t: Tablas): BigDecimal = if (t.region.redondeaValorUnitario) redondeado() else this
 }

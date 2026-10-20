@@ -168,10 +168,20 @@ autoavalúo de un predio en un año, con las tablas de la región de su organiza
   muros D de techo incluido), +5 % si el predio es edificio y el piso es el 5.° o más (único, antes de depreciar; un
   sótano `S1` no sube), × (1 − depreciación) × área construida. Cada sección de un piso (`seccion`) es una
   construcción más, con el mismo piso. La depreciación es la de la tabla de la `clasificacion` de la construcción, si
-  la tiene, y si no la del uso del predio (D1);
+  la tiene, y si no la del uso del predio (D1). El redondeo del VU depende de la región (ver abajo);
 - obras: VU de la partida × cantidad × factor de oficialización × (1 − depreciación), con la tabla del uso del predio y
   el material, estado y antigüedad de la obra (si la obra no dice material, el de su partida);
 - autoavalúo = (terreno + construcción + obras) × (1 + % de actualización). Cada cifra con 2 decimales, HALF_UP.
+
+**Redondeo del VU por región** (`Region.redondeaValorUnitario`):
+
+| Región | Construcción de un piso o sección | Fuente |
+|---|---|---|
+| `COSTA` | round(round(VU × 1.05) × (1 − dep)) × área: el VU con el +5 % de edificio (si aplica) y el VU depreciado van al céntimo, HALF_UP, antes de multiplicar por el área | práctica del padrón de Ica (`PADRON_CONSTRUCCION.xlsx`: su `incremento_5` es round(VU × 5 %) y su `valor_total_nivel` es round((VU + incremento_5) × (1 − dep)) × área); decisión del usuario 2026-10-20 |
+| `SELVA` | VU × 1.05 × (1 − dep) × área, sin redondeos intermedios | el motor de kamayuk, con el que se verificaron las cifras de Perené (no cambian) |
+
+Las obras no se redondean en ninguna región: ningún padrón ha mostrado cómo lo hace. Una región nueva declara su regla
+en `catastro.tablas.Region`.
 
 Un dato que falta no es cero: el predio sale sin valor, con un `motivo` para leer y una `llave` para contar (por
 ejemplo `ARANCEL_FALTANTE`, `VU_SIN_VALOR:TECHOS:I`, `TABLA_DE_DEPRECIACION:990000`,
@@ -184,9 +194,17 @@ tabla de depreciación del uso (solo si algo la usa: una construcción sin `clas
 90.81 = 764.04, el del padrón, y cinco niveles reales dan exactamente su `valor_total_nivel`. Leídos sus códigos contra
 el RNT (`clasificacion_construccion` 1 a 4 = tabla 01 a 04; material 1 concreto, 2 ladrillo, 3 adobe; estado 1 a 4 = muy
 bueno a malo; antigüedad 2026 − año), la depreciación implícita en su total es la del RNT en 3742 de 3755 niveles (las
-celdas `*` como D3); su columna `depreciacion` no coincide en 1078 (casi siempre va un tramo atrás) y no se usa.
-**Abierto:** el padrón redondea a 2 decimales el VU depreciado antes de multiplicar por el área (así cuadran 3696 de sus
-3755 totales) y el motor no, para que Perené no cambie: la diferencia es de céntimos por nivel, muy por debajo de D10.
+celdas `*` como D3); su columna `depreciacion` no coincide en 1078 (casi siempre va un tramo atrás) y no se usa. Con la
+`clasificacion` de cada nivel y el redondeo de la costa, el motor da exactamente su `valor_total_nivel` en 3688 de esos
+3755 niveles (sin el redondeo, en 682). De los 67 restantes, 5 no tienen valor (celdas `.....` y la categoría J), 26
+difieren en S/ 1 o menos y el resto son los niveles cuya depreciación no es la del RNT o cuyo VU no es el del cuadro.
+
+**Versión del motor** (`version` en la respuesta, `ValuacionesService.VERSION`; srtm la guarda con cada corrida):
+
+| Versión | Qué cambia |
+|---|---|
+| `valuacion-v1` | Depreciación con la tabla del uso del predio (D1); VU sin redondeos intermedios en todas las regiones |
+| `valuacion-v2` | La `clasificacion` de cada construcción manda sobre el uso, y la costa redondea el VU al céntimo (arriba). Un predio de la selva sin `clasificacion`, como los de Perené, da la misma cifra que en v1 |
 
 ## API para srtm
 
@@ -208,7 +226,7 @@ Authorization: Bearer <token de POST /api/auth/token>
 ```json
 {
   "anio": 2026,
-  "version": "valuacion-v1",
+  "version": "valuacion-v2",
   "region": "SELVA",
   "page": 0,
   "size": 200,
