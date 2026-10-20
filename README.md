@@ -137,7 +137,7 @@ líneas `#` que citan su fuente; las filas van tal como en la fuente. Las rutas 
 | `valores-unitarios-selva-2026.csv` | 30 celdas: 3 partidas × categorías A a J, en S/ por m² techado. `valor_m2` vacío es una celda `.....` (sin valor, no cero) | R.M. N.° 277-2025-VIVIENDA, Anexo I.4 Selva (`valores-unitarios-2026.md` §1.5.3) |
 | `depreciacion-rnt-2016.csv` | 492 filas de las tablas 01 a 04, copia exacta (sha256 verificado en las pruebas). Las 36 celdas `*` no tienen fila; `antiguedad_hasta` vacío es «más de 50» | Reglamento Nacional de Tasaciones, Anexo I (`fuentes/depreciacion-rnt-2016/depreciacion.csv`) |
 | `obras-complementarias-selva-2026.csv` | 96 partidas a costo directo, copia exacta de `model/data/obras_complementarias.csv` de srtm-backend. Llave `TIPO DE OBRA\|número`, la de `obra_complementaria.codigo_vu` | R.M. N.° 277-2025-VIVIENDA, Anexo III.4 Selva |
-| `obras-complementarias-costa-2026.csv` | **Aún no está**: se transcribe del Anexo III.2 y entra al repositorio cuando una persona lo verifica. Mientras tanto un predio de la costa con obras sale `OBRAS_SIN_CUADRO:COSTA`. Mismas llaves que el de la selva | R.M. N.° 277-2025-VIVIENDA, Anexo III.2 Costa (`s3://sgtm-fuentes-normativas/fuentes-normativas/valores-unitarios/200105/2026-08-28T23-43-56Z__iii-2-obras-complem-costa-2026.pdf`) |
+| `obras-complementarias-costa-2026.csv` | 96 partidas a costo directo, transcritas del Anexo III.2 con dos métodos independientes (poppler y pdfplumber, idénticos) y verificadas por una persona contra el PDF. Mismas llaves que el de la selva: `tipo_obra` y `material` son los de la partida del mismo número | R.M. N.° 277-2025-VIVIENDA, Anexo III.2 Costa (`s3://sgtm-fuentes-normativas/fuentes-normativas/valores-unitarios/200105/2026-08-28T23-43-56Z__iii-2-obras-complem-costa-2026.pdf`) |
 | `uso-tabla-depreciacion.csv` | prefijo del código de `usos_predio` de srtm → tabla del RNT; gana el prefijo más largo. Editable | decisión D1 (ver Decisiones normativas) |
 | `parametros.csv` | `FACTOR_OFICIALIZACION` 0.68, `PORCENTAJE_ACTUALIZACION` 0, `INCREMENTO_PISO_DESDE` 5 y `INCREMENTO_PISO_PORCENTAJE` 5, de 2026, cada uno con su fuente | `obras-complementarias-y-oficializacion-2026.md` §1.2, `predial-porcentaje-de-actualizacion.md` §1.6, `valores-unitarios-2026.md` §1.3 y §1.6 |
 
@@ -161,7 +161,7 @@ autoavalúo de un predio en un año, con las tablas de la región de su organiza
 
 Un dato que falta no es cero: el predio sale sin valor, con un `motivo` para leer y una `llave` para contar (por
 ejemplo `ARANCEL_FALTANTE`, `VU_SIN_VALOR:TECHOS:I`, `TABLA_DE_DEPRECIACION:990000`,
-`PARAMETRO_FALTANTE:FACTOR_OFICIALIZACION:2025`, `OBRAS_SIN_CUADRO:COSTA`); el motivo nombra el cuadro de la región. Gana
+`PARAMETRO_FALTANTE:FACTOR_OFICIALIZACION:2025`, `OBRAS_SIN_CUADRO:<REGION>`); el motivo nombra el cuadro de la región. Gana
 el primero, en el orden del motor de kamayuk: terreno, arancel, parámetros del año, casillas del cuadro de cada piso,
 tabla de depreciación del uso, depreciación y obras.
 

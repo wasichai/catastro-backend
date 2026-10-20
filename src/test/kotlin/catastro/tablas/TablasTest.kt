@@ -139,6 +139,19 @@ class TablasTest {
     }
 
     @Test
+    fun `obras costa - anexo III_2 transcrito y verificado, 96 partidas`() {
+        assertEquals(96, costa.obras!!.size)
+        // sha256 of the rows of obras-complementarias-costa-2026.csv as verified against the PDF of the anexo III.2
+        assertEquals("2e0bc0c480aa872a01afc58054625ba531c0328cf4a4828798ab659e3804bfd2", sha256SinComentarios(Region.COSTA.obras))
+        // anexo III.2, page 1: items 1, 17 and 18 (the last one with no material)
+        assertEquals(bd("443.89"), costa.obra("MUROS PERIMETRICOS O CERCOS|1")!!.valorUnitario)
+        assertEquals(bd("1288.35"), costa.obra("TANQUES ELEVADOS|17")!!.valorUnitario)
+        val tanque = costa.obra("TANQUES ELEVADOS|18")!!
+        assertEquals(bd("1408.88"), tanque.valorUnitario)
+        assertEquals("M3", tanque.unidadMedida)
+    }
+
+    @Test
     fun `obras - partidas por tipo de obra y número`() {
         // srtm-backend/model/data/obras_complementarias.csv:2
         val muro = tablas.obra("MUROS PERIMETRICOS O CERCOS|1")!!
