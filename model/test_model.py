@@ -11,6 +11,10 @@ from apply import validate
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "model.json")
 CATEGORIAS = ["muros_columnas", "techos", "pisos", "puertas_ventanas", "revestimientos", "banos", "instalaciones"]
+# srtm-backend's enum clasificacion, the same four strings, in the order of the RNT's tables 01 to 04
+CLASIFICACION = ["CASA HABITACION Y DEPARTAMENTOS PARA VIVIENDA",
+                 "TIENDAS DEPOSITOS CENTROS DE RECREACION CLUBES E INSTITUCIONES", "EDIFICIO-OFICINAS",
+                 "CLINICAS HOSPITALES CINES INDUSTRIAS COLEGIOS TALLERES"]
 
 # object -> (its fields in order, the required ones, the unique ones)
 OBJETOS = {
@@ -19,7 +23,7 @@ OBJETOS = {
          "area_terreno", "longitud_frente", "anio_levantamiento", "es_edificio", "lote_geom"],
         {"codigo_municipal"}, {"codigo_municipal"}),
     "construccion": (["piso", "area_construida", "anio_construccion", "material", "estado_conservacion", *CATEGORIAS,
-                      "techo_incluido"], set(), set()),
+                      "techo_incluido", "clasificacion", "seccion"], set(), set()),
     "obra_complementaria": (["codigo_vu", "cantidad", "anio_construccion", "material", "estado_conservacion"], set(), set()),
     "arancel": (["clave", "id_aranc", "anio", "valor_m2", "cod_via", "cuadra", "lado"],
                 {"clave", "id_aranc", "anio", "valor_m2"}, {"clave"}),
@@ -71,6 +75,14 @@ class ModelTests(unittest.TestCase):
         for field in self.objects["construccion"]["fields"]:
             if field["name"] in CATEGORIAS:
                 self.assertEqual(field["enum"], "letra_categoria")
+
+    def test_a_construccion_names_its_rnt_table_and_its_seccion(self):
+        self.assertEqual(self.model["enums"]["clasificacion"], CLASIFICACION)
+        fields = {f["name"]: f for f in self.objects["construccion"]["fields"]}
+        self.assertEqual((fields["clasificacion"]["type"], fields["clasificacion"]["enum"]), ("ENUM", "clasificacion"))
+        self.assertEqual(fields["seccion"]["type"], "INTEGER")
+        # piso stays text, so a seccion is never written into it ("5-2")
+        self.assertEqual(fields["piso"]["type"], "TEXT")
 
     def test_children_hang_from_a_required_predio(self):
         relations = {r["name"]: r for r in self.model["relationships"]}

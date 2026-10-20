@@ -43,9 +43,10 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
             numero("78781.60", construccion())
             assertEquals("SELVA", valuaciones(srtm, "anio=2026&size=1")["region"].asString())
             // costa, same piso: VU = muros C 387.43 + techos D 181.40 + puertas E 120.98 = 689.81 (anexo I.2);
-            // tabla 01 Concreto Bueno hasta 10 = 5 %: 689.81 x 0.95 x 100 = 65531.95
+            // tabla 01 Concreto Bueno hasta 10 = 5 %; the costa rounds the depreciated VU (Region.redondeaValorUnitario):
+            // round(689.81 x 0.95, 2) = round(655.3195, 2) = 655.32; x 100 = 65532.00 (65531.95 unrounded, valuacion-v1)
             region("COSTA")
-            numero("65531.95", construccion())
+            numero("65532.00", construccion())
             assertEquals("COSTA", valuaciones(srtm, "anio=2026&size=1")["region"].asString())
 
             // no region: no valuations at all, a 409 that names the missing configuration
@@ -159,6 +160,37 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
     }
 
     @Test
+    fun `la clasificación y las secciones de cada construcción pasan por core`() {
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        val marca = uniqueName("t13").uppercase()
+        val idAranc = "$marca-A"
+        registro(ARANCEL, mapOf("clave" to "$idAranc|2026", "id_aranc" to idAranc, "anio" to 2026, "valor_m2" to 45.50))
+        // the casa's piso as an oficina: tabla 03 instead of the uso's 01, 829.28 x 0.92 x 100 = 76293.76 (ValorizacionTest)
+        val oficina = predio("$marca-1", idAranc)
+        piso(oficina, "1", "CONCRETO", "BUENO", clasificacion = "EDIFICIO-OFICINAS")
+        // two secciones of the fifth floor of an edificio, both +5 %: 829.28 x 1.05 x 0.95 x 100 = 82720.68 each
+        val edificio = predio("$marca-2", idAranc, mapOf("es_edificio" to true))
+        piso(edificio, "5", "CONCRETO", "BUENO", seccion = 2)
+        piso(edificio, "5", "CONCRETO", "BUENO", seccion = 1)
+        // a clasificación outside the enum is core's 422: the engine never meets an unknown one from the importer
+        val (status, cuerpo) =
+            exchange(
+                "POST",
+                "/api/objects/$CONSTRUCCION/records",
+                mapOf("attributes" to mapOf("predio" to oficina, "piso" to "2", "clasificacion" to "MUSEOS")),
+                admin
+            )
+        assertTrue(status.is4xxClientError, "$status $cuerpo")
+
+        val items = leerTodo(srtm, 500).associateBy { it["codigoMunicipal"].asString() }
+        numero("76293.76", items.getValue("$marca-1")["construccion"])
+        val e = items.getValue("$marca-2")
+        assertTrue(e["llave"].isNull, e.toString())
+        numero("165441.36", e["construccion"])
+        numero("200", e["areaConstruida"])
+    }
+
+    @Test
     fun `las páginas suman el total, sin repetir, por código municipal`() {
         val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
         val marca = uniqueName("t5").uppercase()
@@ -166,7 +198,7 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         val primera = valuaciones(srtm, "anio=2026&page=0&size=3")
         val total = primera["total"].asLong()
         assertEquals(2026, primera["anio"].asInt())
-        assertEquals("valuacion-v1", primera["version"].asString())
+        assertEquals("valuacion-v2", primera["version"].asString())
         assertEquals(0, primera["page"].asInt())
         assertEquals(3, primera["size"].asInt())
         val codigos = leerTodo(srtm, 3).map { it["codigoMunicipal"].asString() }
@@ -257,7 +289,9 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         area: Int = 100,
         anio: Int = 2016,
         muros: String = "C",
-        techoIncluido: Boolean? = null
+        techoIncluido: Boolean? = null,
+        clasificacion: String? = null,
+        seccion: Int? = null
     ) = registro(
         CONSTRUCCION,
         mapOf(
@@ -270,7 +304,12 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
             "muros_columnas" to muros,
             "techos" to techos,
             "puertas_ventanas" to "E"
-        ) + (techoIncluido?.let { mapOf("techo_incluido" to it) } ?: emptyMap())
+        ) +
+            listOfNotNull(
+                techoIncluido?.let { "techo_incluido" to it },
+                clasificacion?.let { "clasificacion" to it },
+                seccion?.let { "seccion" to it }
+            )
     )
 
     // the organization's configuracion_catastro left with exactly one record saying `region`, or none when null

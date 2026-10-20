@@ -35,7 +35,7 @@ data class PredioCatastral(
 )
 
 // material and estado_conservacion come in the model's enum spelling (CONCRETO, MUY BUENO …), which is what
-// Valorizacion.materialRnt / estadoRnt read
+// Valorizacion.materialRnt / estadoRnt read; clasificacion likewise, for Valorizacion.TABLA_POR_CLASIFICACION
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
 data class FichaConstruccion(
     val id: String,
@@ -48,7 +48,9 @@ data class FichaConstruccion(
     val murosColumnas: String? = null,
     val techos: String? = null,
     val puertasVentanas: String? = null,
-    val techoIncluido: Boolean? = null
+    val techoIncluido: Boolean? = null,
+    val clasificacion: String? = null,
+    val seccion: Int? = null
 )
 
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)

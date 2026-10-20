@@ -6,6 +6,8 @@ import catastro.tablas.Tablas
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
+import tools.jackson.databind.json.JsonMapper
+import java.io.File
 import java.math.BigDecimal
 
 // the engine against the shipped tables. every figure is worked by hand in the comment above its assertion, with the
@@ -34,8 +36,10 @@ class ValorizacionTest {
         muros: Char? = 'C',
         techos: Char? = 'D',
         puertas: Char? = 'E',
-        techoIncluido: Boolean? = null
-    ) = Construccion(piso, area, anio, material, estado, muros, techos, puertas, techoIncluido)
+        techoIncluido: Boolean? = null,
+        clasificacion: String? = null,
+        seccion: Int? = null
+    ) = Construccion(piso, area, anio, material, estado, muros, techos, puertas, techoIncluido, clasificacion, seccion)
 
     private fun valorizada(
         i: Insumos,
@@ -251,6 +255,85 @@ class ValorizacionTest {
         assertEquals("MATERIAL_FALTANTE", sinValor(insumos(construcciones = listOf(piso(material = null)))).llave)
         assertEquals("ESTADO_FALTANTE", sinValor(insumos(construcciones = listOf(piso(estado = null)))).llave)
         assertEquals("ESTADO_DESCONOCIDO:PESIMO", sinValor(insumos(construcciones = listOf(piso(estado = "PESIMO")))).llave)
+    }
+
+    // --- clasificación de cada construcción (the RNT tabla that construction depreciates with)
+
+    @Test
+    fun `la clasificación de la construcción manda sobre la tabla del uso`() {
+        // uso 010101 would give tabla 01 (5 %); EDIFICIO-OFICINAS is tabla 03, Concreto Bueno hasta 10 = 8 %
+        // 829.28 x 0.92 = 762.9376; x 100 = 76293.76
+        val v = valorizada(insumos(construcciones = listOf(piso(clasificacion = "EDIFICIO-OFICINAS"))))
+        assertEquals(bd("76293.76"), v.construccion)
+        assertEquals(bd("85393.76"), v.autoavaluo)
+    }
+
+    @Test
+    fun `cada construcción con su tabla - la que no trae clasificación usa la del uso`() {
+        // piso 1 CLINICAS... = tabla 04, Concreto Bueno hasta 10 = 10 %: 829.28 x 0.90 x 100 = 74635.20
+        // piso 2 without one: the uso's tabla 01, 5 %: 78781.60. construcción = 153416.80
+        val dos = listOf(piso(clasificacion = "CLINICAS HOSPITALES CINES INDUSTRIAS COLEGIOS TALLERES"), piso(piso = "2"))
+        assertEquals(bd("153416.80"), valorizada(insumos(construcciones = dos)).construccion)
+    }
+
+    @Test
+    fun `con todas las construcciones clasificadas no hace falta la tabla del uso`() {
+        // tabla 02 (TIENDAS...), Concreto Bueno hasta 10 = 7 %: 829.28 x 0.93 x 100 = 77123.04
+        val tienda = piso(clasificacion = "TIENDAS DEPOSITOS CENTROS DE RECREACION CLUBES E INSTITUCIONES")
+        assertEquals(bd("77123.04"), valorizada(insumos(uso = "990000", construcciones = listOf(tienda))).construccion)
+        assertEquals(bd("77123.04"), valorizada(insumos(uso = null, construcciones = listOf(tienda))).construccion)
+    }
+
+    @Test
+    fun `las obras siguen con la tabla del uso aunque las construcciones traigan la suya`() {
+        val muro = Obra("MUROS PERIMETRICOS O CERCOS|1", bd("30"), 2016, "CONCRETO", "BUENO")
+        val oficina = piso(clasificacion = "EDIFICIO-OFICINAS")
+        // uso 010101 -> tabla 01 for the muro: 8870.61 (as in the obra test); the piso 76293.76 with tabla 03
+        val v = valorizada(insumos(construcciones = listOf(oficina), obras = listOf(muro)))
+        assertEquals(bd("76293.76"), v.construccion)
+        assertEquals(bd("8870.61"), v.obras)
+        assertEquals("TABLA_DE_DEPRECIACION:990000", sinValor(insumos(uso = "990000", construcciones = listOf(oficina), obras = listOf(muro))).llave)
+    }
+
+    @Test
+    fun `una clasificación que el motor no conoce no se valoriza`() {
+        // an option added to the model's enum before the engine knows its tabla: never the uso's in silence
+        val v = sinValor(insumos(construcciones = listOf(piso(clasificacion = "MUSEOS"))))
+        assertEquals("CLASIFICACION_DESCONOCIDA:MUSEOS", v.llave)
+        assertTrue(v.motivo.contains("MUSEOS"), v.motivo)
+    }
+
+    @Test
+    fun `cada clasificación del modelo tiene su tabla del RNT, en el orden de las tablas`() {
+        val modelo = JsonMapper.builder().build().readTree(File("model/model.json"))
+        val enum = modelo["enums"]["clasificacion"]
+        val opciones = (0 until enum.size()).map { enum[it].asString() }
+        assertEquals(opciones, Valorizacion.TABLA_POR_CLASIFICACION.keys.toList())
+        assertEquals(listOf("01", "02", "03", "04"), Valorizacion.TABLA_POR_CLASIFICACION.values.toList())
+        val rnt = tablas.depreciaciones.map { it.tabla }.toSet()
+        assertTrue(rnt.containsAll(Valorizacion.TABLA_POR_CLASIFICACION.values), "$rnt")
+    }
+
+    // --- secciones de un piso
+
+    @Test
+    fun `dos secciones del quinto piso de un edificio suben las dos 5 por ciento`() {
+        // the oficina of the edificio test: piso 5 = 1610.76 x 1.05 = 1691.298; x 50 = 84564.90, twice = 169129.80
+        val secciones =
+            (1..2).map {
+                piso(piso = "5", area = bd("50"), anio = 2021, estado = "MUY BUENO", muros = 'B', techos = 'A', puertas = 'A', seccion = it)
+            }
+        val v = valorizada(insumos(areaTerreno = bd("100"), arancelM2 = bd("80"), uso = "020401", esEdificio = true, construcciones = secciones))
+        assertEquals(bd("169129.80"), v.construccion)
+    }
+
+    @Test
+    fun `el motivo nombra la sección cuando no es la primera`() {
+        val segunda = sinValor(insumos(construcciones = listOf(piso(piso = "5", area = null, seccion = 2))))
+        assertEquals("AREA_CONSTRUIDA_FALTANTE", segunda.llave)
+        assertTrue(segunda.motivo.contains("piso 5, sección 2"), segunda.motivo)
+        val primera = sinValor(insumos(construcciones = listOf(piso(piso = "5", area = null, seccion = 1))))
+        assertTrue(!primera.motivo.contains("sección"), primera.motivo)
     }
 
     @Test

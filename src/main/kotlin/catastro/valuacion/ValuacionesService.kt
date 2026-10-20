@@ -34,7 +34,10 @@ class ValuacionesService(
             if (ids.isEmpty()) {
                 emptyMap()
             } else {
-                registros.conCampoEn(CONSTRUCCION, FichaConstruccion::class.java, PREDIO, ids, sort = "piso").groupBy { it.predio }
+                registros
+                    .conCampoEn(CONSTRUCCION, FichaConstruccion::class.java, PREDIO, ids, sort = "piso")
+                    .groupBy { it.predio }
+                    .mapValues { (_, delPredio) -> porSeccion(delPredio) }
             }
         val obras =
             if (ids.isEmpty()) {
@@ -85,7 +88,9 @@ class ValuacionesService(
                             muros = it.murosColumnas?.singleOrNull(),
                             techos = it.techos?.singleOrNull(),
                             puertas = it.puertasVentanas?.singleOrNull(),
-                            techoIncluido = it.techoIncluido
+                            techoIncluido = it.techoIncluido,
+                            clasificacion = it.clasificacion,
+                            seccion = it.seccion
                         )
                     },
                 obras = obras.map { Obra(it.codigoVu, it.cantidad, it.anioConstruccion, it.material, it.estadoConservacion) }
@@ -140,10 +145,23 @@ class ValuacionesService(
                 ?: throw RegionNoConfigurada("$CONFIGURACION_CATASTRO dice la región «$region», sin tablas en el motor ($conocidas)")
         }
 
-        // the engine's version: srtm stores it with each corrida, so a change in the arithmetic is visible there
-        const val VERSION = "valuacion-v1"
+        // the engine's version: srtm stores it with each corrida, so a change in the arithmetic is visible there.
+        // v1: the RNT tabla of the predio's uso, unrounded VU. v2: the tabla of each construction's clasificación, and the
+        // costa's VU to the céntimo (Region.redondeaValorUnitario). a selva predio without clasificaciones keeps v1's figure
+        const val VERSION = "valuacion-v2"
 
         const val TAMANO = 200
         const val TAMANO_MAXIMO = 500
     }
+}
+
+// core sorts by one field: the secciones of a piso keep the pisos' order and go by seccion (null is 1) among them
+internal fun porSeccion(pisos: List<FichaConstruccion>): List<FichaConstruccion> {
+    val orden =
+        pisos
+            .map { it.piso }
+            .distinct()
+            .withIndex()
+            .associate { (n, piso) -> piso to n }
+    return pisos.sortedWith(compareBy({ orden.getValue(it.piso) }, { it.seccion ?: 1 }))
 }

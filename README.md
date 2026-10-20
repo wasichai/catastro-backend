@@ -62,10 +62,22 @@ del MEF (`cod_pre`, `cod_cpu`, `cod_sect`, `cod_mzn`, `cod_lote`, `id_aranc`, `a
 `categorias` (`CCDCCDC`: muros y columnas, techos, pisos, puertas y ventanas, revestimientos, baños, instalaciones) o en
 siete columnas con el nombre del campo. La columna opcional `techo_incluido` (`SI`/`NO`, `S`/`N`, `TRUE`/`FALSE`,
 `1`/`0`, sin distinguir mayúsculas; vacía no se envía) marca los muros D de drywall que incluyen el techo (llamada 5 del
-Anexo I.4, ver D4); un valor que no se lee es un error de validación (código 2). Un predio que el Core ya tiene se
-salta; los pisos (llave predio y piso) y las obras (llave predio, `codigo_vu` y año de construcción) se crean solo si
+Anexo I.4, ver D4); un valor que no se lee es un error de validación (código 2). Dos columnas opcionales más, las dos
+vacías no se envían:
+
+- `clasificacion`: la tabla de depreciación del RNT de esa construcción. Va como una opción del enum `clasificacion`
+  (las mismas cuatro de srtm, sin distinguir mayúsculas), o como el número de la tabla, `1` a `4` o `01` a `04`. Si
+  viene, manda sobre la del uso del predio (D1). Así un padrón que clasifica cada nivel, como el de Ica (su
+  `clasificacion_construccion` 1 a 4 es la tabla 01 a 04), pasa tal cual.
+- `seccion`: un entero desde 1 (vacía vale 1), para las partes de un mismo piso con características distintas. El piso
+  sigue siendo solo su número (`5`, no `5-2`), así que el +5 % de edificio alcanza a cada sección.
+
+Un predio que el Core ya tiene se salta; los pisos (llave predio, piso y sección; un piso sin sección, como los que se
+cargaron antes, es la sección 1) y las obras (llave predio, `codigo_vu` y año de construcción) se crean solo si
 faltan, así que una carga que falló a medias se completa volviendo a correrla. Un piso que el Core ya tiene no se
-actualiza: para cambiarle `techo_incluido` hay que editarlo en el Core. Una llave repetida en el archivo es un error.
+actualiza: para cambiarle `techo_incluido` o `clasificacion` (por ejemplo, clasificar después los pisos de Perené) hay
+que editarlo en el Core; volver a correr la carga no los toca. Una llave repetida en el archivo es un error, y también un
+`clasificacion` que no se lee: el `0` de Ica (sin tabla) va vacío.
 
 ```sh
 python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.csv --dry-run
@@ -154,24 +166,45 @@ autoavalúo de un predio en un año, con las tablas de la región de su organiza
 - terreno = área de terreno × arancel por m²;
 - construcción, por piso: VU = muros y columnas + techos + puertas y ventanas (D4; sin techos con muros A, o con
   muros D de techo incluido), +5 % si el predio es edificio y el piso es el 5.° o más (único, antes de depreciar; un
-  sótano `S1` no sube), × (1 − depreciación) × área construida;
+  sótano `S1` no sube), × (1 − depreciación) × área construida. Cada sección de un piso (`seccion`) es una
+  construcción más, con el mismo piso. La depreciación es la de la tabla de la `clasificacion` de la construcción, si
+  la tiene, y si no la del uso del predio (D1). El redondeo del VU depende de la región (ver abajo);
 - obras: VU de la partida × cantidad × factor de oficialización × (1 − depreciación), con la tabla del uso del predio y
   el material, estado y antigüedad de la obra (si la obra no dice material, el de su partida);
 - autoavalúo = (terreno + construcción + obras) × (1 + % de actualización). Cada cifra con 2 decimales, HALF_UP.
+
+**Redondeo del VU por región** (`Region.redondeaValorUnitario`):
+
+| Región | Construcción de un piso o sección | Fuente |
+|---|---|---|
+| `COSTA` | round(round(VU × 1.05) × (1 − dep)) × área: el VU con el +5 % de edificio (si aplica) y el VU depreciado van al céntimo, HALF_UP, antes de multiplicar por el área | práctica del padrón de Ica (`PADRON_CONSTRUCCION.xlsx`: su `incremento_5` es round(VU × 5 %) y su `valor_total_nivel` es round((VU + incremento_5) × (1 − dep)) × área); decisión del usuario 2026-10-20 |
+| `SELVA` | VU × 1.05 × (1 − dep) × área, sin redondeos intermedios | el motor de kamayuk, con el que se verificaron las cifras de Perené (no cambian) |
+
+Las obras no se redondean en ninguna región: ningún padrón ha mostrado cómo lo hace. Una región nueva declara su regla
+en `catastro.tablas.Region`.
 
 Un dato que falta no es cero: el predio sale sin valor, con un `motivo` para leer y una `llave` para contar (por
 ejemplo `ARANCEL_FALTANTE`, `VU_SIN_VALOR:TECHOS:I`, `TABLA_DE_DEPRECIACION:990000`,
 `PARAMETRO_FALTANTE:FACTOR_OFICIALIZACION:2025`, `OBRAS_SIN_CUADRO:<REGION>`); el motivo nombra el cuadro de la región. Gana
 el primero, en el orden del motor de kamayuk: terreno, arancel, parámetros del año, casillas del cuadro de cada piso,
-tabla de depreciación del uso, depreciación y obras.
+tabla de depreciación del uso (solo si algo la usa: una construcción sin `clasificacion` o una obra), la de cada
+`clasificacion` (`CLASIFICACION_DESCONOCIDA:<valor>` si el motor no la conoce), depreciación y obras.
 
 **Contra el padrón de Ica** (`ValorizacionCostaTest`): con muros C, techos C y puertas F el VU es 387.43 + 285.80 +
 90.81 = 764.04, el del padrón, y cinco niveles reales dan exactamente su `valor_total_nivel`. Leídos sus códigos contra
 el RNT (`clasificacion_construccion` 1 a 4 = tabla 01 a 04; material 1 concreto, 2 ladrillo, 3 adobe; estado 1 a 4 = muy
 bueno a malo; antigüedad 2026 − año), la depreciación implícita en su total es la del RNT en 3742 de 3755 niveles (las
-celdas `*` como D3); su columna `depreciacion` no coincide en 1078 (casi siempre va un tramo atrás) y no se usa.
-**Abierto:** el padrón redondea a 2 decimales el VU depreciado antes de multiplicar por el área (así cuadran 3696 de sus
-3755 totales) y el motor no, para que Perené no cambie: la diferencia es de céntimos por nivel, muy por debajo de D10.
+celdas `*` como D3); su columna `depreciacion` no coincide en 1078 (casi siempre va un tramo atrás) y no se usa. Con la
+`clasificacion` de cada nivel y el redondeo de la costa, el motor da exactamente su `valor_total_nivel` en 3688 de esos
+3755 niveles (sin el redondeo, en 682). De los 67 restantes, 5 no tienen valor (celdas `.....` y la categoría J), 26
+difieren en S/ 1 o menos y el resto son los niveles cuya depreciación no es la del RNT o cuyo VU no es el del cuadro.
+
+**Versión del motor** (`version` en la respuesta, `ValuacionesService.VERSION`; srtm la guarda con cada corrida):
+
+| Versión | Qué cambia |
+|---|---|
+| `valuacion-v1` | Depreciación con la tabla del uso del predio (D1); VU sin redondeos intermedios en todas las regiones |
+| `valuacion-v2` | La `clasificacion` de cada construcción manda sobre el uso, y la costa redondea el VU al céntimo (arriba). Un predio de la selva sin `clasificacion`, como los de Perené, da la misma cifra que en v1 |
 
 ## API para srtm
 
@@ -193,7 +226,7 @@ Authorization: Bearer <token de POST /api/auth/token>
 ```json
 {
   "anio": 2026,
-  "version": "valuacion-v1",
+  "version": "valuacion-v2",
   "region": "SELVA",
   "page": 0,
   "size": 200,
@@ -281,7 +314,8 @@ Confirmadas por la municipalidad el 2026-10-19, salvo lo que se dice abierto. D1
   desocupado, garage y bienes comunes sin subclase a 01. Cubre los 324 códigos. **Abierto**, para la administración
   tributaria con catastro: institucional en 02 o 03, hoteles (020503), consultorios médicos (03 o 04), servicios que
   pueden ser taller u oficina, conventos y asilos. Conviene pedir el parámetro «Uso Predio – Depreciación» del SRTM del
-  MEF (Exportar a Excel) y cotejarlo.
+  MEF (Exportar a Excel) y cotejarlo. Cuando el levantamiento clasifica cada construcción (`construccion.clasificacion`,
+  como Ica, que lo hace por nivel), esa clasificación manda y el uso solo decide las construcciones sin ella y las obras.
 - **D2** material: CONCRETO a Concreto, LADRILLO a Ladrillo, todo lo demás a la columna `Liviano/Adobe`.
 - **D3** estado MUY MALO se trata como Malo; las celdas `*` (ausentes en `depreciacion.csv`) toman el último
   porcentaje publicado de su fila.

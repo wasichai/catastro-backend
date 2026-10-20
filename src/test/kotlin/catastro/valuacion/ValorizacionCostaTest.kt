@@ -10,7 +10,8 @@ import java.math.BigDecimal
 // the engine with the costa tables (anexo I.2) against real niveles of the Municipalidad de Ica's padrón
 // (PADRON_CONSTRUCCION.xlsx, sheet construcciones, read 2026-10-20; no contribuyente or predio code is copied here).
 // the padrón prices muros C + techos C + puertas F at 764.04 = 387.43 + 285.80 + 90.81 (anexo I.2), and its
-// valor_total_nivel is (valor_unitario + incremento_5) x (1 - dep%) x área. its codes, read against the RNT:
+// valor_total_nivel is round((valor_unitario + incremento_5) x (1 - dep%), 2) x área, incremento_5 itself rounded to
+// the céntimo: the rounding the costa does (Region.redondeaValorUnitario). its codes, read against the RNT:
 // clasificacion_construccion 1-4 is the RNT tabla 01-04, material_predominante 1 concreto, 2 ladrillo, 3 adobe,
 // estado_de_conservacion 1-4 muy bueno to malo, antigüedad 2026 - año: with them the depreciation implied by
 // valor_total_nivel is the RNT's in 3742 of its 3755 niveles (the '*' cells as D3). its depreciacion column is not:
@@ -22,20 +23,22 @@ class ValorizacionCostaTest {
 
     // one nivel of the padrón as the only construction of a predio, muros C, techos C, puertas F. the uso picks the
     // RNT tabla the padrón's clasificacion_construccion names (uso-tabla-depreciacion.csv: 010101 -> 01, 020301 -> 02,
-    // 020401 -> 03). terreno is not the padrón's: only construccion is compared
+    // 020401 -> 03). terreno is not the padrón's: only construccion is compared. a piso other than the 1st is in an
+    // edificio (the 5 % applies from the 5th)
     private fun nivel(
         uso: String,
         material: String,
         estado: String,
         anio: Int,
-        area: String
+        area: String,
+        piso: String = "1"
     ) = Insumos(
         anio = 2026,
         areaTerreno = bd("100"),
         arancelM2 = bd("10"),
         uso = uso,
-        esEdificio = false,
-        construcciones = listOf(Construccion("1", bd(area), anio, material, estado, 'C', 'C', 'F')),
+        esEdificio = piso != "1",
+        construcciones = listOf(Construccion(piso, bd(area), anio, material, estado, 'C', 'C', 'F')),
         obras = emptyList()
     )
 
@@ -63,10 +66,10 @@ class ValorizacionCostaTest {
         // 764.04 x 0.50 x 129 = 49280.58 (padrón: 49280.58; su columna depreciacion dice 47)
         assertEquals(bd("49280.58"), construccion(nivel("010101", "LADRILLO", "REGULAR", 1974, "129")))
         // clasificación 2, ladrillo, bueno, 2004, 9.50 m2: antigüedad 22, tabla 02 Ladrillo Bueno hasta 25 = 24 %
-        // 764.04 x 0.76 x 9.50 = 5516.3688 -> 5516.37 (padrón: 5516.37; su columna depreciacion dice 20)
+        // round(764.04 x 0.76, 2) = round(580.6704, 2) = 580.67; x 9.50 = 5516.365 -> 5516.37 (padrón: 5516.37; su columna depreciacion dice 20)
         assertEquals(bd("5516.37"), construccion(nivel("020301", "LADRILLO", "BUENO", 2004, "9.5")))
         // clasificación 3, ladrillo, bueno, 2003, 101 m2: antigüedad 23, tabla 03 Ladrillo Bueno hasta 25 = 25 %
-        // 764.04 x 0.75 x 101 = 57876.03 (padrón: 57876.03)
+        // round(764.04 x 0.75, 2) = 573.03; x 101 = 57876.03 (padrón: 57876.03)
         assertEquals(bd("57876.03"), construccion(nivel("020401", "LADRILLO", "BUENO", 2003, "101")))
         // clasificación 1, concreto, muy bueno, 2016, 63.45 m2: antigüedad 10, tabla 01 Concreto Muy Bueno hasta 10 = 0 %
         // 764.04 x 63.45 = 48478.338 -> 48478.34 (padrón: 48478.34)
@@ -74,23 +77,41 @@ class ValorizacionCostaTest {
     }
 
     @Test
-    fun `el padrón de Ica redondea el VU depreciado antes del área - el motor no`() {
+    fun `la costa redondea el VU depreciado al céntimo antes del área, como el padrón de Ica`() {
         // clasificación 1, ladrillo, bueno, 2022, 114.89 m2: antigüedad 4, tabla 01 Ladrillo Bueno hasta 5 = 8 %.
-        // motor: 764.04 x 0.92 x 114.89 = 80758.1112 -> 80758.11. padrón: 80758.48 = round(764.04 x 0.92, 2) = 702.92,
-        // x 114.89. the same rounding explains 3696 of its 3755 niveles; the engine keeps perené's arithmetic (open)
-        assertEquals(bd("80758.11"), construccion(nivel("010101", "LADRILLO", "BUENO", 2022, "114.89")))
+        // round(764.04 x 0.92, 2) = round(702.9168, 2) = 702.92; x 114.89 = 80758.4788 -> 80758.48 (padrón: 80758.48).
+        // without the rounding, 764.04 x 0.92 x 114.89 = 80758.1112 -> 80758.11 (valuacion-v1)
+        assertEquals(bd("80758.48"), construccion(nivel("010101", "LADRILLO", "BUENO", 2022, "114.89")))
+    }
+
+    @Test
+    fun `la costa redondea también el VU con el 5 % de edificio, antes de depreciar`() {
+        // piso 5, clasificación 1, ladrillo, bueno, 2000, 32 m2: antigüedad 26, tabla 01 Ladrillo Bueno hasta 30 = 23 %.
+        // padrón: valor_unitario 764.04 + incremento_5 38.20 (round(764.04 x 0.05, 2) = round(38.202, 2)) = 802.24;
+        // round(802.24 x 0.77, 2) = round(617.7248, 2) = 617.72; x 32 = 19767.04 (padrón: 19767.04). rounding only the
+        // depreciated VU, 764.04 x 1.05 = 802.242 x 0.77 = 617.72634 -> 617.73, x 32 = 19767.36
+        assertEquals(bd("19767.04"), construccion(nivel("010101", "LADRILLO", "BUENO", 2000, "32", piso = "5")))
+    }
+
+    @Test
+    fun `el redondeo es de la región, no del cuadro - la selva no redondea`() {
+        // the costa's cells under the selva's rule: 764.04 x 0.92 x 114.89 = 80758.1112 -> 80758.11, perené's arithmetic
+        val selva = Tablas(Region.SELVA, costa.valoresUnitarios, costa.depreciaciones, costa.obras, costa.usos, costa.parametros)
+        val v = Valorizacion.valorizar(nivel("010101", "LADRILLO", "BUENO", 2022, "114.89"), selva)
+        assertEquals(bd("80758.11"), (v as Valuacion.Valorizada).construccion)
     }
 
     @Test
     fun `muros D con techo incluido tampoco suma techos en la costa`() {
         // anexo I.2, muros D: «DRYWALL O SIMILAR INCLUYE TECHO (5)», llamada (5) «PARA ESTE CASO NO SE CONSIDERA LA
         // COLUMNA N° 2» (normativa, valores-unitarios-2026.md:98 y :135). the rule is the engine's, for every region
-        // VU = muros D 374.68 + puertas F 90.81 = 465.49; tabla 01 Ladrillo Bueno hasta 10 = 11 %; x 0.89 x 50 = 20714.305 -> 20714.31
+        // VU = muros D 374.68 + puertas F 90.81 = 465.49; tabla 01 Ladrillo Bueno hasta 10 = 11 %;
+        // round(465.49 x 0.89, 2) = round(414.2861, 2) = 414.29; x 50 = 20714.50
         val base = nivel("010101", "LADRILLO", "BUENO", 2016, "50")
         val drywall = base.copy(construcciones = listOf(base.construcciones[0].copy(muros = 'D', techoIncluido = true)))
-        assertEquals(bd("20714.31"), construccion(drywall))
-        // the ladrillo D keeps its techos C 285.80: (465.49 + 285.80) x 0.89 x 50 = 33432.405 -> 33432.41
-        assertEquals(bd("33432.41"), construccion(base.copy(construcciones = listOf(base.construcciones[0].copy(muros = 'D')))))
+        assertEquals(bd("20714.50"), construccion(drywall))
+        // the ladrillo D keeps its techos C 285.80: round((465.49 + 285.80) x 0.89, 2) = round(668.6481, 2) = 668.65; x 50 = 33432.50
+        assertEquals(bd("33432.50"), construccion(base.copy(construcciones = listOf(base.construcciones[0].copy(muros = 'D')))))
     }
 
     @Test
@@ -117,7 +138,8 @@ class ValorizacionCostaTest {
         val v = sinValor(nivel("010101", "LADRILLO", "BUENO", 2016, "50").copy(obras = listOf(muro)), sinObras)
         assertEquals("OBRAS_SIN_CUADRO:COSTA", v.llave)
         assertTrue(v.motivo.contains("obras-complementarias-costa-2026.csv"), v.motivo)
-        // without obras the same predio has a value: 764.04 x (1 - 0.11, tabla 01 Ladrillo Bueno hasta 10) x 50 = 33999.78
-        assertEquals(bd("33999.78"), (Valorizacion.valorizar(nivel("010101", "LADRILLO", "BUENO", 2016, "50"), sinObras) as Valuacion.Valorizada).construccion)
+        // without obras the same predio has a value: round(764.04 x (1 - 0.11, tabla 01 Ladrillo Bueno hasta 10), 2) =
+        // round(679.9956, 2) = 680.00; x 50 = 34000.00
+        assertEquals(bd("34000.00"), (Valorizacion.valorizar(nivel("010101", "LADRILLO", "BUENO", 2016, "50"), sinObras) as Valuacion.Valorizada).construccion)
     }
 }
