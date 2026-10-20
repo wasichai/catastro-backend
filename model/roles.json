@@ -3,12 +3,13 @@
     {
       "name": "SRTM_LECTOR",
       "label": "Lector de srtm",
-      "description": "El rol de la cuenta de servicio de srtm-backend: lee el levantamiento (predios, construcciones, obras complementarias y aranceles) para pedir sus valuaciones por año (GET /api/catastro/valuaciones). No escribe nada.",
+      "description": "El rol de la cuenta de servicio de srtm-backend: lee el levantamiento (predios, construcciones, obras complementarias y aranceles) y la región de la organización para pedir sus valuaciones por año (GET /api/catastro/valuaciones). No escribe nada.",
       "permisos": {
         "predio_catastral": ["READ"],
         "construccion": ["READ"],
         "obra_complementaria": ["READ"],
-        "arancel": ["READ"]
+        "arancel": ["READ"],
+        "configuracion_catastro": ["READ"]
       }
     }
   ]

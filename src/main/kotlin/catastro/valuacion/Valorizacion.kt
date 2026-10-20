@@ -20,8 +20,8 @@ data class Insumos(
 )
 
 // one piso. material and estado in catastro's enum spelling (CONCRETO, MUY BUENO …); the letters are the three
-// partidas the selva cuadro prices (the other four categorías do not enter the VU). techoIncluido marks the muros D
-// that are drywall including the techo (anexo I.4, llamada 5); null is "not declared", the ladrillo case
+// partidas every regional cuadro prices (the other four categorías do not enter the VU). techoIncluido marks the muros D
+// that are drywall including the techo (llamada 5 of anexos I.1-I.4); null is "not declared", the ladrillo case
 data class Construccion(
     val piso: String,
     val areaConstruida: BigDecimal?,
@@ -129,12 +129,22 @@ object Valorizacion {
                     conIncremento.multiply(dep).multiply(areaConstruida).redondeado()
                 }
 
+        // a region whose obras cuadro is not shipped cannot value an obra: skipping it would undervalue the predio
+        if (i.obras.isNotEmpty() && t.obras == null) {
+            falta(
+                "OBRAS_SIN_CUADRO:${t.region}",
+                "No hay cuadro de obras complementarias de la ${t.region.nombre} (${t.region.obras}): el predio declara obras y sin él no se valorizan"
+            )
+        }
         val obras =
             i.obras.sumOf { o ->
                 val codigo = o.codigoVu.orEmpty()
                 val donde = "la obra complementaria $codigo"
                 val partida =
-                    t.obra(codigo) ?: falta("OBRA_DESCONOCIDA:$codigo", "El cuadro de obras complementarias de la selva no tiene la partida «$codigo»")
+                    t.obra(codigo) ?: falta(
+                        "OBRA_DESCONOCIDA:$codigo",
+                        "El cuadro de obras complementarias de la ${t.region.nombre} no tiene la partida «$codigo»"
+                    )
                 val cantidad = o.cantidad ?: falta("OBRA_CANTIDAD_FALTANTE", "$donde no declara cantidad")
                 if (cantidad.signum() < 0) falta("OBRA_CANTIDAD_INVALIDA", "$donde declara una cantidad negativa ($cantidad)")
                 // the partida itself names a material (a "muro de concreto"); the ficha's, when given, wins
@@ -215,11 +225,14 @@ object Valorizacion {
                     "$donde no declara la categoría de $partida; una categoría sin declarar no es «sin techo» ni «sin puertas»"
                 )
             if (categoria !in t.categorias) {
-                falta("CATEGORIA_INVALIDA:$partida:$categoria", "$donde declara la categoría $categoria en $partida, fuera de A a J")
+                falta(
+                    "CATEGORIA_INVALIDA:$partida:$categoria",
+                    "$donde declara la categoría $categoria en $partida, fuera de ${t.categorias.first()} a ${t.categorias.last()} (cuadro de la ${t.region.nombre})"
+                )
             }
             t.valorUnitario(partida, categoria) ?: falta(
                 "VU_SIN_VALOR:$partida:$categoria",
-                "El cuadro de la selva no publica valor para $partida categoría $categoria ($donde): la celda es «.....», que no es cero"
+                "El cuadro de la ${t.region.nombre} no publica valor para $partida categoría $categoria ($donde): la celda es «.....», que no es cero"
             )
         }
     }

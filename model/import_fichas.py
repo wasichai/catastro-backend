@@ -14,7 +14,8 @@ Default columns follow the MEF carga masiva contract (kamayuk ContratoDeImportac
           the seven categories either as one 7-letter text in `categorias` (e.g. CCDCCDC, in the order muros_columnas,
           techos, pisos, puertas_ventanas, revestimientos, banos, instalaciones) or in seven columns named as the fields,
           and optionally techo_incluido (SI/NO, S/N, TRUE/FALSE, 1/0; empty = not sent): the muros D are drywall that
-          includes the techo (Anexo I.4, llamada 5), so the valuation leaves the techos category out
+          includes the techo (llamada 5 of every regional cuadro, Anexos I.1-I.4), so the valuation leaves the techos
+          category out
   obras:  cod_pre -> codigo_municipal, codigo_vu (TIPO DE OBRA|numero, as obra_categoria in srtm), cantidad,
           anio_construccion, material, estado_conservacion
 --map, --map-pisos and --map-obras field=column override those defaults (repeatable). material and
@@ -25,16 +26,22 @@ Idempotent by codigo_municipal: a predio Core already has is skipped. Pisos and 
 half way is completed by running again. A key repeated in the file is an error. Exit: 0 ok, 1 Core refused something, 2 the files do not fit the model (every bad row is listed, nothing
 is sent).
 
-Run: python3 import_fichas.py --fichas fichas.csv --pisos pisos.csv [--obras obras.csv] [--dry-run]
+Run: python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv [--obras obras.csv] [--dry-run]
 """
 import argparse
 import os
 import re
 import sys
 
-from core_client import Client, CoreError
-from tabular import (HERE, INPUT_ERRORS, LoadError, clean_text, code_text, column_for, enum_option, load_enums, missing_columns, parse_decimal,
-                     parse_int, parse_map, post_all, read_table, report_problems)
+HERE = os.path.dirname(os.path.abspath(__file__))
+# under python3 -I (the files it reads are untrusted) neither the cwd nor the script's directory is on sys.path: put
+# back only the latter, for core_client and tabular
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+from core_client import Client, CoreError  # noqa: E402
+from tabular import (INPUT_ERRORS, LoadError, clean_text, code_text, column_for, enum_option, load_enums,  # noqa: E402
+                     missing_columns, parse_decimal, parse_int, parse_map, post_all, read_table, report_problems)
 
 CATEGORIAS = ["muros_columnas", "techos", "pisos", "puertas_ventanas", "revestimientos", "banos", "instalaciones"]
 

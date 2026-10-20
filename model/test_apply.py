@@ -13,7 +13,7 @@ import apply
 from fake_core import FakeCore
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "model.json")
-OBJECT_ORDER = ["predio_catastral", "construccion", "obra_complementaria", "arancel"]
+OBJECT_ORDER = ["predio_catastral", "construccion", "obra_complementaria", "arancel", "configuracion_catastro"]
 RELATIONSHIP_ORDER = ["construccion_predio", "obra_complementaria_predio"]
 
 
@@ -70,7 +70,7 @@ class HappyPathTests(ApplyCliTestCase):
             ("/api/metadata/objects/construccion/fields/predio", {"required": True}),
             ("/api/metadata/objects/obra_complementaria/fields/predio", {"required": True}),
         ])
-        self.assertIn("done: 6 created, 2 updated, 0 skipped", out)
+        self.assertIn("done: 7 created, 2 updated, 0 skipped", out)
 
     def test_the_two_composite_indexes_are_declared(self):
         self.run_cli([])
@@ -92,7 +92,7 @@ class IdempotencyTests(ApplyCliTestCase):
         # a relationship is POSTed and answered 409, its field re-marked required; no object or field is written
         posts = [r[1] for r in self.core.requests if r[0] == "POST" and "login" not in r[1]]
         self.assertEqual(posts, ["/api/relationships"] * 2)
-        self.assertIn("done: 0 created, 0 updated, 6 skipped", out)
+        self.assertIn("done: 0 created, 0 updated, 7 skipped", out)
 
 
 class FailureTests(ApplyCliTestCase):

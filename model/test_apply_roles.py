@@ -104,7 +104,8 @@ class ApplyRolesTests(unittest.TestCase):
                 {"objectName": "predio_catastral", "action": "READ"},
                 {"objectName": "construccion", "action": "READ"},
                 {"objectName": "obra_complementaria", "action": "READ"},
-                {"objectName": "arancel", "action": "READ"}]})])
+                {"objectName": "arancel", "action": "READ"},
+                {"objectName": "configuracion_catastro", "action": "READ"}]})])
         for method, path, auth, body in self.core.requests:
             self.assertEqual(auth, None if path == "/api/auth/login" else "Bearer t")
         self.assertIn("done: 1 created, 0 updated, 0 skipped", out)

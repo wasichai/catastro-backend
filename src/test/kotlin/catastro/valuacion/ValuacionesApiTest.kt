@@ -25,6 +25,45 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         admin = bearer()
         aplicarModelo()
         aplicarRoles()
+        // perené's region, as model/configurar_region.py --region SELVA leaves it
+        region("SELVA")
+    }
+
+    @Test
+    fun `la región de la organización elige el cuadro, y sin región no hay valuaciones`() {
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        val marca = uniqueName("t9").uppercase()
+        val idAranc = "$marca-A"
+        registro(ARANCEL, mapOf("clave" to "$idAranc|2026", "id_aranc" to idAranc, "anio" to 2026, "valor_m2" to 45.50))
+        val casa = predio("$marca-1", idAranc)
+        piso(casa, "1", "CONCRETO", "BUENO")
+        val construccion = { leerTodo(srtm, 500).first { it["codigoMunicipal"].asString() == "$marca-1" }["construccion"] }
+        try {
+            // selva (ValorizacionTest, casa de un piso de concreto): 78781.60
+            numero("78781.60", construccion())
+            assertEquals("SELVA", valuaciones(srtm, "anio=2026&size=1")["region"].asString())
+            // costa, same piso: VU = muros C 387.43 + techos D 181.40 + puertas E 120.98 = 689.81 (anexo I.2);
+            // tabla 01 Concreto Bueno hasta 10 = 5 %: 689.81 x 0.95 x 100 = 65531.95
+            region("COSTA")
+            numero("65531.95", construccion())
+            assertEquals("COSTA", valuaciones(srtm, "anio=2026&size=1")["region"].asString())
+
+            // no region: no valuations at all, a 409 that names the missing configuration
+            region(null)
+            val (sin, cuerpo) = exchange("GET", "/api/catastro/valuaciones?anio=2026", null, srtm)
+            assertEquals(HttpStatus.CONFLICT, sin, cuerpo)
+            assertEquals("configuracion_catastro.region", arbol(cuerpo)["errors"][0]["field"].asString(), cuerpo)
+            assertTrue(cuerpo.contains("COSTA") && cuerpo.contains("SELVA"), cuerpo)
+
+            // two records: none is picked
+            registro(CONFIGURACION_CATASTRO, mapOf("region" to "SELVA"))
+            registro(CONFIGURACION_CATASTRO, mapOf("region" to "COSTA"))
+            val (dos, cuerpoDos) = exchange("GET", "/api/catastro/valuaciones?anio=2026", null, srtm)
+            assertEquals(HttpStatus.CONFLICT, dos, cuerpoDos)
+            assertEquals("configuracion_catastro.region", arbol(cuerpoDos)["errors"][0]["field"].asString(), cuerpoDos)
+        } finally {
+            region("SELVA")
+        }
     }
 
     @Test
@@ -234,6 +273,16 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         ) + (techoIncluido?.let { mapOf("techo_incluido" to it) } ?: emptyMap())
     )
 
+    // the organization's configuracion_catastro left with exactly one record saying `region`, or none when null
+    private fun region(region: String?) {
+        val ids =
+            arbol(send("GET", "/api/objects/$CONFIGURACION_CATASTRO/records?size=200", null, HttpStatus.OK, admin))["content"]
+                .lista()
+                .map { it["id"].asString() }
+        ids.forEach { send("DELETE", "/api/objects/$CONFIGURACION_CATASTRO/records/$it", null, HttpStatus.NO_CONTENT, admin) }
+        if (region != null) registro(CONFIGURACION_CATASTRO, mapOf("region" to region))
+    }
+
     // a record created by the seeded admin: its id
     private fun registro(
         objeto: String,
@@ -379,6 +428,7 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
             when (method) {
                 "GET" -> client.get().uri(path)
                 "PUT" -> client.put().uri(path).bodyValue(body!!)
+                "DELETE" -> client.delete().uri(path)
                 else -> client.post().uri(path).bodyValue(body!!)
             }
         val result =

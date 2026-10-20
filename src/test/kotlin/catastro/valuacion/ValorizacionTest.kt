@@ -1,6 +1,7 @@
 package catastro.valuacion
 
 import catastro.tablas.ClaveParametro
+import catastro.tablas.Region
 import catastro.tablas.Tablas
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -10,7 +11,7 @@ import java.math.BigDecimal
 // the engine against the shipped tables. every figure is worked by hand in the comment above its assertion, with the
 // cells read from src/main/resources/tablas (VU = anexo I.4 selva, dep = RNT anexo I, obras = anexo III.4 selva)
 class ValorizacionTest {
-    private val tablas = Tablas.desdeClasspath()
+    private val tablas = Tablas.de(Region.SELVA)
 
     private fun bd(valor: String) = BigDecimal(valor)
 
@@ -99,6 +100,7 @@ class ValorizacionTest {
     fun `el porcentaje de actualización incrementa el autoavalúo`() {
         val conDiez =
             Tablas(
+                tablas.region,
                 tablas.valoresUnitarios,
                 tablas.depreciaciones,
                 tablas.obras,
@@ -224,6 +226,7 @@ class ValorizacionTest {
         val v = sinValor(insumos(construcciones = listOf(piso(techos = 'I'))))
         assertEquals("VU_SIN_VALOR:TECHOS:I", v.llave)
         assertTrue(v.motivo.contains("piso 1"))
+        assertTrue(v.motivo.contains("cuadro de la selva"), v.motivo)
     }
 
     @Test
@@ -235,7 +238,9 @@ class ValorizacionTest {
     @Test
     fun `una categoría sin declarar no es sin techo`() {
         assertEquals("CATEGORIA_FALTANTE:TECHOS", sinValor(insumos(construcciones = listOf(piso(techos = null)))).llave)
-        assertEquals("CATEGORIA_INVALIDA:MUROS_COLUMNAS:K", sinValor(insumos(construcciones = listOf(piso(muros = 'K')))).llave)
+        val invalida = sinValor(insumos(construcciones = listOf(piso(muros = 'K'))))
+        assertEquals("CATEGORIA_INVALIDA:MUROS_COLUMNAS:K", invalida.llave)
+        assertTrue(invalida.motivo.contains("A a J"), invalida.motivo)
     }
 
     @Test
@@ -314,7 +319,9 @@ class ValorizacionTest {
     @Test
     fun `obra que el cuadro no tiene, o incompleta, no se valoriza`() {
         val obra = Obra("CERCOS METALICOS|3", bd("1"), 2016, "METAL", "BUENO")
-        assertEquals("OBRA_DESCONOCIDA:CERCOS METALICOS|3", sinValor(insumos(obras = listOf(obra))).llave)
+        val desconocida = sinValor(insumos(obras = listOf(obra)))
+        assertEquals("OBRA_DESCONOCIDA:CERCOS METALICOS|3", desconocida.llave)
+        assertTrue(desconocida.motivo.contains("de la selva"), desconocida.motivo)
         val ok = obra.copy(codigoVu = "MUROS PERIMETRICOS O CERCOS|1")
         assertEquals("OBRA_CANTIDAD_FALTANTE", sinValor(insumos(obras = listOf(ok.copy(cantidad = null)))).llave)
         assertEquals("ANIO_CONSTRUCCION_FALTANTE", sinValor(insumos(obras = listOf(ok.copy(anioConstruccion = null)))).llave)

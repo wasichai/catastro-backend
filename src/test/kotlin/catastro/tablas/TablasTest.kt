@@ -2,6 +2,8 @@ package catastro.tablas
 
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNull
+import org.junit.jupiter.api.Assertions.assertSame
+import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import org.junit.jupiter.api.assertThrows
 import java.math.BigDecimal
@@ -10,7 +12,8 @@ import java.security.MessageDigest
 // the shipped tables against their sources. every expected figure is read from the cited document line, never typed
 // from memory: N = /Users/jorge/IdeaProjects/normativa/docs/10-negocio/valores-normativos
 class TablasTest {
-    private val tablas = Tablas.desdeClasspath()
+    private val tablas = Tablas.de(Region.SELVA)
+    private val costa = Tablas.de(Region.COSTA)
 
     private fun bd(valor: String) = BigDecimal(valor)
 
@@ -130,9 +133,22 @@ class TablasTest {
 
     @Test
     fun `obras - copia exacta de obras_complementarias_csv de srtm, 96 partidas`() {
-        assertEquals(96, tablas.obras.size)
+        assertEquals(96, tablas.obras!!.size)
         // sha256 of srtm-backend/model/data/obras_complementarias.csv when this table was copied
-        assertEquals("787f5868dd8d57a2a7e6f0e15048e61d681c102842847fc6c029ee2cdbaf2731", sha256SinComentarios(Tablas.OBRAS))
+        assertEquals("787f5868dd8d57a2a7e6f0e15048e61d681c102842847fc6c029ee2cdbaf2731", sha256SinComentarios(Region.SELVA.obras))
+    }
+
+    @Test
+    fun `obras costa - anexo III_2 transcrito y verificado, 96 partidas`() {
+        assertEquals(96, costa.obras!!.size)
+        // sha256 of the rows of obras-complementarias-costa-2026.csv as verified against the PDF of the anexo III.2
+        assertEquals("2e0bc0c480aa872a01afc58054625ba531c0328cf4a4828798ab659e3804bfd2", sha256SinComentarios(Region.COSTA.obras))
+        // anexo III.2, page 1: items 1, 17 and 18 (the last one with no material)
+        assertEquals(bd("443.89"), costa.obra("MUROS PERIMETRICOS O CERCOS|1")!!.valorUnitario)
+        assertEquals(bd("1288.35"), costa.obra("TANQUES ELEVADOS|17")!!.valorUnitario)
+        val tanque = costa.obra("TANQUES ELEVADOS|18")!!
+        assertEquals(bd("1408.88"), tanque.valorUnitario)
+        assertEquals("M3", tanque.unidadMedida)
     }
 
     @Test
@@ -201,6 +217,7 @@ class TablasTest {
         val depreciacion = "tabla,material,estado_conservacion,antiguedad_hasta,porcentaje\r\n01,Concreto,Bueno,5,3\r\n"
         val tablas =
             Tablas.cargar(
+                Region.SELVA,
                 vu.reader(),
                 depreciacion.reader(),
                 "tipo_obra,numero,descripcion,unidad_medida,material,valor_unitario\r\n".reader(),
@@ -221,14 +238,95 @@ class TablasTest {
         // one cell short of the 3 partidas x categorías grid
         val vu = "partida,categoria,valor_m2,fuente\nMUROS_COLUMNAS,A,1,x\nTECHOS,A,1,x\n"
         assertThrows<IllegalArgumentException> {
-            Tablas.cargar(vu.reader(), vacia.reader(), obras.reader(), usos.reader(), parametros.reader())
+            Tablas.cargar(Region.SELVA, vu.reader(), vacia.reader(), obras.reader(), usos.reader(), parametros.reader())
         }
         // a uso pointing at a tabla the RNT does not have
         val vuCompleto = "partida,categoria,valor_m2,fuente\nMUROS_COLUMNAS,A,1,x\nTECHOS,A,1,x\nPUERTAS_VENTANAS,A,,x\n"
         assertThrows<IllegalArgumentException> {
-            Tablas.cargar(vuCompleto.reader(), vacia.reader(), obras.reader(), "${usos}01,01,x\n".reader(), parametros.reader())
+            Tablas.cargar(Region.SELVA, vuCompleto.reader(), vacia.reader(), obras.reader(), "${usos}01,01,x\n".reader(), parametros.reader())
         }
-        val tablas = Tablas.cargar(vuCompleto.reader(), vacia.reader(), obras.reader(), usos.reader(), parametros.reader())
+        val tablas = Tablas.cargar(Region.SELVA, vuCompleto.reader(), vacia.reader(), obras.reader(), usos.reader(), parametros.reader())
         assertNull(tablas.valorUnitario(Partida.PUERTAS_VENTANAS, "A"))
+    }
+
+    // --- costa (anexo I.2). the file is derived from N/fuentes/valores-unitarios-2026/valores-unitarios-costa-2026.csv
+    // (24 rows, sha256 0540c3af…), the projection of N/valores-unitarios-2026.md §1.1
+
+    @Test
+    fun `costa - el cuadro entero del anexo I_2, categorías A a I`() {
+        // N/valores-unitarios-2026.md:73-81, anexo I.2 fila por fila: muros y columnas | techos | puertas y ventanas.
+        // "-" is a "....." cell
+        val cuadro =
+            """
+            A 894.27 543.16 485.33
+            B 576.57 354.37 255.81
+            C 387.43 285.80 161.41
+            D 374.68 181.40 141.39
+            E 263.77 67.63 120.98
+            F 198.64 37.19 90.81
+            G 117.05 25.57 49.05
+            H - 0.00 24.53
+            I - - 0.00
+            """.trimIndent()
+        val cargado =
+            costa.categorias.joinToString("\n") { categoria ->
+                (listOf(categoria) + Partida.entries.map { costa.valorUnitario(it, categoria)?.toPlainString() ?: "-" }).joinToString(" ")
+            }
+        assertEquals(cuadro, cargado)
+        assertEquals(27, costa.valoresUnitarios.size)
+        assertEquals(Region.COSTA, costa.region)
+    }
+
+    @Test
+    fun `costa - los puntos no tienen valor, el 0_00 es cero`() {
+        // N/valores-unitarios-2026.md:80-81: H muros ......, H techos 0.00, I muros y techos ....., I puertas 0.00
+        assertNull(costa.valorUnitario(Partida.MUROS_COLUMNAS, "H"))
+        assertNull(costa.valorUnitario(Partida.MUROS_COLUMNAS, "I"))
+        assertNull(costa.valorUnitario(Partida.TECHOS, "I"))
+        assertEquals(0, costa.valorUnitario(Partida.TECHOS, "H")!!.compareTo(BigDecimal.ZERO))
+        assertEquals(0, costa.valorUnitario(Partida.PUERTAS_VENTANAS, "I")!!.compareTo(BigDecimal.ZERO))
+        assertEquals(3, costa.valoresUnitarios.count { it.valorM2 == null })
+    }
+
+    @Test
+    fun `costa - muros C, techos C y puertas F suman 764_04, el valor unitario del padrón de Ica`() {
+        val vu = listOf(Partida.MUROS_COLUMNAS to "C", Partida.TECHOS to "C", Partida.PUERTAS_VENTANAS to "F").sumOf { (p, c) -> costa.valorUnitario(p, c)!! }
+        assertEquals(bd("764.04"), vu)
+    }
+
+    @Test
+    fun `costa - la J de la selva no está en el cuadro de la costa`() {
+        assertEquals(('A'..'I').map { it.toString() }, costa.categorias)
+        val error = assertThrows<IllegalArgumentException> { costa.valorUnitario(Partida.MUROS_COLUMNAS, "J") }
+        assertTrue(error.message!!.contains("costa"), error.message)
+    }
+
+    @Test
+    fun `cada región tiene sus valores unitarios y comparte el RNT, los usos y los parámetros`() {
+        assertSame(tablas, Tablas.de(Region.SELVA))
+        assertEquals(Region.SELVA, tablas.region)
+        assertEquals(bd("489.75"), tablas.valorUnitario(Partida.MUROS_COLUMNAS, "C"))
+        assertEquals(bd("387.43"), costa.valorUnitario(Partida.MUROS_COLUMNAS, "C"))
+        assertEquals(tablas.depreciaciones, costa.depreciaciones)
+        assertEquals(tablas.usos, costa.usos)
+        assertEquals(tablas.parametros, costa.parametros)
+    }
+
+    @Test
+    fun `una región sin archivo de obras no tiene cuadro de obras`() {
+        val vu = "partida,categoria,valor_m2,fuente\nMUROS_COLUMNAS,A,1,x\nTECHOS,A,1,x\nPUERTAS_VENTANAS,A,1,x\n"
+        val sinObras =
+            Tablas.cargar(
+                Region.COSTA,
+                vu.reader(),
+                "tabla,material,estado_conservacion,antiguedad_hasta,porcentaje\n".reader(),
+                null,
+                "prefijo,tabla,descripcion\n".reader(),
+                "clave,anio,valor,fuente\n".reader()
+            )
+        assertNull(sinObras.obras)
+        assertNull(sinObras.obra("MUROS PERIMETRICOS O CERCOS|1"))
+        // selva ships its cuadro
+        assertEquals(96, tablas.obras!!.size)
     }
 }

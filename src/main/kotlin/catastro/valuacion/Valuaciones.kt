@@ -9,6 +9,8 @@ import java.math.BigDecimal
 data class Valuaciones(
     val anio: Int,
     val version: String,
+    // the organization's region (COSTA, SELVA): whose cuadros valued this page
+    val region: String,
     val page: Int,
     val size: Int,
     // predios the caller may read, in every page

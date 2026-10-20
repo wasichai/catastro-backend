@@ -2,7 +2,8 @@
   "enums": {
     "material": ["CONCRETO", "LADRILLO", "ADOBE", "MADERA", "QUINCHA", "DRYWALL", "ESTERA", "METAL", "OTROS"],
     "estado_conservacion": ["MUY BUENO", "BUENO", "REGULAR", "MALO", "MUY MALO"],
-    "letra_categoria": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"]
+    "letra_categoria": ["A", "B", "C", "D", "E", "F", "G", "H", "I", "J"],
+    "region_catastro": ["COSTA", "SELVA"]
   },
   "objects": [
     {
@@ -271,6 +272,22 @@
           "name": "lado",
           "label": "Lado",
           "type": "TEXT"
+        }
+      ]
+    },
+    {
+      "name": "configuracion_catastro",
+      "label": "Configuración del catastro",
+      "pluralLabel": "Configuraciones del catastro",
+      "description": "Un solo registro por organización: la región cuyas tablas de la R.M. 277-2025-VIVIENDA (valores unitarios de edificación y obras complementarias) usa el motor de valuación. Sin registro, o con más de uno, las valuaciones fallan: no hay región por omisión. Se fija con model/configurar_region.py.",
+      "fields": [
+        {
+          "name": "region",
+          "label": "Región",
+          "type": "ENUM",
+          "enum": "region_catastro",
+          "required": true,
+          "description": "COSTA (Anexos I.2 y III.2: costa excepto Lima Metropolitana y Callao) o SELVA (Anexos I.4 y III.4), según la demarcación de la nota de cada cuadro. Perené es SELVA; Ica, COSTA."
         }
       ]
     }

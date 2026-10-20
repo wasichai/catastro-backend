@@ -9,6 +9,7 @@ const val PREDIO_CATASTRAL = "predio_catastral"
 const val CONSTRUCCION = "construccion"
 const val OBRA_COMPLEMENTARIA = "obra_complementaria"
 const val ARANCEL = "arancel"
+const val CONFIGURACION_CATASTRO = "configuracion_catastro"
 
 // the relation field construccion and obra_complementaria hang from
 const val PREDIO = "predio"
@@ -67,4 +68,11 @@ data class Arancel(
     val idAranc: String? = null,
     val anio: Int? = null,
     val valorM2: BigDecimal? = null
+)
+
+// the organization's single configuracion_catastro record: the region whose tables value its predios
+@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
+data class ConfiguracionCatastro(
+    val id: String,
+    val region: String? = null
 )

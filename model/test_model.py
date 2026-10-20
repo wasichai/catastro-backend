@@ -23,6 +23,7 @@ OBJETOS = {
     "obra_complementaria": (["codigo_vu", "cantidad", "anio_construccion", "material", "estado_conservacion"], set(), set()),
     "arancel": (["clave", "id_aranc", "anio", "valor_m2", "cod_via", "cuadra", "lado"],
                 {"clave", "id_aranc", "anio", "valor_m2"}, {"clave"}),
+    "configuracion_catastro": (["region"], {"region"}, set()),
 }
 
 
@@ -44,7 +45,7 @@ class ModelTests(unittest.TestCase):
         broken["objects"][0]["fields"][0]["type"] = "NUMBER"
         self.assertNotEqual(validate(broken), [])
 
-    def test_the_four_objects_and_their_fields(self):
+    def test_the_objects_and_their_fields(self):
         self.assertEqual(list(self.objects), list(OBJETOS))
         for name, (fields, required, unique) in OBJETOS.items():
             declared = self.objects[name]["fields"]
@@ -77,6 +78,17 @@ class ModelTests(unittest.TestCase):
         for relation in relations.values():
             self.assertEqual((relation["target"], relation["fieldName"], relation["required"]),
                              ("predio_catastral", "predio", True))
+
+    def test_region_is_an_enum_of_the_engine_regions(self):
+        # catastro.tablas.Region: an option here without its tables there is a 409 for that organization
+        self.assertEqual(self.model["enums"]["region_catastro"], ["COSTA", "SELVA"])
+        region = self.objects["configuracion_catastro"]["fields"][0]
+        self.assertEqual((region["type"], region["enum"]), ("ENUM", "region_catastro"))
+
+    def test_srtm_reads_the_region(self):
+        with open(os.path.join(os.path.dirname(__file__), "roles.json"), encoding="utf-8") as f:
+            permisos = json.load(f)["roles"][0]["permisos"]
+        self.assertEqual(permisos["configuracion_catastro"], ["READ"])
 
     def test_arancel_pair_is_indexed(self):
         self.assertEqual(self.objects["arancel"]["indexes"], [["id_aranc", "anio"]])

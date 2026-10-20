@@ -5,8 +5,8 @@ Reads a JSON metadata model (objects, fields, relationships, enums), checks it
 against Core's rules (--validate-only stops there) and creates it in Core via
 the REST API, in file order (so relationship targets already exist), marking
 each required relationship's field required (an optional one is left optional), and last the object-level
-rules model.json declares (indexes, appendOnly). Today that is 4 objects and 2 relationships, none append-only:
-"done: 6 created, 0 updated" on an empty Core, "6 skipped" on a second run.
+rules model.json declares (indexes, appendOnly). Today that is 5 objects and 2 relationships, none append-only:
+"done: 7 created, 0 updated" on an empty Core, "7 skipped" on a second run.
 
 On a Core that already has the model it syncs instead: it adds the fields and
 the ENUM options model.json has and Core lacks, drops the ENUM options it no
@@ -34,7 +34,13 @@ import re
 import sys
 import urllib.parse
 
-from core_client import Client, CoreError
+HERE = os.path.dirname(os.path.abspath(__file__))
+# under python3 -I, as the importers run, neither the cwd nor the script's directory is on sys.path: put
+# back only the latter, for core_client
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+from core_client import Client, CoreError  # noqa: E402
 
 # Keyword list copied verbatim from
 # wasichai-core/src/main/kotlin/wasichai/core/platform/SqlIdentifier.kt (SQL_KEYWORDS).

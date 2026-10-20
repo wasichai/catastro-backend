@@ -21,9 +21,14 @@ import os
 import re
 import sys
 
-from core_client import Client, CoreError
-
 HERE = os.path.dirname(os.path.abspath(__file__))
+# under python3 -I, as the importers run, neither the cwd nor the script's directory is on sys.path: put
+# back only the latter, for core_client
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+from core_client import Client, CoreError  # noqa: E402
+
 # las de core (wasichai.core.common.Actions) que se dan sobre un objeto
 ACTIONS = ("READ", "CREATE", "UPDATE", "DELETE")
 # AdminService.createRole

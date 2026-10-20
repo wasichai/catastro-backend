@@ -1,7 +1,10 @@
 package catastro.valuacion
 
+import catastro.RegionNoConfigurada
 import catastro.Registros
+import catastro.tablas.Region
 import catastro.tablas.Tablas
+import catastro.tablas.TablasPorRegion
 import org.springframework.stereotype.Service
 import wasichai.core.common.PageRequest
 import wasichai.core.data.RecordQuery
@@ -9,17 +12,19 @@ import java.math.BigDecimal
 import java.util.UUID
 
 // the autoavalúo of one page of predios for a year, valued on the fly (nothing is stored). every read goes through
-// core as the caller: the predios, then their construcciones, obras and aranceles in one batch per object
+// core as the caller: the organization's region, the predios, then their construcciones, obras and aranceles in one
+// batch per object
 @Service
 class ValuacionesService(
     private val registros: Registros,
-    private val tablas: Tablas
+    private val tablasPorRegion: TablasPorRegion
 ) {
     suspend fun pagina(
         anio: Int,
         page: Int,
         size: Int
     ): Valuaciones {
+        val tablas = tablasDeLaOrganizacion()
         // by codigo_municipal (unique) so pages are stable. PageRequest's own guard stops at 200; this endpoint allows 500
         val predios =
             registros.pagina(PREDIO_CATASTRAL, PredioCatastral::class.java, RecordQuery(page = PageRequest(page, size), sort = "codigo_municipal"))
@@ -49,9 +54,9 @@ class ValuacionesService(
             }
         val items =
             predios.content.map { p ->
-                item(p, anio, pisos[p.id].orEmpty(), obras[p.id].orEmpty(), p.idAranc?.let { aranceles[it] })
+                item(p, anio, pisos[p.id].orEmpty(), obras[p.id].orEmpty(), p.idAranc?.let { aranceles[it] }, tablas)
             }
-        return Valuaciones(anio, VERSION, page, size, predios.totalElements ?: 0L, items)
+        return Valuaciones(anio, VERSION, tablas.region.name, page, size, predios.totalElements ?: 0L, items)
     }
 
     private fun item(
@@ -59,7 +64,8 @@ class ValuacionesService(
         anio: Int,
         pisos: List<FichaConstruccion>,
         obras: List<FichaObra>,
-        arancel: Arancel?
+        arancel: Arancel?,
+        tablas: Tablas
     ): ItemValuacion {
         val insumos =
             Insumos(
@@ -107,7 +113,33 @@ class ValuacionesService(
         )
     }
 
+    // the tables of the region in the caller's configuracion_catastro (core scopes the read to its organization)
+    private suspend fun tablasDeLaOrganizacion(): Tablas {
+        val configuraciones =
+            registros
+                .pagina(CONFIGURACION_CATASTRO, ConfiguracionCatastro::class.java, RecordQuery(page = PageRequest(0, 2), count = false))
+                .content
+        return tablasPorRegion.de(regionDe(configuraciones))
+    }
+
     companion object {
+        // the region an organization's configuracion_catastro records give: exactly one record, with a region the
+        // engine has tables for. no record, two, a blank region (or one the caller may not read: core leaves it out)
+        // or an option of region_catastro without tables here: RegionNoConfigurada, never a default region
+        internal fun regionDe(configuraciones: List<ConfiguracionCatastro>): Region {
+            val conocidas = Region.entries.joinToString(" o ")
+            val region =
+                when (configuraciones.size) {
+                    0 -> throw RegionNoConfigurada("no hay un registro de $CONFIGURACION_CATASTRO con la región ($conocidas)")
+                    1 -> configuraciones.single().region
+                    else -> throw RegionNoConfigurada("hay más de un registro de $CONFIGURACION_CATASTRO; debe haber uno solo ($conocidas)")
+                } ?: throw RegionNoConfigurada(
+                    "el registro de $CONFIGURACION_CATASTRO no tiene región, o quien llama no puede leer el campo ($conocidas)"
+                )
+            return Region.entries.firstOrNull { it.name == region }
+                ?: throw RegionNoConfigurada("$CONFIGURACION_CATASTRO dice la región «$region», sin tablas en el motor ($conocidas)")
+        }
+
         // the engine's version: srtm stores it with each corrida, so a change in the arithmetic is visible there
         const val VERSION = "valuacion-v1"
 
