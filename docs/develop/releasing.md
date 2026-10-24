@@ -14,10 +14,10 @@ Commits.
 
 ## Primer release: 0.1.0
 
-El manifest (`.release-please-manifest.json`) parte de `0.0.0` y `release-please-config.json` trae
-`"release-as": "0.1.0"`, así que el primer PR de release propone exactamente 0.1.0 (la de `gradle.properties`).
-**Después de mergearlo, quitar `release-as` de la config**; si no, cada PR siguiente volvería a proponer 0.1.0.
-Mientras la versión sea 0.x, un `feat:` sube el minor y un `fix:` el patch (`bump-minor-pre-major`).
+Salió el 2026-10-24 (wasichai/catastro-backend#1). Para forzar esa versión, el manifest partía de `0.0.0` y la config
+traía `"release-as": "0.1.0"`; se quitó al mezclar ese PR, porque si no cada PR siguiente volvería a proponer 0.1.0.
+Para forzar otra versión, se vuelve a poner `release-as` y se quita después del release. Mientras la versión sea 0.x,
+un `feat:` sube el minor y un `fix:` el patch (`bump-minor-pre-major`).
 
 ## La versión del jar y la del motor
 
