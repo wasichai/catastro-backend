@@ -39,9 +39,11 @@ class RolesJsonTests(unittest.TestCase):
     def test_valida_contra_el_modelo(self):
         self.assertEqual(apply_roles.validate(load(ROLES_PATH), load(MODEL_PATH)), [])
 
-    def test_el_lector_de_srtm_lee_cada_objeto_del_modelo_y_no_escribe_ninguno(self):
-        # lo que GET /api/catastro/valuaciones lee: un objeto nuevo en model.json sin su READ hace fallar esta prueba
-        self.assertEqual(permisos(self.roles["SRTM_LECTOR"]), {(o, "READ") for o in self.objetos})
+    def test_el_lector_de_srtm_lee_cada_objeto_del_modelo_y_solo_escribe_los_aranceles(self):
+        # lo que GET /api/catastro/valuaciones lee: un objeto nuevo en model.json sin su READ hace fallar esta prueba. los
+        # aranceles los manda srtm (su normativa los verifica) y los copia aquí: CREATE, UPDATE y DELETE solo sobre arancel
+        escribe = {("arancel", a) for a in ("CREATE", "UPDATE", "DELETE")}
+        self.assertEqual(permisos(self.roles["SRTM_LECTOR"]), {(o, "READ") for o in self.objetos} | escribe)
 
 
 class ValidationTests(unittest.TestCase):
@@ -105,6 +107,9 @@ class ApplyRolesTests(unittest.TestCase):
                 {"objectName": "construccion", "action": "READ"},
                 {"objectName": "obra_complementaria", "action": "READ"},
                 {"objectName": "arancel", "action": "READ"},
+                {"objectName": "arancel", "action": "CREATE"},
+                {"objectName": "arancel", "action": "UPDATE"},
+                {"objectName": "arancel", "action": "DELETE"},
                 {"objectName": "configuracion_catastro", "action": "READ"}]})])
         for method, path, auth, body in self.core.requests:
             self.assertEqual(auth, None if path == "/api/auth/login" else "Bearer t")
@@ -119,12 +124,12 @@ class ApplyRolesTests(unittest.TestCase):
         self.assertIn("done: 0 created, 0 updated, 1 skipped", out)
 
     def test_sincroniza_los_permisos_de_un_rol_que_ya_existe(self):
-        # un SRTM_LECTOR al que en el admin le dieron UPDATE sobre arancel y que no lee obras: queda como dice roles.json
+        # un SRTM_LECTOR al que en el admin le dieron UPDATE sobre construccion y que no lee obras: queda como dice roles.json
         self.core.roles["SRTM_LECTOR"] = {"name": "SRTM_LECTOR", "label": "Lector de srtm", "permissions": [
             {"objectName": "predio_catastral", "action": "READ", "allowed": True},
             {"objectName": "construccion", "action": "READ", "allowed": True},
             {"objectName": "arancel", "action": "READ", "allowed": True},
-            {"objectName": "arancel", "action": "UPDATE", "allowed": True}]}
+            {"objectName": "construccion", "action": "UPDATE", "allowed": True}]}
         code, out, err = self.run_cli()
         self.assertEqual(code, 0, err)
         self.assertEqual(self.writes(), [("PUT", "/api/roles/SRTM_LECTOR/permissions",

@@ -339,7 +339,7 @@ cambia.
 ```sh
 cd model
 python3 apply.py                 # el modelo, con configuracion_catastro
-python3 apply_roles.py           # crea o sincroniza SRTM_LECTOR (model/roles.json): READ sobre los cinco objetos
+python3 apply_roles.py           # crea o sincroniza SRTM_LECTOR (model/roles.json): READ sobre los cinco objetos y la escritura de arancel
 python3 configurar_region.py --region SELVA   # la región de la organización (Perené); COSTA para Ica
 python3 crear_cuenta_srtm.py --clave perene   # la cuenta `srtm` con SRTM_LECTOR; imprime clientId y clientSecret
 ```
