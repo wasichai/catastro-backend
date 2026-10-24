@@ -38,6 +38,7 @@ class FakeCoreHandler(BaseHTTPRequestHandler):
         body = self._body()
         with server.lock:
             server.requests.append((method, self.path, self.headers.get("Authorization"), body))
+            server.reasons.append((method, self.path, self.headers.get("X-Change-Reason")))
             status, payload = server.script(method, self.path, body)
         self.send_response(status)
         self.send_header("Content-Type", "application/json")
@@ -53,6 +54,9 @@ class FakeCoreHandler(BaseHTTPRequestHandler):
 
     def do_PUT(self):
         self._handle("PUT")
+
+    def do_PATCH(self):
+        self._handle("PATCH")
 
     def do_DELETE(self):
         self._handle("DELETE")
@@ -79,7 +83,7 @@ class FakeCore:
         self.login_response = login_response  # override the default {"token": "t"}
         self.fail_record_after = fail_record_after or {}  # object name -> record POSTs that succeed before the rest 400
         self.fail_on_record = fail_on_record  # object name -> its record POSTs answer 400
-        self.fail_on_update = fail_on_update  # object name -> its record PUTs answer 400
+        self.fail_on_update = fail_on_update  # object name -> its record PUTs and PATCHes answer 400
         self.fail_on_delete = fail_on_delete  # object name -> its record DELETEs answer 409
         self.records = {}  # object name -> list of {"id", "attributes"}
         self.fail_on_role = fail_on_role  # role name -> its POST /api/roles answers 500
@@ -87,8 +91,10 @@ class FakeCore:
         self.fail_on_service_account = fail_on_service_account  # POST /api/service-accounts -> this status
         self.service_accounts = {}  # id -> ServiceAccountResponse without the secret
         self.requests = []
+        self.reasons = []  # (method, path, X-Change-Reason header or None), one per request, parallel to requests
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), FakeCoreHandler)
         self.server.requests = self.requests
+        self.server.reasons = self.reasons
         self.server.script = self._script
         self.server.lock = threading.Lock()
         self.port = self.server.server_address[1]
@@ -141,6 +147,23 @@ class FakeCore:
         record["attributes"] = dict(body["attributes"])
         if "geometries" in body:
             record["geometries"] = dict(body["geometries"])
+        return 200, record
+
+    def _patch(self, path, body):
+        """A record's PATCH: JSON-merge `attributes` (a null clears the key) and merge `geometries`."""
+        name, record_id = RECORD.match(path).groups()
+        if self.fail_on_update == name:
+            return 400, {"detail": "Invalid option", "errors": [{"field": "tipo_via", "message": "boom-update"}]}
+        record = next((r for r in self.records.get(name, []) if r["id"] == record_id), None)
+        if record is None:
+            return 404, {"detail": "not found"}
+        for key, value in (body.get("attributes") or {}).items():
+            if value is None:
+                record["attributes"].pop(key, None)
+            else:
+                record["attributes"][key] = value
+        if "geometries" in body:
+            record.setdefault("geometries", {}).update(body["geometries"])
         return 200, record
 
     def _delete(self, path):
@@ -248,6 +271,8 @@ class FakeCore:
             return self._records(method, path, query, body)
         if RECORD.match(path) and method == "PUT":
             return self._update(path, body)
+        if RECORD.match(path) and method == "PATCH":
+            return self._patch(path, body)
         if RECORD.match(path) and method == "DELETE":
             return self._delete(path)
         if path == "/api/objects" and method == "GET":

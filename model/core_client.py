@@ -23,11 +23,13 @@ class Client:
         self.base_url = base_url.rstrip("/")
         self.token = None
 
-    def _call(self, method, path, body=None, use_auth=True):
+    def _call(self, method, path, body=None, use_auth=True, reason=None):
         url = self.base_url + path
         headers = {"Content-Type": "application/json"}
         if use_auth and self.token:
             headers["Authorization"] = f"Bearer {self.token}"
+        if reason is not None:
+            headers["X-Change-Reason"] = reason
         data = json.dumps(body).encode("utf-8") if body is not None else None
         req = urllib.request.Request(url, data=data, method=method, headers=headers)
         try:
@@ -37,6 +39,7 @@ class Client:
         except urllib.error.HTTPError as e:
             status = e.code
             raw = e.read()
+            e.close()  # it is also a file-like object; unclosed, it is a ResourceWarning at GC time
             if method == "GET" and status == 404:
                 return status, None
             text = raw.decode("utf-8", errors="replace") if raw else ""
@@ -59,14 +62,17 @@ class Client:
         _, parsed = self._call("GET", path)
         return parsed
 
-    def post(self, path, body):
-        return self._call("POST", path, body)
+    def post(self, path, body, reason=None):
+        return self._call("POST", path, body, reason=reason)
 
     def put(self, path, body):
         return self._call("PUT", path, body)
 
-    def delete(self, path):
-        return self._call("DELETE", path)
+    def patch(self, path, body, reason=None):
+        return self._call("PATCH", path, body, reason=reason)
+
+    def delete(self, path, reason=None):
+        return self._call("DELETE", path, reason=reason)
 
     def list_all(self, object_name, **filters):
         """Every record of an object, following Core's pages. Filters are equality filters."""

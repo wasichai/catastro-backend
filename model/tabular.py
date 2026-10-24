@@ -223,6 +223,48 @@ def post_all(client, object_name, items, workers):
     return ids
 
 
+def write_all(client, ops, workers, reason):
+    """Writes (key, fila, method, object_name, record_id, attributes) ops with X-Change-Reason `reason`.
+
+    POST creates (attributes with None stripped, as `payload`); PATCH merges `attributes` as given, so a None clears
+    a field; DELETE ignores `attributes`. Returns key -> new id (POST only). The first refusal raises LoadError and
+    cancels the rest (as post_all).
+    """
+    ids = {}
+    if not ops:
+        return ids
+
+    def one(op):
+        key, fila, method, object_name, record_id, attributes = op
+        path = f"/api/objects/{object_name}/records"
+        try:
+            if method == "POST":
+                _, record = client.post(path, payload(attributes), reason=reason)
+                return key, record["id"]
+            if method == "PATCH":
+                client.patch(f"{path}/{record_id}", {"attributes": attributes}, reason=reason)
+            elif method == "DELETE":
+                client.delete(f"{path}/{record_id}", reason=reason)
+            else:
+                raise ValueError(f"write_all: unknown method '{method}'")
+        except CoreError as e:
+            raise LoadError(object_name, fila, e)
+        return key, None
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(one, op) for op in ops]
+        try:
+            for future in as_completed(futures):
+                key, record_id = future.result()
+                if record_id is not None:
+                    ids[key] = record_id
+        except LoadError:
+            for future in futures:
+                future.cancel()
+            raise
+    return ids
+
+
 def report_problems(problems):
     for problem in problems:
         print(f"problem: {problem}", file=sys.stderr)
