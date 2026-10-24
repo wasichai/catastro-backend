@@ -1,24 +1,33 @@
-"""The plan of an entrega: what a levantamiento file changes in Core's catastro (ADR-013).
+"""The plan of an entrega: what a levantamiento file changes in Core's catastro (ADR-013), and how it is written.
 
-Pure except read_core: it compares the parsed fichas, pisos and obras (import_fichas' tuples) with Core's records and
-returns a Plan, the report lines and the write_all ops (tabular.py) that would bring Core to the file. The rules
-(contexto-comun.md):
+The plan is pure except read_core: it compares the parsed fichas, pisos and obras (import_fichas' tuples) with Core's
+records and returns a Plan, the report lines and the write_all ops (tabular.py) that would bring Core to the file. The
+rules (contexto-comun.md):
   - only the columns the file has are compared; an empty cell in one clears the field, a missing column is untouched
   - values compare by their model.json type, so Core's 180.5 is the file's 180.50
   - a ficha Core has and the file lacks is `ausente` and kept; so are a ficha's pisos and obras the file lacks, unless
     --reemplazar-pisos / --reemplazar-obras ask to delete them (only in the fichas the file brings)
-Stdlib only, and no import of import_fichas (which imports the keys from here).
+find_entrega, ensure_entrega and apply_plan write it through the record API, every write with the entrega's code as
+X-Change-Reason, so wasichai's audit_log holds each ficha's history. The entrega_catastral record is created once, by
+the first run that writes, with that run's summary, and never updated: a re-run with the same files completes a run that
+failed half way and leaves the summary as first recorded; the same code with other files is refused (EntregaError).
+Stdlib only, and no import of import_fichas (which imports the keys from here); import_lotes uses these too.
 """
+import dataclasses
 import hashlib
 import json
 import re
 from dataclasses import dataclass
 from decimal import Decimal, InvalidOperation
 
+from tabular import write_all
+
 # the code travels as X-Change-Reason, a header: ASCII only
 CODIGO = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 
 PREDIO, PISO, OBRA = "predio_catastral", "construccion", "obra_complementaria"
+ENTREGA = "entrega_catastral"
+SUMMARY = ("altas", "cambios", "sin_cambio", "ausentes")
 TRUE = {"true", "t", "1", "si", "sí"}
 FALSE = {"false", "f", "0", "no"}
 EMPTY = "vacío"
@@ -136,12 +145,14 @@ class Present:
 class Plan:
     """Report lines, counts per ficha, and write_all ops. A predio op's key is its codigo; a child op's key is its
     natural key with the codigo first, and a child POST lacks `predio`, which the apply fills from the predio ids.
-    `touched` are the codes of the altas and cambios (own fields or children)."""
+    `touched` are the codes of the altas and cambios (own fields or children); `predios` are Core's predio records by
+    codigo, as read for the plan."""
     lines: list
     counts: dict
     predio_ops: list
     child_ops: list
     touched: set
+    predios: dict = dataclasses.field(default_factory=dict)
 
     @property
     def writes(self):
@@ -221,8 +232,8 @@ def plan_entrega(core, fichas, pisos, obras, present, types, *, codigo, with_pis
     """The Plan of an entrega named `codigo`. Pisos are compared when `with_pisos` (a pisos file was given); obras
     when the obras file brought columns or `reemplazar_obras` asks to replace them. Lines go in the fichas' file
     order, each ficha's children right after it, then the ausentes, then the summary."""
-    plan = Plan([], {"altas": 0, "cambios": 0, "sin_cambio": 0, "ausentes": 0}, [], [], set())
     predios = {r["attributes"]["codigo_municipal"]: r for r in core.predios}
+    plan = Plan([], dict.fromkeys(SUMMARY, 0), [], [], set(), predios)
     codigo_of = {str(r["id"]): c for c, r in predios.items()}
     groups = []
     if with_pisos:
@@ -271,3 +282,56 @@ def plan_entrega(core, fichas, pisos, obras, present, types, *, codigo, with_pis
     plan.lines.append(f"entrega {codigo}: {c['altas']} altas, {c['cambios']} cambios, {c['sin_cambio']} sin cambio, "
                       f"{c['ausentes']} ausentes")
     return plan
+
+
+class EntregaError(Exception):
+    """An entrega code already names a delivery of other files."""
+
+
+def find_entrega(client, codigo):
+    """The entrega_catastral record with that code, or None. Filtered by codigo, and checked here too."""
+    return next((r for r in client.list_all(ENTREGA, codigo=codigo) if r["attributes"].get("codigo") == codigo), None)
+
+
+def ensure_entrega(client, codigo, *, fecha_corte, fuente, descripcion, sha, counts):
+    """The id of the entrega `codigo`: created (reason = codigo) with this run's summary when Core lacks it, kept as it
+    is when its archivo_sha256 is `sha`. A count `counts` lacks is left empty."""
+    record = find_entrega(client, codigo)
+    if record is None:
+        attributes = {"codigo": codigo, "fecha_corte": fecha_corte, "fuente": fuente, "descripcion": descripcion,
+                      "archivo_sha256": sha, **{k: counts.get(k) for k in SUMMARY}}
+        _, record = client.post(f"/api/objects/{ENTREGA}/records",
+                                {"attributes": {k: v for k, v in attributes.items() if v is not None}}, reason=codigo)
+        return record["id"]
+    check_same_files(record, sha)
+    return record["id"]
+
+
+def check_same_files(record, sha):
+    """Raises EntregaError when the entrega `record` (find_entrega's; None passes) was loaded from files other than
+    the ones whose sha256 is `sha`. A loader checks it before reading Core, so even a dry-run is refused."""
+    if record is not None and record["attributes"].get("archivo_sha256") != sha:
+        a = record["attributes"]
+        raise EntregaError(f"entrega {a.get('codigo')} was loaded from other files (sha256 {a.get('archivo_sha256')}, "
+                           f"these are {sha}): a new delivery needs its own code")
+
+
+def apply_plan(client, plan, entrega_id, reason, workers):
+    """Writes the plan with X-Change-Reason `reason`: the predios first, each POST and PATCH pointing to the entrega;
+    then a PATCH of `entrega` alone on every touched predio without its own op (a change in its children), unless it
+    already points there (a re-run); then the children's DELETEs, then their POSTs (under the predio's id) and PATCHes.
+    The first refusal raises tabular.LoadError, and running again completes it."""
+    ops = [(key, fila, method, obj, rid, {**a, "entrega": entrega_id}) for key, fila, method, obj, rid, a in plan.predio_ops]
+    ids = {cod: r["id"] for cod, r in plan.predios.items()}
+    ids.update(write_all(client, ops, workers, reason))
+    own = {op[0] for op in plan.predio_ops}
+    fila_of = {}
+    for op in plan.child_ops:
+        fila_of.setdefault(op[0][0], op[1])
+    pointing = [(cod, fila_of[cod], "PATCH", PREDIO, ids[cod], {"entrega": entrega_id}) for cod in sorted(plan.touched - own)
+                if relation_id(plan.predios[cod]["attributes"].get("entrega")) != str(entrega_id)]
+    write_all(client, pointing, workers, reason)
+    write_all(client, [op for op in plan.child_ops if op[2] == "DELETE"], workers, reason)
+    rest = [(key, fila, method, obj, rid, {**a, "predio": ids[key[0]]} if method == "POST" else a)
+            for key, fila, method, obj, rid, a in plan.child_ops if method != "DELETE"]
+    write_all(client, rest, workers, reason)

@@ -42,11 +42,11 @@ yarn install && yarn format:check
 ## Modelo y carga
 
 El modelo (`model/model.json`) y los cargadores son Python solo con la biblioteca estándar, con la forma de los de
-srtm-backend. Cinco objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
-`construccion` y `obra_complementaria` (cuelgan de un predio), `arancel` y `configuracion_catastro` (la región de la
-organización, ver abajo). wasichai no tiene únicos compuestos, así que
-`arancel.clave` (`id_aranc|anio`) garantiza el par único. `codigo_vu` de una obra es `TIPO DE OBRA|número`, como
-`obra_categoria` de srtm (`model/data/obras_complementarias.csv`).
+srtm-backend. Seis objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
+`construccion` y `obra_complementaria` (cuelgan de un predio), `arancel`, `configuracion_catastro` (la región de la
+organización, ver abajo) y `entrega_catastral` (cada entrega del levantamiento, ver [Entregas](#entregas)). wasichai
+no tiene únicos compuestos, así que `arancel.clave` (`id_aranc|anio`) garantiza el par único. `codigo_vu` de una obra
+es `TIPO DE OBRA|número`, como `obra_categoria` de srtm (`model/data/obras_complementarias.csv`).
 
 ```sh
 cd model
@@ -79,12 +79,13 @@ vacías no se envían:
 - `seccion`: un entero desde 1 (vacía vale 1), para las partes de un mismo piso con características distintas. El piso
   sigue siendo solo su número (`5`, no `5-2`), así que el +5 % de edificio alcanza a cada sección.
 
-Un predio que el Core ya tiene se salta; los pisos (llave predio, piso y sección; un piso sin sección, como los que se
+Sin `--entrega`, el comando solo crea. Un predio que el Core ya tiene se salta; los pisos (llave predio, piso y sección; un piso sin sección, como los que se
 cargaron antes, es la sección 1) y las obras (llave predio, `codigo_vu` y año de construcción) se crean solo si
 faltan, así que una carga que falló a medias se completa volviendo a correrla. Un piso que el Core ya tiene no se
 actualiza: para cambiarle `techo_incluido` o `clasificacion` (por ejemplo, clasificar después los pisos de Perené) hay
-que editarlo en el Core; volver a correr la carga no los toca. Una llave repetida en el archivo es un error, y también un
-`clasificacion` que no se lee: el `0` de Ica (sin tabla) va vacío.
+que editarlo en el Core o cargarlo como una entrega ([Entregas](#entregas)); volver a correr la carga sin `--entrega` no
+los toca. Una llave repetida en el archivo es un error, y también un `clasificacion` que no se lee: el `0` de Ica (sin
+tabla) va vacío.
 
 ```sh
 python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.csv --dry-run
@@ -109,6 +110,80 @@ propiedad. `CF_LOTES_POL_18` no trae esos códigos: hay que cruzarlos antes.
 ```sh
 ogr2ogr -f GeoJSON -t_srs EPSG:4326 lotes.geojson 120302_MD_Perene_ECF.gdb CF_LOTES_POL_18
 python3 -I import_lotes.py --geojson lotes.geojson --map codigo_municipal=COD_PRE --dry-run
+```
+
+### Entregas
+
+El levantamiento no se carga una vez: llega por **entregas** (un barrido de campo, una inspección de fiscalización, las
+licencias del mes, el GIS de la municipalidad), y cada una corrige o completa lo que ya está
+([ADR-013](docs/adr/0013-el-levantamiento-llega-por-entregas.md)). `import_fichas.py --entrega <codigo>` carga una
+entrega por upsert: compara los archivos con el Core por `codigo_municipal` y escribe solo lo que cambió, siempre por la
+API y con el código de la entrega como `X-Change-Reason`. Así el `audit_log` de wasichai guarda la historia de cada
+ficha: qué entrega cambió qué campo y cuándo.
+
+- `--entrega CODIGO`: de 1 a 64 caracteres entre `A-Z a-z 0-9 . _ : -` (viaja en una cabecera HTTP; un código con
+  tildes o espacios sale con 2).
+- `--fecha-corte AAAA-MM-DD` (obligatoria): la fecha a la que corresponde la información.
+- `--fuente` (obligatoria): `BARRIDO`, `INSPECCION`, `LICENCIA`, `GIS` u `OTRA` (enum `fuente_entrega`).
+- `--descripcion TEXTO` (opcional).
+- `--pisos` y `--obras` son opcionales: una entrega del GIS o una inspección puede traer solo fichas, y entonces los pisos
+  y las obras no se comparan.
+- `--reemplazar-pisos` / `--reemplazar-obras`: borran los pisos (u obras) que el Core tiene y el archivo ya no trae,
+  **solo en las fichas que la entrega trae**. Sin la bandera, se listan como ausentes y se quedan. Piden `--entrega` y
+  su archivo (`--pisos` / `--obras`); si no, sale con 2. Una ficha que viene sin filas de pisos pierde todos sus pisos
+  con `--reemplazar-pisos`: una demolición se carga con la bandera a propósito. Una obra con el año corregido tiene otra
+  llave: sin `--reemplazar-obras` quedaría la vieja y se valoraría dos veces.
+
+Qué se compara:
+
+- Las fichas por `codigo_municipal`, los pisos por (predio, piso, sección) y las obras por (predio, `codigo_vu`, año de
+  construcción). Una ficha nueva es un alta, con sus pisos y obras.
+- Solo las columnas que el archivo trae: una columna que falta no se toca, y una celda vacía en una columna presente
+  borra el campo. La entrega es la verdad de lo que trae (así una entrega quita las estimaciones que hubiera, ADR-013); el
+  `--dry-run` lo muestra antes. La columna única `categorias` cuenta como las siete letras.
+- Los valores, por su tipo del modelo: el Core responde `180.5` donde el archivo dice `180.50`, y es lo mismo.
+- **Ausente** es una ficha que el Core tiene y la entrega no: se lista y **nunca se borra**. Borrarla es una decisión a
+  mano; una entrega parcial (un sector, una inspección) no puede vaciar el catastro.
+
+El reporte sale igual en el `--dry-run` y en la carga, una línea por hecho, en este orden (cada ficha seguida de las
+líneas de sus pisos y obras, luego las ausentes y al final el resumen); `vacío` es un campo sin valor:
+
+```text
+alta <cod>
+cambio <cod>: <campo> <antes> → <después>
+cambio <cod> piso <p>/<s>: <campo> <antes> → <después>
+cambio <cod> piso <p>/<s>: alta
+cambio <cod> piso <p>/<s>: baja                         (solo con --reemplazar-pisos)
+cambio <cod> obra <codigo_vu>/<año>: …                  (igual que los pisos: campo, alta o baja)
+sin cambio <cod>
+ausente <cod> piso <p>/<s>                              (sin --reemplazar-pisos)
+ausente <cod> obra <codigo_vu>/<año>                    (sin --reemplazar-obras)
+ausente <cod>
+entrega <codigo>: <a> altas, <c> cambios, <s> sin cambio, <z> ausentes
+```
+
+La carga termina con `done: entrega <codigo>: …`, el mismo resumen. Una ficha cuenta como cambio cuando cambió ella o
+alguno de sus pisos u obras.
+
+La entrega queda en `entrega_catastral`: código, fecha de corte, fuente, descripción, el sha256 de los bytes de los
+archivos de entrada (fichas, pisos, obras, en ese orden) y el resumen. La crea la primera corrida que escribe algo, con
+su resumen, y **no se actualiza nunca**. De ahí la regla de idempotencia:
+
+- Cargar dos veces la misma entrega no cambia nada: la segunda corrida no encuentra nada que escribir y no escribe nada.
+- Una carga que falló a medias (un rechazo del Core sale con 1) se completa volviendo a correrla con los mismos archivos:
+  crea lo que falta, sin duplicar, y el resumen de la entrega queda como lo dejó la primera corrida.
+- El mismo código con otros archivos (otro sha256, aunque sea un piso corregido) sale con 2 sin escribir: una entrega
+  nueva lleva su propio código.
+- Una corrida sin nada que escribir no crea la entrega.
+
+Cada predio apunta (`entrega`) a la última entrega que lo cambió a él o a sus pisos u obras; una ficha sin cambio
+conserva la que tenía. Con `--entrega`, el `--dry-run` necesita credenciales: entra al Core y solo lee (GET) para
+reportar.
+
+```sh
+python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.csv \
+  --entrega BARRIDO-2026-10 --fecha-corte 2026-10-01 --fuente BARRIDO --descripcion "Barrido del sector 01" --dry-run
+# revisado el reporte, la misma línea sin --dry-run
 ```
 
 ## Región de la organización

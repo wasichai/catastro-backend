@@ -26,13 +26,23 @@ Default columns follow the MEF carga masiva contract (kamayuk ContratoDeImportac
 --map, --map-pisos and --map-obras field=column override those defaults (repeatable). material and
 estado_conservacion take the model's options in any case, with _ for a space (MUY_BUENO).
 
-Idempotent by codigo_municipal: a predio Core already has is skipped. Pisos and obras are idempotent by their own key,
-(predio, piso, seccion) and (predio, codigo_vu, anio_construccion), a piso without seccion being seccion 1: only the
-ones Core lacks are created, so a run that failed half way is completed by running again. A key repeated in the file is
-an error. Exit: 0 ok, 1 Core refused something, 2 the files do not fit the model (every bad row is listed, nothing is
-sent).
+Without --entrega it only creates. Idempotent by codigo_municipal: a predio Core already has is skipped. Pisos and obras
+are idempotent by their own key, (predio, piso, seccion) and (predio, codigo_vu, anio_construccion), a piso without
+seccion being seccion 1: only the ones Core lacks are created, so a run that failed half way is completed by running
+again. A key repeated in the file is an error.
+
+With --entrega CODIGO (plus --fecha-corte and --fuente; README «Entregas», ADR-013) it is an upsert: every ficha is
+reported as alta, cambio (campo antes → después), sin cambio or ausente, and only what changed is written, through the
+API with the code as X-Change-Reason; the entrega_catastral record is created by the first run that writes. --pisos
+becomes optional; --reemplazar-pisos / --reemplazar-obras delete the children the entrega no longer brings in the fichas
+it brings. Ausentes are never deleted. --dry-run then logs in and reads Core to report, and writes nothing.
+
+Exit: 0 ok, 1 Core refused something, 2 the files or flags do not fit (every bad row is listed, nothing is sent), or the
+entrega's code already names other files.
 
 Run: python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv [--obras obras.csv] [--dry-run]
+     python3 -I import_fichas.py --fichas fichas.csv [--pisos pisos.csv] [--obras obras.csv] --entrega E-2026-10
+             --fecha-corte 2026-10-01 --fuente BARRIDO [--reemplazar-pisos] [--reemplazar-obras] [--dry-run]
 """
 import argparse
 import datetime
@@ -47,7 +57,8 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from core_client import Client, CoreError  # noqa: E402
-from entregas import obra_key, piso_key, relation_id  # noqa: E402
+from entregas import (EntregaError, Present, apply_plan, check_codigo, check_same_files, ensure_entrega,  # noqa: E402
+                      field_types, find_entrega, obra_key, piso_key, plan_entrega, read_core, relation_id, sha256_of)
 from tabular import (INPUT_ERRORS, LoadError, clean_text, code_text, column_for, enum_option, load_enums,  # noqa: E402
                      missing_columns, parse_decimal, parse_int, parse_map, post_all, read_table, report_problems)
 
@@ -316,7 +327,7 @@ def load(client, fichas, pisos, obras, workers):
 def _parse_args(argv):
     p = argparse.ArgumentParser(description="Load the levantamiento's fichas, pisos and obras into wasichai Core.")
     p.add_argument("--fichas", required=True, help="csv or xlsx, one row per predio")
-    p.add_argument("--pisos", required=True, help="csv or xlsx, one row per piso")
+    p.add_argument("--pisos", help="csv or xlsx, one row per piso (required without --entrega)")
     p.add_argument("--obras", help="csv or xlsx, one row per obra complementaria (optional)")
     for name in ("map", "map-pisos", "map-obras"):
         p.add_argument(f"--{name}", action="append", default=[], metavar="FIELD=COLUMN", help="column that fills a field")
@@ -325,9 +336,87 @@ def _parse_args(argv):
     p.add_argument("--core", default=os.environ.get("WASICHAI_CORE", "http://localhost:8091"))
     p.add_argument("--email", default=os.environ.get("WASICHAI_EMAIL", "admin@wasichai.local"))
     p.add_argument("--password", default=os.environ.get("WASICHAI_PASSWORD", "admin"))
-    p.add_argument("--dry-run", action="store_true", help="read and check only; call nothing")
-    p.add_argument("--workers", type=int, default=4, help="parallel POSTs (default 4)")
+    p.add_argument("--dry-run", action="store_true",
+                   help="read and check only; call nothing (with --entrega: log in and read Core to report, write nothing)")
+    p.add_argument("--workers", type=int, default=4, help="parallel writes (default 4)")
+    e = p.add_argument_group("entrega (upsert, README «Entregas»)")
+    e.add_argument("--entrega", metavar="CODIGO", help="the entrega's code, 1 to 64 of A-Z a-z 0-9 . _ : -")
+    e.add_argument("--fecha-corte", metavar="YYYY-MM-DD", help="the date the entrega's data is about (required)")
+    e.add_argument("--fuente", help="an option of the enum fuente_entrega: BARRIDO, INSPECCION, LICENCIA, GIS, OTRA (required)")
+    e.add_argument("--descripcion", metavar="TEXT")
+    e.add_argument("--reemplazar-pisos", action="store_true",
+                   help="delete the pisos Core has and the --pisos file lacks, in the fichas the file brings")
+    e.add_argument("--reemplazar-obras", action="store_true",
+                   help="delete the obras Core has and the --obras file lacks, in the fichas the file brings")
     return p.parse_args(argv)
+
+
+def _flag_problems(args, enums):
+    """What is wrong with the flags (exit 2); with --entrega, also normalizes args.fuente to its option."""
+    problems = []
+    if args.entrega is None:
+        if args.pisos is None:
+            problems.append("--pisos is required without --entrega")
+        problems += [f"{flag} needs --entrega" for flag, value in (
+            ("--fecha-corte", args.fecha_corte), ("--fuente", args.fuente), ("--descripcion", args.descripcion),
+            ("--reemplazar-pisos", args.reemplazar_pisos), ("--reemplazar-obras", args.reemplazar_obras)) if value]
+        return problems
+    error = check_codigo(args.entrega)
+    if error:
+        problems.append(error)
+    if args.fecha_corte is None:
+        problems.append("--fecha-corte is required with --entrega")
+    elif not (ISO_DATE.fullmatch(args.fecha_corte) and _is_date(args.fecha_corte)):
+        problems.append(f"--fecha-corte '{args.fecha_corte}' is not a date YYYY-MM-DD")
+    if args.fuente is None:
+        problems.append("--fuente is required with --entrega")
+    else:
+        args.fuente, error = enum_option(args.fuente, enums.get("fuente_entrega", []))
+        if error:
+            problems.append(f"--fuente {error}")
+    if args.reemplazar_pisos and args.pisos is None:
+        problems.append("--reemplazar-pisos needs a --pisos file")
+    if args.reemplazar_obras and args.obras is None:
+        problems.append("--reemplazar-obras needs an --obras file")
+    return problems
+
+
+def _is_date(text):
+    try:
+        datetime.date.fromisoformat(text)
+        return True
+    except ValueError:
+        return False
+
+
+def _present(args, ficha_rows, piso_rows, obra_rows, maps):
+    """The fields each file brings a column for. The single `categorias` column stands for the seven letter fields;
+    obras only from an --obras file actually given."""
+    ficha_map, piso_map, obra_map = maps
+    pisos = present_fields(piso_rows, piso_map, list(PISO_COLUMNS))
+    if "categorias" in pisos:
+        pisos |= set(CATEGORIAS)
+    return Present(fichas=present_fields(ficha_rows, ficha_map, list(FICHA_COLUMNS)), pisos=pisos,
+                   obras=present_fields(obra_rows, obra_map, list(OBRA_COLUMNS)) if args.obras else set(), titulares=set())
+
+
+def load_entrega(client, args, parsed, present):
+    """The --entrega flow once the files parsed clean: prints the plan's lines, writes it unless --dry-run, and returns
+    the done line (None on a dry-run). Raises EntregaError when the code already names other files."""
+    fichas, pisos, obras = parsed
+    sha = sha256_of([path for path in (args.fichas, args.pisos, args.obras) if path])
+    check_same_files(find_entrega(client, args.entrega), sha)
+    plan = plan_entrega(read_core(client), fichas, pisos, obras, present, field_types(args.model), codigo=args.entrega,
+                        with_pisos=args.pisos is not None, reemplazar_pisos=args.reemplazar_pisos,
+                        reemplazar_obras=args.reemplazar_obras)
+    print("\n".join(plan.lines), flush=True)
+    if args.dry_run:
+        return None
+    if plan.writes:
+        entrega_id = ensure_entrega(client, args.entrega, fecha_corte=args.fecha_corte, fuente=args.fuente,
+                                    descripcion=args.descripcion, sha=sha, counts=plan.counts)
+        apply_plan(client, plan, entrega_id, args.entrega, args.workers)
+    return f"done: {plan.lines[-1]}"
 
 
 def main(argv=None):
@@ -341,8 +430,17 @@ def main(argv=None):
         return 2
     try:
         enums = load_enums(args.model)
+    except INPUT_ERRORS as e:
+        print(f"input: {e}", file=sys.stderr)
+        return 2
+    flag_problems = _flag_problems(args, enums)
+    if flag_problems:
+        for problem in flag_problems:
+            print(f"error: {problem}", file=sys.stderr)
+        return 2
+    try:
         ficha_rows = read_table(args.fichas, args.sheet)
-        piso_rows = read_table(args.pisos, args.sheet)
+        piso_rows = read_table(args.pisos, args.sheet) if args.pisos else []
         obra_rows = read_table(args.obras, args.sheet) if args.obras else []
     except INPUT_ERRORS as e:
         print(f"input: {e}", file=sys.stderr)
@@ -356,19 +454,28 @@ def main(argv=None):
     if problems:
         report_problems(problems)
         return 2
-    if args.dry_run:
+    if args.dry_run and args.entrega is None:
         return 0
     client = Client(args.core)
     try:
         client.login(args.email, args.password)
-        created, skipped, n_pisos, n_obras = load(client, fichas, pisos, obras, args.workers)
+        if args.entrega is not None:
+            present = _present(args, ficha_rows, piso_rows, obra_rows, (ficha_map, piso_map, obra_map))
+            done = load_entrega(client, args, (fichas, pisos, obras), present)
+        else:
+            created, skipped, n_pisos, n_obras = load(client, fichas, pisos, obras, args.workers)
+            done = f"done: {created} created, {skipped} skipped ({n_pisos} construcciones, {n_obras} obras)"
+    except EntregaError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     except LoadError as e:
-        print(f"error POST /api/objects/{e.object_name}/records (fila {e.fila}) -> {e.error.status}\n{e.error.body}", file=sys.stderr)
+        print(f"error /api/objects/{e.object_name}/records (fila {e.fila}) -> {e.error.status}\n{e.error.body}", file=sys.stderr)
         return 1
     except CoreError as e:
         print(f"error -> {e.status}\n{e.body}", file=sys.stderr)
         return 1
-    print(f"done: {created} created, {skipped} skipped ({n_pisos} construcciones, {n_obras} obras)")
+    if done:
+        print(done)
     return 0
 
 
