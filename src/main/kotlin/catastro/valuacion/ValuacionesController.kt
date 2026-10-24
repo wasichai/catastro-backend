@@ -2,13 +2,16 @@ package catastro.valuacion
 
 import catastro.ParametroInvalido
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PostMapping
+import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
 import org.springframework.web.bind.annotation.RequestParam
 import org.springframework.web.bind.annotation.RestController
 
 // srtm-backend's door into the catastro: the valuations of a year, page by page. it needs a token (401 without one)
-// and READ on the four objects (core's 403 otherwise): the service account `srtm` gets both through SRTM_LECTOR
-// (model/roles.json, model/crear_cuenta_srtm.py). a parameter it does not know, or cannot read, is a 422 that names it
+// and READ on the five objects (core's 403 otherwise): the service account `srtm` gets both through SRTM_LECTOR
+// (model/roles.json, model/crear_cuenta_srtm.py). a parameter it does not know, or cannot read, is a 422 that names it;
+// an organization without its region (configuracion_catastro) is a 409 (RegionNoConfigurada)
 @RestController
 @RequestMapping("/api/catastro")
 class ValuacionesController(
@@ -26,6 +29,15 @@ class ValuacionesController(
             params["size"]?.let { entero("size", it, 1..ValuacionesService.TAMANO_MAXIMO) } ?: ValuacionesService.TAMANO
         )
     }
+
+    // the same valuation for one predio's insumos sent whole, read as the caller like GET /valuaciones (same 401, 403
+    // and 409; SRTM_LECTOR is enough: nothing is written). a malformed body is a 422 that names its field
+    // (PedidoValuacion). the área común is not supported: the engine has no such insumo, so a predio's share of one
+    // is not valued here
+    @PostMapping("/valuacion")
+    suspend fun valuacion(
+        @RequestBody(required = false) cuerpo: String?
+    ): ValuacionDeInsumos = valuaciones.valuar(PedidoValuacion.leer(cuerpo))
 
     private fun entero(
         nombre: String,

@@ -78,6 +78,92 @@ class ParseTests(unittest.TestCase):
         _, problems = imf.pisos_from(rows, pm, ENUMS, {"A"})
         self.assertEqual(len(problems), 7, problems)
 
+    def test_techo_incluido_accepts_the_usual_yes_no_spellings(self):
+        pm = parse_map([], imf.PISO_COLUMNS)
+        values = ["SI", "no", "S", "n", "TRUE", "False", "1", "0", ""]
+        rows = read_table(write_csv(self, "cod_pre,piso,categorias,techo_incluido\n" +
+                                    "".join(f"A,{i},DCDCCDC,{v}\n" for i, v in enumerate(values))))
+        pisos, problems = imf.pisos_from(rows, pm, ENUMS, {"A"})
+        self.assertEqual(problems, [])
+        self.assertEqual([p[2]["techo_incluido"] for p in pisos],
+                         [True, False, True, False, True, False, True, False, None])
+
+    def test_techo_incluido_is_optional(self):
+        rows = read_table(write_csv(self, "cod_pre,piso,categorias\nA,1,DCDCCDC\n"))
+        pisos, problems = imf.pisos_from(rows, parse_map([], imf.PISO_COLUMNS), ENUMS, {"A"})
+        self.assertEqual(problems, [])
+        self.assertIsNone(pisos[0][2]["techo_incluido"])
+
+    def test_an_unreadable_techo_incluido_is_a_problem(self):
+        rows = read_table(write_csv(self, "cod_pre,piso,categorias,techo_incluido\nA,1,DCDCCDC,quizas\n"))
+        _, problems = imf.pisos_from(rows, parse_map([], imf.PISO_COLUMNS), ENUMS, {"A"})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("techo_incluido", problems[0])
+
+    def test_techo_incluido_column_can_be_remapped(self):
+        pm = parse_map(["techo_incluido=INCLUYE_TECHO"], imf.PISO_COLUMNS)
+        rows = read_table(write_csv(self, "cod_pre,piso,categorias,INCLUYE_TECHO\nA,1,DCDCCDC,si\n"))
+        pisos, problems = imf.pisos_from(rows, pm, ENUMS, {"A"})
+        self.assertEqual((problems, pisos[0][2]["techo_incluido"]), ([], True))
+
+    def test_clasificacion_is_an_option_or_its_rnt_table_number(self):
+        pm = parse_map([], imf.PISO_COLUMNS)
+        values = ["edificio-oficinas", "CASA HABITACION Y DEPARTAMENTOS PARA VIVIENDA", "2", "04", ""]
+        rows = read_table(write_csv(self, "cod_pre,piso,categorias,clasificacion\n" +
+                                    "".join(f"A,{i},CCDCCDC,{v}\n" for i, v in enumerate(values))))
+        pisos, problems = imf.pisos_from(rows, pm, ENUMS, {"A"})
+        self.assertEqual(problems, [])
+        opciones = ENUMS["clasificacion"]
+        self.assertEqual([p[2]["clasificacion"] for p in pisos], [opciones[2], opciones[0], opciones[1], opciones[3], None])
+
+    def test_a_numeric_xlsx_clasificacion_is_its_table(self):
+        # an xlsx number comes as 3.0 (tabular.code_text)
+        path = write_xlsx(self, ["COD_PRE", "PISO", "CLASIFICACION", "SECCION"], [["A", "1", "3.0", "2.0"]])
+        pisos, problems = imf.pisos_from(read_table(path), parse_map([], imf.PISO_COLUMNS), ENUMS, {"A"})
+        self.assertEqual(problems, [])
+        self.assertEqual((pisos[0][2]["clasificacion"], pisos[0][2]["seccion"]), ("EDIFICIO-OFICINAS", 2))
+
+    def test_a_bad_seccion_is_one_problem_not_also_a_repeated_piso(self):
+        rows = read_table(write_csv(self, "cod_pre,piso,seccion\nA,1,\nA,1,0\n"))
+        _, problems = imf.pisos_from(rows, parse_map([], imf.PISO_COLUMNS), ENUMS, {"A"})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("seccion", problems[0])
+
+    def test_an_unknown_clasificacion_is_a_problem(self):
+        rows = read_table(write_csv(self, "cod_pre,piso,clasificacion\nA,1,MUSEOS\nA,2,0\nA,3,5\n"))
+        _, problems = imf.pisos_from(rows, parse_map([], imf.PISO_COLUMNS), ENUMS, {"A"})
+        self.assertEqual(len(problems), 3, problems)
+        self.assertTrue(all("clasificacion" in p for p in problems), problems)
+
+    def test_a_model_without_clasificacion_only_refuses_a_filled_one(self):
+        viejo = {k: v for k, v in ENUMS.items() if k != "clasificacion"}
+        rows = read_table(write_csv(self, "cod_pre,piso,clasificacion\nA,1,\nA,2,1\n"))
+        _, problems = imf.pisos_from(rows, parse_map([], imf.PISO_COLUMNS), viejo, {"A"})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("clasificacion", problems[0])
+
+    def test_seccion_is_optional_and_a_positive_integer(self):
+        rows = read_table(write_csv(self, "cod_pre,piso,seccion\nA,1,\nA,2,2\nA,3,0\nA,4,1.5\nA,5,dos\n"))
+        pisos, problems = imf.pisos_from(rows, parse_map([], imf.PISO_COLUMNS), ENUMS, {"A"})
+        self.assertEqual(len(problems), 3, problems)
+        self.assertTrue(all("seccion" in p for p in problems), problems)
+        self.assertEqual([p[2]["seccion"] for p in pisos[:2]], [None, 2])
+
+    def test_the_same_piso_in_two_secciones_is_not_repeated_the_same_seccion_is(self):
+        pm = parse_map([], imf.PISO_COLUMNS)
+        rows = read_table(write_csv(self, "cod_pre,piso,seccion\nA,5,\nA,5,2\nA,5,1\nA,6,2\nA,6,2\n"))
+        _, problems = imf.pisos_from(rows, pm, ENUMS, {"A"})
+        # a blank seccion is 1: rows 2 and 4 are the same piso 5 seccion 1; rows 5 and 6 the same piso 6 seccion 2
+        self.assertEqual(len(problems), 2, problems)
+        self.assertTrue(all("repeated" in p for p in problems), problems)
+
+    def test_clasificacion_and_seccion_columns_can_be_remapped(self):
+        pm = parse_map(["clasificacion=CLAS", "seccion=SEC"], imf.PISO_COLUMNS)
+        rows = read_table(write_csv(self, "cod_pre,piso,CLAS,SEC\nA,1,3,2\n"))
+        pisos, problems = imf.pisos_from(rows, pm, ENUMS, {"A"})
+        self.assertEqual(problems, [])
+        self.assertEqual((pisos[0][2]["clasificacion"], pisos[0][2]["seccion"]), ("EDIFICIO-OFICINAS", 2))
+
     def test_obras_and_orphans(self):
         om = parse_map([], imf.OBRA_COLUMNS)
         rows = read_table(write_csv(self, OBRAS + "Z,X|1,1,2000,METAL,BUENO\nA,X|1,uno,2000,METAL,BUENO\n"))
@@ -118,6 +204,40 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(piso["attributes"]["estado_conservacion"], "MUY BUENO")
         self.assertEqual(piso["attributes"]["muros_columnas"], "B")
         self.assertEqual(self.core.records["obra_complementaria"][0]["attributes"]["predio"], predios["120302-0001"]["id"])
+
+    def test_techo_incluido_reaches_core_and_is_omitted_when_empty(self):
+        pisos = write_csv(self, "cod_pre,piso,categorias,techo_incluido\n120302-0001,1,DCDCCDC,si\n120302-0001,2,DCDCCDC,\n")
+        code, _, err = self.cli(pisos=pisos)
+        self.assertEqual(code, 0, err)
+        by_piso = {r["attributes"]["piso"]: r["attributes"] for r in self.core.records["construccion"]}
+        self.assertIs(by_piso["1"]["techo_incluido"], True)
+        self.assertNotIn("techo_incluido", by_piso["2"])
+
+    def test_clasificacion_and_seccion_reach_core_and_are_omitted_when_empty(self):
+        pisos = write_csv(self, "cod_pre,piso,categorias,clasificacion,seccion\n120302-0001,5,CCDCCDC,1,\n"
+                                "120302-0001,5,CCDCCDC,,2\n")
+        code, out, err = self.cli(pisos=pisos)
+        self.assertEqual(code, 0, err)
+        self.assertIn("(2 construcciones, 0 obras)", out)
+        primera, segunda = sorted((r["attributes"] for r in self.core.records["construccion"]),
+                                  key=lambda a: a.get("seccion", 1))
+        self.assertEqual((primera["piso"], primera["clasificacion"]), ("5", ENUMS["clasificacion"][0]))
+        self.assertNotIn("seccion", primera)
+        self.assertEqual((segunda["piso"], segunda["seccion"]), ("5", 2))
+        self.assertNotIn("clasificacion", segunda)
+        code, out, _ = self.cli(pisos=pisos)
+        self.assertIn("(0 construcciones, 0 obras)", out)
+        self.assertEqual(len(self.core.records["construccion"]), 2)
+
+    def test_a_piso_core_has_without_seccion_is_seccion_1(self):
+        # perené's pisos were loaded before seccion existed: a second section of the same piso is new, the first is not
+        first = self.core.add_record("predio_catastral", {"codigo_municipal": "120302-0001"})
+        self.core.add_record("construccion", {"piso": "1", "predio": first["id"]})
+        pisos = write_csv(self, "cod_pre,piso,seccion\n120302-0001,1,1\n120302-0001,1,2\n")
+        code, out, err = self.cli(pisos=pisos)
+        self.assertEqual(code, 0, err)
+        self.assertIn("(1 construcciones, 0 obras)", out)
+        self.assertEqual(sorted(r["attributes"].get("seccion", 1) for r in self.core.records["construccion"]), [1, 2])
 
     def test_second_run_creates_nothing(self):
         self.cli("--obras", self.obras)

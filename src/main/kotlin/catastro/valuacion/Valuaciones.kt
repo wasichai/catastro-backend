@@ -9,6 +9,8 @@ import java.math.BigDecimal
 data class Valuaciones(
     val anio: Int,
     val version: String,
+    // the organization's region (COSTA, SELVA): whose cuadros valued this page
+    val region: String,
     val page: Int,
     val size: Int,
     // predios the caller may read, in every page
@@ -38,3 +40,29 @@ data class ItemValuacion(
     val llave: String?,
     val loteGeom: Map<String, Any?>?
 )
+
+// the answer of POST /api/catastro/valuacion: one predio's insumos valued as GET /valuaciones values a ficha, plus how
+// the engine got there. arancelM2 is the one valued with and origenArancel where it came from (CUERPO, FICHA, or null
+// when there was none). terreno, construccion, obras, autoavaluo and detalle are null when the predio is not valued;
+// then motivo and llave say why. every key is always written, null included
+@JsonInclude(JsonInclude.Include.ALWAYS)
+data class ValuacionDeInsumos(
+    val anio: Int,
+    val version: String,
+    val region: String,
+    val codigoMunicipal: String?,
+    val arancelM2: BigDecimal?,
+    val origenArancel: String?,
+    val terreno: BigDecimal?,
+    val construccion: BigDecimal?,
+    val obras: BigDecimal?,
+    val autoavaluo: BigDecimal?,
+    val motivo: String?,
+    val llave: String?,
+    val detalle: Detalle?
+) {
+    companion object {
+        const val CUERPO = "CUERPO"
+        const val FICHA = "FICHA"
+    }
+}

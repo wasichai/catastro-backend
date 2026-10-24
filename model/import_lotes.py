@@ -9,7 +9,7 @@ and left out, never created. A predio that already carries a lote_geom is skippe
 The gdb's CF_LOTES_POL_18 has neither code, so join the predio's code to its features first. To make the GeoJSON:
   ogr2ogr -f GeoJSON -t_srs EPSG:4326 lotes.geojson 120302_MD_Perene_ECF.gdb CF_LOTES_POL_18
 
-Run: python3 import_lotes.py --geojson lotes.geojson [--map codigo_municipal=COD_PRE] [--dry-run]
+Run: python3 -I import_lotes.py --geojson lotes.geojson [--map codigo_municipal=COD_PRE] [--dry-run]
 Exit: 0 ok, 1 Core refused something, 2 the file has features that do not fit (every one is listed, nothing is sent).
 """
 import argparse
@@ -18,8 +18,14 @@ import os
 import sys
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
-from core_client import Client, CoreError
-from tabular import INPUT_ERRORS, LoadError, code_text, parse_map, payload, report_problems
+HERE = os.path.dirname(os.path.abspath(__file__))
+# under python3 -I (the files it reads are untrusted) neither the cwd nor the script's directory is on sys.path: put
+# back only the latter, for core_client and tabular
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+from core_client import Client, CoreError  # noqa: E402
+from tabular import INPUT_ERRORS, LoadError, code_text, parse_map, payload, report_problems  # noqa: E402
 
 PROPERTIES = {"codigo_municipal": "codigo_municipal", "codigo_cpu": "codigo_cpu"}
 GEOMETRY = "lote_geom"

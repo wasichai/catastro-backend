@@ -25,6 +25,46 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         admin = bearer()
         aplicarModelo()
         aplicarRoles()
+        // perené's region, as model/configurar_region.py --region SELVA leaves it
+        region("SELVA")
+    }
+
+    @Test
+    fun `la región de la organización elige el cuadro, y sin región no hay valuaciones`() {
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        val marca = uniqueName("t9").uppercase()
+        val idAranc = "$marca-A"
+        registro(ARANCEL, mapOf("clave" to "$idAranc|2026", "id_aranc" to idAranc, "anio" to 2026, "valor_m2" to 45.50))
+        val casa = predio("$marca-1", idAranc)
+        piso(casa, "1", "CONCRETO", "BUENO")
+        val construccion = { leerTodo(srtm, 500).first { it["codigoMunicipal"].asString() == "$marca-1" }["construccion"] }
+        try {
+            // selva (ValorizacionTest, casa de un piso de concreto): 78781.60
+            numero("78781.60", construccion())
+            assertEquals("SELVA", valuaciones(srtm, "anio=2026&size=1")["region"].asString())
+            // costa, same piso: VU = muros C 387.43 + techos D 181.40 + puertas E 120.98 = 689.81 (anexo I.2);
+            // tabla 01 Concreto Bueno hasta 10 = 5 %; the costa rounds the depreciated VU (Region.redondeaValorUnitario):
+            // round(689.81 x 0.95, 2) = round(655.3195, 2) = 655.32; x 100 = 65532.00 (65531.95 unrounded, valuacion-v1)
+            region("COSTA")
+            numero("65532.00", construccion())
+            assertEquals("COSTA", valuaciones(srtm, "anio=2026&size=1")["region"].asString())
+
+            // no region: no valuations at all, a 409 that names the missing configuration
+            region(null)
+            val (sin, cuerpo) = exchange("GET", "/api/catastro/valuaciones?anio=2026", null, srtm)
+            assertEquals(HttpStatus.CONFLICT, sin, cuerpo)
+            assertEquals("configuracion_catastro.region", arbol(cuerpo)["errors"][0]["field"].asString(), cuerpo)
+            assertTrue(cuerpo.contains("COSTA") && cuerpo.contains("SELVA"), cuerpo)
+
+            // two records: none is picked
+            registro(CONFIGURACION_CATASTRO, mapOf("region" to "SELVA"))
+            registro(CONFIGURACION_CATASTRO, mapOf("region" to "COSTA"))
+            val (dos, cuerpoDos) = exchange("GET", "/api/catastro/valuaciones?anio=2026", null, srtm)
+            assertEquals(HttpStatus.CONFLICT, dos, cuerpoDos)
+            assertEquals("configuracion_catastro.region", arbol(cuerpoDos)["errors"][0]["field"].asString(), cuerpoDos)
+        } finally {
+            region("SELVA")
+        }
     }
 
     @Test
@@ -66,6 +106,14 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         materiales.forEachIndexed { n, material -> piso(variado, "${n + 1}", material, estados[n % estados.size], area = 10, anio = 2000) }
         estados.forEachIndexed { n, estado -> piso(variado, "S${n + 1}", "LADRILLO", estado, area = 10, anio = 2000) }
 
+        // muros D drywall that includes the techo (llamada 5): the techos D 231.25 stays out, and the flag round-trips
+        // through core. VU = 378.67 + 108.28 = 486.95; x 0.95 x 100 = 46260.25 (ValorizacionTest); + terreno 9100.00
+        val drywall = predio("$marca-4", idAranc)
+        piso(drywall, "1", "CONCRETO", "BUENO", muros = "D", techoIncluido = true)
+        // the same flag on muros C is a capture error
+        val invalido = predio("$marca-5", idAranc)
+        piso(invalido, "1", "CONCRETO", "BUENO", techoIncluido = true)
+
         val todos = leerTodo(srtm, 500)
         val items = todos.associateBy { it["codigoMunicipal"].asString() }
 
@@ -99,10 +147,47 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         assertTrue(b["loteGeom"].isNull)
         numero("100", b["areaConstruida"])
 
+        val d = items.getValue("$marca-4")
+        assertTrue(d["llave"].isNull, d.toString())
+        numero("46260.25", d["construccion"])
+        numero("55360.25", d["autoavaluo"])
+        assertEquals("TECHO_INCLUIDO_INVALIDO:C", items.getValue("$marca-5")["llave"].asString())
+
         val c = items.getValue("$marca-3")
         assertTrue(c["llave"].isNull, c.toString())
         assertNotNull(c["autoavaluo"].decimalValue())
         numero("${(materiales.size + estados.size) * 10}", c["areaConstruida"])
+    }
+
+    @Test
+    fun `la clasificación y las secciones de cada construcción pasan por core`() {
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        val marca = uniqueName("t13").uppercase()
+        val idAranc = "$marca-A"
+        registro(ARANCEL, mapOf("clave" to "$idAranc|2026", "id_aranc" to idAranc, "anio" to 2026, "valor_m2" to 45.50))
+        // the casa's piso as an oficina: tabla 03 instead of the uso's 01, 829.28 x 0.92 x 100 = 76293.76 (ValorizacionTest)
+        val oficina = predio("$marca-1", idAranc)
+        piso(oficina, "1", "CONCRETO", "BUENO", clasificacion = "EDIFICIO-OFICINAS")
+        // two secciones of the fifth floor of an edificio, both +5 %: 829.28 x 1.05 x 0.95 x 100 = 82720.68 each
+        val edificio = predio("$marca-2", idAranc, mapOf("es_edificio" to true))
+        piso(edificio, "5", "CONCRETO", "BUENO", seccion = 2)
+        piso(edificio, "5", "CONCRETO", "BUENO", seccion = 1)
+        // a clasificación outside the enum is core's 422: the engine never meets an unknown one from the importer
+        val (status, cuerpo) =
+            exchange(
+                "POST",
+                "/api/objects/$CONSTRUCCION/records",
+                mapOf("attributes" to mapOf("predio" to oficina, "piso" to "2", "clasificacion" to "MUSEOS")),
+                admin
+            )
+        assertTrue(status.is4xxClientError, "$status $cuerpo")
+
+        val items = leerTodo(srtm, 500).associateBy { it["codigoMunicipal"].asString() }
+        numero("76293.76", items.getValue("$marca-1")["construccion"])
+        val e = items.getValue("$marca-2")
+        assertTrue(e["llave"].isNull, e.toString())
+        numero("165441.36", e["construccion"])
+        numero("200", e["areaConstruida"])
     }
 
     @Test
@@ -113,7 +198,7 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         val primera = valuaciones(srtm, "anio=2026&page=0&size=3")
         val total = primera["total"].asLong()
         assertEquals(2026, primera["anio"].asInt())
-        assertEquals("valuacion-v1", primera["version"].asString())
+        assertEquals("valuacion-v2", primera["version"].asString())
         assertEquals(0, primera["page"].asInt())
         assertEquals(3, primera["size"].asInt())
         val codigos = leerTodo(srtm, 3).map { it["codigoMunicipal"].asString() }
@@ -147,6 +232,124 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         }
     }
 
+    @Test
+    fun `POST valuacion con los insumos de una ficha da el mismo autoavalúo que GET valuaciones`() {
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        val marca = uniqueName("t16").uppercase()
+        val idAranc = "$marca-A"
+        registro(ARANCEL, mapOf("clave" to "$idAranc|2026", "id_aranc" to idAranc, "anio" to 2026, "valor_m2" to 45.50))
+        val casa = predio("$marca-1", idAranc)
+        piso(casa, "1", "CONCRETO", "BUENO")
+        registro(
+            OBRA_COMPLEMENTARIA,
+            mapOf(
+                "predio" to casa,
+                "codigo_vu" to "MUROS PERIMETRICOS O CERCOS|1",
+                "cantidad" to 30,
+                "anio_construccion" to 2016,
+                "material" to "CONCRETO",
+                "estado_conservacion" to "BUENO"
+            )
+        )
+        val guardado = leerTodo(srtm, 500).first { it["codigoMunicipal"].asString() == "$marca-1" }
+        // the same ficha as json: casa de un piso 78781.60 + muro 8870.61 + terreno 9100.00 = 96752.21
+        val insumos =
+            mapOf(
+                "anio" to 2026,
+                "areaTerreno" to 200,
+                "arancelM2" to 45.50,
+                "uso" to "010101",
+                "esEdificio" to false,
+                "construcciones" to
+                    listOf(
+                        mapOf(
+                            "piso" to "1",
+                            "areaConstruida" to 100,
+                            "anioConstruccion" to 2016,
+                            "material" to "CONCRETO",
+                            "estado" to "BUENO",
+                            "muros" to "C",
+                            "techos" to "D",
+                            "puertas" to "E"
+                        )
+                    ),
+                "obras" to
+                    listOf(
+                        mapOf(
+                            "codigoVu" to "MUROS PERIMETRICOS O CERCOS|1",
+                            "cantidad" to 30,
+                            "anioConstruccion" to 2016,
+                            "material" to "CONCRETO",
+                            "estado" to "BUENO"
+                        )
+                    )
+            )
+        val v = valuacion(srtm, insumos)
+        numero(guardado["autoavaluo"].decimalValue().toPlainString(), v["autoavaluo"])
+        numero("96752.21", v["autoavaluo"])
+        for (campo in listOf("terreno", "construccion", "obras")) numero(guardado[campo].decimalValue().toPlainString(), v[campo])
+        assertEquals(2026, v["anio"].asInt())
+        assertEquals("valuacion-v2", v["version"].asString())
+        assertEquals("SELVA", v["region"].asString())
+        assertEquals("CUERPO", v["origenArancel"].asString())
+        numero("45.50", v["arancelM2"])
+        assertTrue(v["motivo"].isNull && v["llave"].isNull, v.toString())
+        val p = v["detalle"]["pisos"][0]
+        numero("829.28", p["valorUnitario"])
+        numero("5", p["porcentajeDepreciacion"])
+        numero("78781.60", p["valor"])
+        numero("8870.61", v["detalle"]["obras"][0]["valor"])
+
+        // without arancelM2, the ficha's by its codigo municipal: the same figure
+        val deLaFicha = valuacion(srtm, insumos - "arancelM2" + ("codigoMunicipal" to "$marca-1"))
+        numero("96752.21", deLaFicha["autoavaluo"])
+        assertEquals("FICHA", deLaFicha["origenArancel"].asString())
+        numero("45.50", deLaFicha["arancelM2"])
+        assertEquals("$marca-1", deLaFicha["codigoMunicipal"].asString())
+        // a code the catastro does not have, or no code at all: the engine's motivo, no detalle
+        for (cuerpo in listOf(insumos - "arancelM2" + ("codigoMunicipal" to "$marca-NO"), insumos - "arancelM2")) {
+            val sin = valuacion(srtm, cuerpo)
+            assertEquals("ARANCEL_FALTANTE", sin["llave"].asString(), sin.toString())
+            assertTrue(sin["origenArancel"].isNull && sin["arancelM2"].isNull && sin["detalle"].isNull, sin.toString())
+            for (campo in listOf("terreno", "construccion", "obras", "autoavaluo")) assertTrue(sin[campo].isNull, campo)
+        }
+        // a year without tables is a motivo, never 2026's figures
+        val (status, cuerpo) = exchange("POST", "/api/catastro/valuacion", insumos + ("anio" to 2027), srtm)
+        assertEquals(HttpStatus.OK, status, cuerpo)
+        assertEquals("PARAMETRO_FALTANTE:PORCENTAJE_ACTUALIZACION:2027", arbol(cuerpo)["llave"].asString(), cuerpo)
+    }
+
+    @Test
+    fun `POST valuacion - 401 sin token, 403 sin el rol, 409 sin región, 422 con un cuerpo mal formado`() {
+        val cuerpo = mapOf("anio" to 2026, "areaTerreno" to 200, "arancelM2" to 45.50)
+        client
+            .post()
+            .uri("/api/catastro/valuacion")
+            .bodyValue(cuerpo)
+            .exchange()
+            .expectStatus()
+            .isUnauthorized
+        assertEquals(HttpStatus.FORBIDDEN, exchange("POST", "/api/catastro/valuacion", cuerpo, cuentaDeServicio(emptyList())).first)
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        for ((malo, campo) in listOf(
+            mapOf("areaTerreno" to 200) to "anio",
+            cuerpo + ("construcciones" to listOf(mapOf("piso" to "1", "muros" to "CC"))) to "construcciones[0].muros",
+            cuerpo + ("sobra" to 1) to "sobra"
+        )) {
+            val (status, body) = exchange("POST", "/api/catastro/valuacion", malo, srtm)
+            assertEquals(HttpStatus.UNPROCESSABLE_CONTENT, status, body)
+            assertEquals(campo, arbol(body)["errors"][0]["field"].asString(), body)
+        }
+        try {
+            region(null)
+            val (sin, body) = exchange("POST", "/api/catastro/valuacion", cuerpo, srtm)
+            assertEquals(HttpStatus.CONFLICT, sin, body)
+            assertEquals("configuracion_catastro.region", arbol(body)["errors"][0]["field"].asString(), body)
+        } finally {
+            region("SELVA")
+        }
+    }
+
     // every page of the year, in order, as srtm reads them
     private fun leerTodo(
         token: String,
@@ -166,6 +369,11 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         token: String,
         query: String
     ): JsonNode = arbol(send("GET", "/api/catastro/valuaciones?$query", null, HttpStatus.OK, token))
+
+    private fun valuacion(
+        token: String,
+        cuerpo: Map<String, Any?>
+    ): JsonNode = arbol(send("POST", "/api/catastro/valuacion", cuerpo, HttpStatus.OK, token))
 
     private fun numero(
         esperado: String,
@@ -202,7 +410,11 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         estado: String,
         techos: String = "D",
         area: Int = 100,
-        anio: Int = 2016
+        anio: Int = 2016,
+        muros: String = "C",
+        techoIncluido: Boolean? = null,
+        clasificacion: String? = null,
+        seccion: Int? = null
     ) = registro(
         CONSTRUCCION,
         mapOf(
@@ -212,11 +424,26 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
             "anio_construccion" to anio,
             "material" to material,
             "estado_conservacion" to estado,
-            "muros_columnas" to "C",
+            "muros_columnas" to muros,
             "techos" to techos,
             "puertas_ventanas" to "E"
-        )
+        ) +
+            listOfNotNull(
+                techoIncluido?.let { "techo_incluido" to it },
+                clasificacion?.let { "clasificacion" to it },
+                seccion?.let { "seccion" to it }
+            )
     )
+
+    // the organization's configuracion_catastro left with exactly one record saying `region`, or none when null
+    private fun region(region: String?) {
+        val ids =
+            arbol(send("GET", "/api/objects/$CONFIGURACION_CATASTRO/records?size=200", null, HttpStatus.OK, admin))["content"]
+                .lista()
+                .map { it["id"].asString() }
+        ids.forEach { send("DELETE", "/api/objects/$CONFIGURACION_CATASTRO/records/$it", null, HttpStatus.NO_CONTENT, admin) }
+        if (region != null) registro(CONFIGURACION_CATASTRO, mapOf("region" to region))
+    }
 
     // a record created by the seeded admin: its id
     private fun registro(
@@ -363,6 +590,7 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
             when (method) {
                 "GET" -> client.get().uri(path)
                 "PUT" -> client.put().uri(path).bodyValue(body!!)
+                "DELETE" -> client.delete().uri(path)
                 else -> client.post().uri(path).bodyValue(body!!)
             }
         val result =

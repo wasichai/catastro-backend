@@ -9,6 +9,7 @@ const val PREDIO_CATASTRAL = "predio_catastral"
 const val CONSTRUCCION = "construccion"
 const val OBRA_COMPLEMENTARIA = "obra_complementaria"
 const val ARANCEL = "arancel"
+const val CONFIGURACION_CATASTRO = "configuracion_catastro"
 
 // the relation field construccion and obra_complementaria hang from
 const val PREDIO = "predio"
@@ -34,7 +35,7 @@ data class PredioCatastral(
 )
 
 // material and estado_conservacion come in the model's enum spelling (CONCRETO, MUY BUENO …), which is what
-// Valorizacion.materialRnt / estadoRnt read
+// Valorizacion.materialRnt / estadoRnt read; clasificacion likewise, for Valorizacion.TABLA_POR_CLASIFICACION
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
 data class FichaConstruccion(
     val id: String,
@@ -46,7 +47,10 @@ data class FichaConstruccion(
     val estadoConservacion: String? = null,
     val murosColumnas: String? = null,
     val techos: String? = null,
-    val puertasVentanas: String? = null
+    val puertasVentanas: String? = null,
+    val techoIncluido: Boolean? = null,
+    val clasificacion: String? = null,
+    val seccion: Int? = null
 )
 
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
@@ -66,4 +70,11 @@ data class Arancel(
     val idAranc: String? = null,
     val anio: Int? = null,
     val valorM2: BigDecimal? = null
+)
+
+// the organization's single configuracion_catastro record: the region whose tables value its predios
+@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
+data class ConfiguracionCatastro(
+    val id: String,
+    val region: String? = null
 )

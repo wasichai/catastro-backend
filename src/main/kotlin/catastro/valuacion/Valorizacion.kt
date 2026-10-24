@@ -19,8 +19,11 @@ data class Insumos(
     val obras: List<Obra>
 )
 
-// one piso. material and estado in catastro's enum spelling (CONCRETO, MUY BUENO …); the letters are the three
-// partidas the selva cuadro prices (the other four categorías do not enter the VU)
+// one piso, or one seccion of a piso. material and estado in catastro's enum spelling (CONCRETO, MUY BUENO …); the
+// letters are the three partidas every regional cuadro prices (the other four categorías do not enter the VU).
+// techoIncluido marks the muros D that are drywall including the techo (llamada 5 of anexos I.1-I.4); null is "not
+// declared", the ladrillo case. clasificacion, an option of the model's enum clasificacion, is the RNT tabla this
+// construction depreciates with; null takes the predio's uso tabla (D1). seccion null is 1; piso keeps only the floor
 data class Construccion(
     val piso: String,
     val areaConstruida: BigDecimal?,
@@ -29,7 +32,10 @@ data class Construccion(
     val estado: String?,
     val muros: Char?,
     val techos: Char?,
-    val puertas: Char?
+    val puertas: Char?,
+    val techoIncluido: Boolean? = null,
+    val clasificacion: String? = null,
+    val seccion: Int? = null
 )
 
 // codigoVu is "TIPO DE OBRA|numero", the key of Tablas.obra
@@ -47,7 +53,9 @@ sealed interface Valuacion {
         val terreno: BigDecimal,
         val construccion: BigDecimal,
         val obras: BigDecimal,
-        val autoavaluo: BigDecimal
+        val autoavaluo: BigDecimal,
+        // how the engine got to construccion and obras; Σ valor of each list is that total
+        val detalle: Detalle = Detalle(emptyList(), emptyList())
     ) : Valuacion
 
     // motivo is for a person; llave groups predios by what is missing (e.g. "VU_SIN_VALOR:TECHOS:I")
@@ -57,11 +65,56 @@ sealed interface Valuacion {
     ) : Valuacion
 }
 
+// the steps of a valued predio, in the order of its construcciones and obras
+data class Detalle(
+    val pisos: List<DetallePiso>,
+    val obras: List<DetalleObra>
+)
+
+// one construction: valorUnitario is the cuadro's Σ of its partidas; incremento the amount the edificio's 5 % adds
+// (0 below its floor); valorUnitarioDepreciado = (valorUnitario + incremento) x (1 - porcentajeDepreciacion / 100), to
+// the céntimo where the region rounds; valor = valorUnitarioDepreciado x areaConstruida, 2 decimals
+data class DetallePiso(
+    val piso: String,
+    val seccion: Int?,
+    val areaConstruida: BigDecimal,
+    val valorUnitario: BigDecimal,
+    val incremento: BigDecimal,
+    val tablaDepreciacion: String,
+    val antiguedad: Int,
+    val porcentajeDepreciacion: BigDecimal,
+    val valorUnitarioDepreciado: BigDecimal,
+    val valor: BigDecimal
+)
+
+// one obra: valor = valorUnitario x cantidad x factorOficializacion x (1 - porcentajeDepreciacion / 100), 2 decimals
+data class DetalleObra(
+    val codigoVu: String,
+    val cantidad: BigDecimal,
+    val valorUnitario: BigDecimal,
+    val factorOficializacion: BigDecimal,
+    val tablaDepreciacion: String,
+    val antiguedad: Int,
+    val porcentajeDepreciacion: BigDecimal,
+    val valor: BigDecimal
+)
+
 // the autoavalúo of one predio: pure, no clock, no db. the first thing that keeps the predio from a value wins, in the
 // order of kamayuk's ValorizacionDelPredio: the ficha's land, the arancel, the year's parameters, every construction's
-// cuadro cells, then the uso's depreciation tabla (RT-004), then the obras
+// cuadro cells, then the depreciation tablas (the uso's, RT-004, then each construction's clasificación), then the obras
 object Valorizacion {
+    // the model's enum clasificacion (srtm-backend's same four options) to the RNT's tables of anexo I, by their titles
+    val TABLA_POR_CLASIFICACION: Map<String, String> =
+        linkedMapOf(
+            "CASA HABITACION Y DEPARTAMENTOS PARA VIVIENDA" to "01",
+            "TIENDAS DEPOSITOS CENTROS DE RECREACION CLUBES E INSTITUCIONES" to "02",
+            "EDIFICIO-OFICINAS" to "03",
+            "CLINICAS HOSPITALES CINES INDUSTRIAS COLEGIOS TALLERES" to "04"
+        )
+
     private const val ESCALA = 2
+    private const val MUROS_SIN_TECHOS = 'A'
+    private const val MUROS_DRYWALL = 'D'
     private val CIEN = BigDecimal(100)
 
     fun valorizar(
@@ -101,10 +154,11 @@ object Valorizacion {
         val terreno = area.multiply(arancel).redondeado()
 
         val unitarios = i.construcciones.map { valorUnitario(it, t) }
-        // right after every construction's cells (java order) and before anything a piso or an obra declares. a bare lot
-        // needs no tabla: the empty one is never read
+        // right after every construction's cells (java order) and before anything a piso or an obra declares. the uso's
+        // tabla is asked only when something depreciates with it: an obra, or a construction without a clasificación (a
+        // bare lot needs none, and the empty one is never read)
         val tabla =
-            if (i.construcciones.isEmpty() && i.obras.isEmpty()) {
+            if (i.construcciones.all { it.clasificacion != null } && i.obras.isEmpty()) {
                 ""
             } else {
                 i.uso?.let { t.tablaPorUso(it) } ?: falta(
@@ -112,42 +166,90 @@ object Valorizacion {
                     "No hay tabla de depreciación del RNT para el uso «${i.uso ?: "sin uso"}» (D1): sin ella lo construido no se deprecia"
                 )
             }
+        val tablas = i.construcciones.map { c -> c.clasificacion?.let { tablaPorClasificacion(it, donde(c)) } ?: tabla }
 
-        val construccion =
-            i.construcciones
-                .zip(unitarios)
-                .sumOf { (c, vu) ->
-                    val donde = "la construcción del piso ${c.piso}"
+        val pisos =
+            i.construcciones.indices
+                .map { n ->
+                    val c = i.construcciones[n]
+                    val vu = unitarios[n]
+                    val donde = donde(c)
                     val areaConstruida = c.areaConstruida ?: falta("AREA_CONSTRUIDA_FALTANTE", "$donde no declara área construida")
                     if (areaConstruida.signum() < 0) falta("AREA_CONSTRUIDA_INVALIDA", "$donde declara un área construida negativa ($areaConstruida)")
-                    val conIncremento = incremento?.takeIf { aplicaIncremento(c.piso, it.desde) }?.let { vu.multiply(it.factor) } ?: vu
-                    val dep = depreciacion(t, tabla, c.material, c.estado, c.anioConstruccion, i.anio, donde)
-                    conIncremento.multiply(dep).multiply(areaConstruida).redondeado()
+                    val conIncremento =
+                        incremento?.takeIf { aplicaIncremento(c.piso, it.desde) }?.let { vu.multiply(it.factor).alCentimo(t) } ?: vu
+                    val dep = depreciacion(t, tablas[n], c.material, c.estado, c.anioConstruccion, i.anio, donde)
+                    val depreciado = conIncremento.multiply(dep.factor).alCentimo(t)
+                    DetallePiso(
+                        piso = c.piso,
+                        seccion = c.seccion,
+                        areaConstruida = areaConstruida,
+                        valorUnitario = vu,
+                        incremento = conIncremento - vu,
+                        tablaDepreciacion = tablas[n],
+                        antiguedad = dep.antiguedad,
+                        porcentajeDepreciacion = dep.porcentaje,
+                        valorUnitarioDepreciado = depreciado,
+                        valor = depreciado.multiply(areaConstruida).redondeado()
+                    )
                 }
+        val construccion = pisos.sumOf { it.valor }
 
-        val obras =
-            i.obras.sumOf { o ->
+        // a region whose obras cuadro is not shipped cannot value an obra: skipping it would undervalue the predio
+        if (i.obras.isNotEmpty() && t.obras == null) {
+            falta(
+                "OBRAS_SIN_CUADRO:${t.region}",
+                "No hay cuadro de obras complementarias de la ${t.region.nombre} (${t.region.obras}): el predio declara obras y sin él no se valorizan"
+            )
+        }
+        val detalleObras =
+            i.obras.map { o ->
                 val codigo = o.codigoVu.orEmpty()
                 val donde = "la obra complementaria $codigo"
                 val partida =
-                    t.obra(codigo) ?: falta("OBRA_DESCONOCIDA:$codigo", "El cuadro de obras complementarias de la selva no tiene la partida «$codigo»")
+                    t.obra(codigo) ?: falta(
+                        "OBRA_DESCONOCIDA:$codigo",
+                        "El cuadro de obras complementarias de la ${t.region.nombre} no tiene la partida «$codigo»"
+                    )
                 val cantidad = o.cantidad ?: falta("OBRA_CANTIDAD_FALTANTE", "$donde no declara cantidad")
                 if (cantidad.signum() < 0) falta("OBRA_CANTIDAD_INVALIDA", "$donde declara una cantidad negativa ($cantidad)")
                 // the partida itself names a material (a "muro de concreto"); the ficha's, when given, wins
                 val dep = depreciacion(t, tabla, o.material ?: partida.material, o.estado, o.anioConstruccion, i.anio, donde)
-                partida.valorUnitario
-                    .multiply(cantidad)
-                    .multiply(factor)
-                    .multiply(dep)
-                    .redondeado()
+                DetalleObra(
+                    codigoVu = codigo,
+                    cantidad = cantidad,
+                    valorUnitario = partida.valorUnitario,
+                    factorOficializacion = factor,
+                    tablaDepreciacion = tabla,
+                    antiguedad = dep.antiguedad,
+                    porcentajeDepreciacion = dep.porcentaje,
+                    valor =
+                        partida.valorUnitario
+                            .multiply(cantidad)
+                            .multiply(factor)
+                            .multiply(dep.factor)
+                            .redondeado()
+                )
             }
+        val obras = detalleObras.sumOf { it.valor }
 
         val suma = terreno + construccion + obras
         // a zero increment leaves the figure as it is (kamayuk: x + x·0 is x, without touching the scale)
         val autoavaluo =
             if (actualizacion.signum() == 0) suma else suma.add(suma.multiply(actualizacion).divide(CIEN)).redondeado()
-        return Valuacion.Valorizada(terreno, construccion.redondeado(), obras.redondeado(), autoavaluo)
+        return Valuacion.Valorizada(terreno, construccion.redondeado(), obras.redondeado(), autoavaluo, Detalle(pisos, detalleObras))
     }
+
+    private fun donde(c: Construccion): String = "la construcción del piso ${c.piso}" + (c.seccion?.takeIf { it != 1 }?.let { ", sección $it" } ?: "")
+
+    private fun tablaPorClasificacion(
+        clasificacion: String,
+        donde: String
+    ): String =
+        TABLA_POR_CLASIFICACION[clasificacion.trim().uppercase()] ?: falta(
+            "CLASIFICACION_DESCONOCIDA:$clasificacion",
+            "$donde declara la clasificación «$clasificacion», que no es ninguna de las tablas de depreciación 01 a 04 del RNT"
+        )
 
     private fun parametro(
         t: Tablas,
@@ -180,16 +282,30 @@ object Valorizacion {
         desde: Int
     ): Boolean = piso.trim().toIntOrNull()?.let { it >= desde } ?: false
 
-    // D4: muros y columnas + techos + puertas y ventanas. a "....." cell is no value (D5), not zero
+    // D4: muros y columnas + techos + puertas y ventanas. a "....." cell is no value (D5), not zero. muros A
+    // (estructuras laminares curvadas, cimentación y techo en una sola armadura) leaves techos out: «PARA ESTE CASO NO SE
+    // CONSIDERA LOS VALORES DE LA COLUMNA N° 2», so its letter is neither asked nor added. muros D is the same only for
+    // «DRYWALL O SIMILAR INCLUYE TECHO (5)», which the ficha flags with techoIncluido (the ladrillo, also D, keeps its
+    // techos); the flag on any other muros is a capture error, not something to guess
     private fun valorUnitario(
         c: Construccion,
         t: Tablas
     ): BigDecimal {
-        val donde = "la construcción del piso ${c.piso}"
+        val donde = donde(c)
         if (c.anioConstruccion == null) {
             falta("ANIO_CONSTRUCCION_FALTANTE", "$donde no declara año de construcción: sin él no hay antigüedad con que depreciar")
         }
-        val letras = mapOf(Partida.MUROS_COLUMNAS to c.muros, Partida.TECHOS to c.techos, Partida.PUERTAS_VENTANAS to c.puertas)
+        if (c.techoIncluido == true && c.muros != null && c.muros != MUROS_SIN_TECHOS && c.muros != MUROS_DRYWALL) {
+            falta(
+                "TECHO_INCLUIDO_INVALIDO:${c.muros}",
+                "$donde marca el techo incluido en los muros, pero sus muros son de categoría ${c.muros}: " +
+                    "solo la A y la D (drywall) lo incluyen según el cuadro"
+            )
+        }
+        val sinTecho = c.muros == MUROS_SIN_TECHOS || (c.muros == MUROS_DRYWALL && c.techoIncluido == true)
+        val letras =
+            mapOf(Partida.MUROS_COLUMNAS to c.muros, Partida.TECHOS to c.techos, Partida.PUERTAS_VENTANAS to c.puertas)
+                .filterKeys { !(it == Partida.TECHOS && sinTecho) }
         return letras.entries.sumOf { (partida, letra) ->
             val categoria =
                 letra?.toString() ?: falta(
@@ -197,16 +313,27 @@ object Valorizacion {
                     "$donde no declara la categoría de $partida; una categoría sin declarar no es «sin techo» ni «sin puertas»"
                 )
             if (categoria !in t.categorias) {
-                falta("CATEGORIA_INVALIDA:$partida:$categoria", "$donde declara la categoría $categoria en $partida, fuera de A a J")
+                falta(
+                    "CATEGORIA_INVALIDA:$partida:$categoria",
+                    "$donde declara la categoría $categoria en $partida, fuera de ${t.categorias.first()} a ${t.categorias.last()} (cuadro de la ${t.region.nombre})"
+                )
             }
             t.valorUnitario(partida, categoria) ?: falta(
                 "VU_SIN_VALOR:$partida:$categoria",
-                "El cuadro de la selva no publica valor para $partida categoría $categoria ($donde): la celda es «.....», que no es cero"
+                "El cuadro de la ${t.region.nombre} no publica valor para $partida categoría $categoria ($donde): la celda es «.....», que no es cero"
             )
         }
     }
 
-    // 1 - dep%/100 for the RNT row (tabla, material, estado) at the construction's age
+    // the RNT row's percentage at an age; factor = 1 - porcentaje/100 is what multiplies the VU
+    private class Depreciacion(
+        val antiguedad: Int,
+        val porcentaje: BigDecimal
+    ) {
+        val factor: BigDecimal get() = BigDecimal.ONE - porcentaje.divide(CIEN)
+    }
+
+    // the RNT row (tabla, material, estado) at the construction's age
     private fun depreciacion(
         t: Tablas,
         tabla: String,
@@ -215,7 +342,7 @@ object Valorizacion {
         anioConstruccion: Int?,
         anio: Int,
         donde: String
-    ): BigDecimal {
+    ): Depreciacion {
         // fires only for obras: valorUnitario already asked every construcción for its year
         val construido = anioConstruccion ?: falta("ANIO_CONSTRUCCION_FALTANTE", "$donde no declara año de construcción")
         val antiguedad = anio - construido
@@ -236,7 +363,7 @@ object Valorizacion {
             }
         // D3: a '*' cell takes the last percentage its row publishes
         val porcentaje = t.depreciacion(tabla, materialRnt, estadoRnt, antiguedad) ?: serie.last().porcentaje
-        return BigDecimal.ONE - porcentaje.divide(CIEN)
+        return Depreciacion(antiguedad, porcentaje)
     }
 
     // D2: the RNT has three columns; everything that is neither concreto nor ladrillo goes to the light one
@@ -258,4 +385,9 @@ object Valorizacion {
         }
 
     private fun BigDecimal.redondeado(): BigDecimal = setScale(ESCALA, RoundingMode.HALF_UP)
+
+    // a step of a construction's VU: to the céntimo where the region rounds it (Region.redondeaValorUnitario), unchanged
+    // elsewhere. round(VU x 1.05) is the padrón's VU + round(VU x 5 %) because the cuadro's cells, and so VU, are
+    // céntimos. the obras are not touched: no padrón has shown how a region rounds them
+    private fun BigDecimal.alCentimo(t: Tablas): BigDecimal = if (t.region.redondeaValorUnitario) redondeado() else this
 }

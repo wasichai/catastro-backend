@@ -33,6 +33,11 @@ class CrearCuentaSrtmTests(unittest.TestCase):
         cuenta = next(iter(self.core.service_accounts.values()))
         self.assertIn(f"clientId:     {cuenta['clientId']}", out)
         self.assertEqual(out.count("secreto-srtm"), 1)
+        self.assertIn(f"SRTM_CATASTRO_ORGANIZACIONES_<CLAVE>_CLIENT_ID={cuenta['clientId']}", out)
+        self.assertIn("SRTM_CATASTRO_ORGANIZACIONES_<CLAVE>_CLIENT_SECRET=", out)
+        self.assertIn("SRTM_CATASTRO_ORGANIZACIONES_<CLAVE>_URL=", out)
+        self.assertIn("SRTM_CATASTRO_ORGANIZACIONES_<CLAVE>_ORGANIZACION", out)
+        # the single-organization form still works and is named as such
         self.assertIn("SRTM_CATASTRO_CLIENT_ID", out)
         self.assertIn("SRTM_CATASTRO_CLIENT_SECRET", out)
         for method, path, auth, body in self.core.requests:
@@ -49,6 +54,31 @@ class CrearCuentaSrtmTests(unittest.TestCase):
         self.assertIn(cuenta["clientId"], out)
         self.assertIn(f"/api/service-accounts/{cuenta['id']}/secret", out)
         self.assertEqual(len(self.core.service_accounts), 1)
+
+    def test_con_clave_nombra_las_variables_de_esa_organizacion(self):
+        code, out, err = self.run_cli(["--clave", "Perene"])
+        self.assertEqual(code, 0, err)
+        cuenta = next(iter(self.core.service_accounts.values()))
+        self.assertIn(f"SRTM_CATASTRO_ORGANIZACIONES_PERENE_CLIENT_ID={cuenta['clientId']}", out)
+        self.assertIn("SRTM_CATASTRO_ORGANIZACIONES_PERENE_CLIENT_SECRET=", out)
+        self.assertNotIn("<CLAVE>_CLIENT_ID", out)
+        self.assertEqual(out.count("secreto-srtm"), 1)
+
+    def test_una_clave_con_guion_sale_con_2_sin_llamar_a_core(self):
+        # srtm recibe la clave en minúsculas y sin guiones: un slug con guion va en _ORGANIZACION
+        for clave in ("san-ramon", "san_ramon", ""):
+            with self.subTest(clave=clave):
+                code, out, err = self.run_cli(["--clave", clave])
+                self.assertEqual(code, 2)
+                self.assertIn("_ORGANIZACION", err)
+        self.assertEqual(self.core.requests, [])
+
+    def test_la_cuenta_que_ya_existe_dice_en_que_variable_va_su_client_id(self):
+        self.run_cli()
+        code, out, err = self.run_cli(["--clave", "ica"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("SRTM_CATASTRO_ORGANIZACIONES_ICA_CLIENT_ID", out)
+        self.assertNotIn("secreto-srtm", out)
 
     def test_a_una_cuenta_que_existe_sin_el_rol_se_le_agrega(self):
         cuenta = self.core.add_service_account("srtm", ["OTRO"])

@@ -2,8 +2,29 @@ package catastro.tablas
 
 import java.io.Reader
 import java.math.BigDecimal
+import java.util.concurrent.ConcurrentHashMap
 
-// the three partidas of the selva cuadro (anexo I.4); a construction's VU is their sum (D4, in the engine)
+// the regions of the R.M. 277-2025-VIVIENDA anexos (I.1-I.4, III.1-III.4) that have tables here. an organization's
+// region is its configuracion_catastro record; there is no default. adding SIERRA or LIMA_CALLAO: an option of the
+// model's region_catastro enum, a constant here and its two files. nombre is how the motivos call its cuadro.
+// redondeaValorUnitario: a construction's VU is rounded to the céntimo (HALF_UP) after the edificio's 5 % and again
+// after depreciation, before it is multiplied by the área. the costa does it as the padrón de Ica does
+// (PADRON_CONSTRUCCION.xlsx: incremento_5 and valor_total_nivel; práctica del padrón de Ica, decisión del usuario
+// 2026-10-20); the selva keeps kamayuk's unrounded product, the one Perené's figures were checked against
+enum class Region(
+    val nombre: String,
+    val redondeaValorUnitario: Boolean
+) {
+    COSTA("costa", redondeaValorUnitario = true),
+    SELVA("selva", redondeaValorUnitario = false);
+
+    // file names: valores-unitarios-<region>-2026.csv, obras-complementarias-<region>-2026.csv (LIMA_CALLAO -> lima-callao)
+    private val archivo = name.lowercase().replace('_', '-')
+    val valoresUnitarios = "tablas/valores-unitarios-$archivo-2026.csv"
+    val obras = "tablas/obras-complementarias-$archivo-2026.csv"
+}
+
+// the three partidas of every regional cuadro (anexos I.1-I.4); a construction's VU is their sum (D4, in the engine)
 enum class Partida { MUROS_COLUMNAS, TECHOS, PUERTAS_VENTANAS }
 
 // valorM2 null is a "....." cell: the cuadro gives no value there, which is not zero (D5)
@@ -54,18 +75,21 @@ object ClaveParametro {
     const val INCREMENTO_PISO_PORCENTAJE = "INCREMENTO_PISO_PORCENTAJE"
 }
 
-// the normative tables, loaded once and never changed. lookups speak the sources' own vocabulary (RNT material and
-// estado as written in depreciacion-rnt-2016.csv); mapping catastro's enums onto it (D2, D3) is the engine's job
+// the normative tables of one region, loaded once and never changed: its own VU cuadro and obras, the national RNT,
+// usos and parámetros. lookups speak the sources' own vocabulary (RNT material and estado as written in
+// depreciacion-rnt-2016.csv); mapping catastro's enums onto it (D2, D3) is the engine's job. obras null: the region's
+// obras cuadro is not shipped (the engine then refuses to value an obra rather than skip it)
 class Tablas(
+    val region: Region,
     val valoresUnitarios: List<CeldaValorUnitario>,
     val depreciaciones: List<TramoDepreciacion>,
-    val obras: List<ObraComplementaria>,
+    val obras: List<ObraComplementaria>?,
     val usos: List<UsoTabla>,
     val parametros: List<Parametro>
 ) {
     private val vu = valoresUnitarios.associateBy { it.partida to it.categoria }
     private val series = depreciaciones.groupBy { Triple(it.tabla, it.material, it.estadoConservacion) }
-    private val obrasPorCodigo = obras.associateBy { it.codigo }
+    private val obrasPorCodigo = obras.orEmpty().associateBy { it.codigo }
     private val usosPorPrefijo = usos.associateBy { it.prefijo }
     private val parametrosPorClave = parametros.associateBy { it.clave to it.anio }
 
@@ -81,7 +105,7 @@ class Tablas(
         series.forEach { (llave, tramos) ->
             require(tramos.map { it.antiguedadHasta }.distinct().size == tramos.size) { "depreciación $llave: tramo repetido" }
         }
-        require(obrasPorCodigo.size == obras.size) { "obras: código repetido" }
+        require(obrasPorCodigo.size == obras.orEmpty().size) { "obras: código repetido" }
         require(usosPorPrefijo.size == usos.size) { "usos: prefijo repetido" }
         val tablasRnt = depreciaciones.map { it.tabla }.toSet()
         usos.forEach { require(it.tabla in tablasRnt) { "uso ${it.prefijo}: tabla ${it.tabla} no está en el RNT" } }
@@ -93,7 +117,7 @@ class Tablas(
         partida: Partida,
         categoria: String
     ): BigDecimal? {
-        require(categoria in categorias) { "categoría $categoria no está en el cuadro de la selva (${categorias.joinToString("")})" }
+        require(categoria in categorias) { "categoría $categoria no está en el cuadro de la ${region.nombre} (${categorias.joinToString("")})" }
         return vu.getValue(partida to categoria).valorM2
     }
 
@@ -123,7 +147,7 @@ class Tablas(
     // longest prefix of the srtm usos_predio code; null when no prefix matches
     fun tablaPorUso(usoCodigo: String): String? = (usoCodigo.length downTo 1).firstNotNullOfOrNull { usosPorPrefijo[usoCodigo.take(it)] }?.tabla
 
-    // codigo as "TIPO DE OBRA|numero"; null when the cuadro has no such partida
+    // codigo as "TIPO DE OBRA|numero"; null when the cuadro has no such partida, or the region has no obras cuadro
     fun obra(codigo: String): ObraComplementaria? = obrasPorCodigo[codigo]
 
     fun parametro(
@@ -132,20 +156,22 @@ class Tablas(
     ): BigDecimal? = parametrosPorClave[clave to anio]?.valor
 
     companion object {
-        const val VALORES_UNITARIOS = "tablas/valores-unitarios-selva-2026.csv"
         const val DEPRECIACION = "tablas/depreciacion-rnt-2016.csv"
-        const val OBRAS = "tablas/obras-complementarias-selva-2026.csv"
         const val USOS = "tablas/uso-tabla-depreciacion.csv"
         const val PARAMETROS = "tablas/parametros.csv"
 
+        private val cargadas = ConcurrentHashMap<Region, Tablas>()
+
         fun cargar(
+            region: Region,
             valoresUnitarios: Reader,
             depreciacion: Reader,
-            obras: Reader,
+            obras: Reader?,
             usos: Reader,
             parametros: Reader
         ): Tablas =
             Tablas(
+                region = region,
                 valoresUnitarios =
                     Csv.leer(valoresUnitarios, "valores unitarios").map {
                         CeldaValorUnitario(
@@ -165,16 +191,18 @@ class Tablas(
                         )
                     },
                 obras =
-                    Csv.leer(obras, "obras").map {
-                        ObraComplementaria(
-                            codigo = "${it.getValue("tipo_obra")}|${it.getValue("numero")}",
-                            tipoObra = it.getValue("tipo_obra"),
-                            numero = it.getValue("numero").toInt(),
-                            descripcion = it.getValue("descripcion"),
-                            unidadMedida = it.getValue("unidad_medida"),
-                            material = it.getValue("material").ifEmpty { null },
-                            valorUnitario = BigDecimal(it.getValue("valor_unitario"))
-                        )
+                    obras?.let { reader ->
+                        Csv.leer(reader, "obras").map {
+                            ObraComplementaria(
+                                codigo = "${it.getValue("tipo_obra")}|${it.getValue("numero")}",
+                                tipoObra = it.getValue("tipo_obra"),
+                                numero = it.getValue("numero").toInt(),
+                                descripcion = it.getValue("descripcion"),
+                                unidadMedida = it.getValue("unidad_medida"),
+                                material = it.getValue("material").ifEmpty { null },
+                                valorUnitario = BigDecimal(it.getValue("valor_unitario"))
+                            )
+                        }
                     },
                 usos =
                     Csv.leer(usos, "usos").map {
@@ -191,11 +219,25 @@ class Tablas(
                     }
             )
 
-        fun desdeClasspath(): Tablas {
-            fun abrir(ruta: String): Reader =
-                requireNotNull(Tablas::class.java.classLoader.getResourceAsStream(ruta)) { "no está en el classpath: $ruta" }
-                    .reader(Charsets.UTF_8)
-            return cargar(abrir(VALORES_UNITARIOS), abrir(DEPRECIACION), abrir(OBRAS), abrir(USOS), abrir(PARAMETROS))
+        // the region's tables from the classpath, read once per region. a missing obras file is a region without that
+        // cuadro (null); any other missing or malformed file throws
+        fun de(region: Region): Tablas = cargadas.computeIfAbsent(region, ::desdeClasspath)
+
+        private fun desdeClasspath(region: Region): Tablas {
+            fun talVez(ruta: String): Reader? =
+                Tablas::class.java.classLoader
+                    .getResourceAsStream(ruta)
+                    ?.reader(Charsets.UTF_8)
+
+            fun abrir(ruta: String): Reader = requireNotNull(talVez(ruta)) { "no está en el classpath: $ruta" }
+            return cargar(
+                region,
+                abrir(region.valoresUnitarios),
+                abrir(DEPRECIACION),
+                talVez(region.obras),
+                abrir(USOS),
+                abrir(PARAMETROS)
+            )
         }
     }
 }

@@ -16,7 +16,7 @@ buildscript {
 }
 
 plugins {
-    kotlin("jvm") version "2.4.20"
+    kotlin("jvm") version "2.4.21"
     kotlin("plugin.spring") version "2.4.21"
     id("org.springframework.boot") version "4.1.1"
     id("org.jlleitschuh.gradle.ktlint") version "14.2.0"
@@ -25,7 +25,7 @@ plugins {
 group = "catastro"
 description = "catastro-backend: valorización catastral (autoavalúo) de Perené on wasichai"
 
-val wasichaiVersion = "1.2.0"
+val wasichaiVersion = "1.3.0"
 
 dependencies {
     implementation(platform("wasichai:wasichai-bom:$wasichaiVersion"))
