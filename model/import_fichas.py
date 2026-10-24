@@ -9,7 +9,9 @@ case-insensitively and lines starting with # are skipped:
 
 Default columns follow the MEF carga masiva contract (kamayuk ContratoDeImportacion, docs/40-datos/mapeo-del-modelo-del-mef.md):
   fichas: cod_pre -> codigo_municipal, cod_cpu, cod_sect -> sector, cod_mzn -> manzana, cod_lote -> lote, id_aranc,
-          cod_via, cuadra, lado, uso, area_terreno, longitud_frente, anio_levantamiento, es_edificio
+          cod_via, cuadra, lado, uso, area_terreno, longitud_frente, anio_levantamiento, es_edificio, and the
+          levantamiento's own estado_levantamiento (the model's enum) and fecha_levantamiento (YYYY-MM-DD or an
+          xlsx serial day number)
   pisos:  cod_pre -> codigo_municipal, piso, area_construida, anio_construccion, material, estado_conservacion, and
           the seven categories either as one 7-letter text in `categorias` (e.g. CCDCCDC, in the order muros_columnas,
           techos, pisos, puertas_ventanas, revestimientos, banos, instalaciones) or in seven columns named as the fields,
@@ -33,6 +35,7 @@ sent).
 Run: python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv [--obras obras.csv] [--dry-run]
 """
 import argparse
+import datetime
 import os
 import re
 import sys
@@ -53,7 +56,7 @@ FICHA_COLUMNS = {
     "codigo_municipal": "cod_pre", "codigo_cpu": "cod_cpu", "sector": "cod_sect", "manzana": "cod_mzn", "lote": "cod_lote",
     "id_aranc": "id_aranc", "cod_via": "cod_via", "cuadra": "cuadra", "lado": "lado", "uso": "uso",
     "area_terreno": "area_terreno", "longitud_frente": "longitud_frente", "anio_levantamiento": "anio_levantamiento",
-    "es_edificio": "es_edificio",
+    "es_edificio": "es_edificio", "estado_levantamiento": "estado_levantamiento", "fecha_levantamiento": "fecha_levantamiento",
 }
 FICHA_TEXT = ["codigo_cpu", "sector", "manzana", "lote", "id_aranc", "cod_via", "cuadra", "lado", "uso"]
 FICHA_DECIMAL = ["area_terreno", "longitud_frente"]
@@ -75,6 +78,9 @@ CATEGORIA = re.compile(r"[A-J]")
 # the RNT's table number (1-4 or 01-04): model.json lists the enum clasificacion in the order of the tables, which
 # test_model.py pins and Valorizacion.TABLA_POR_CLASIFICACION checks against the same file
 TABLA_RNT = re.compile(r"0?([1-4])")
+# an xlsx serial day number, integer or as the float text an xlsx cell sends (46000.0)
+SERIAL_DAYS = re.compile(r"\d+(\.0+)?")
+XLSX_EPOCH = datetime.date(1899, 12, 30)
 
 
 def parse_bool(value):
@@ -104,6 +110,22 @@ def parse_clasificacion(value, options):
     return option, None
 
 
+def parse_date(value):
+    """(iso text, error). YYYY-MM-DD, or an xlsx serial day number (integer, or N.0 as an xlsx cell sends it),
+    counted as days after 1899-12-30. Anything else is a problem (contexto-comun.md)."""
+    text = clean_text(value)
+    if text is None:
+        return None, None
+    try:
+        return datetime.date.fromisoformat(text).isoformat(), None
+    except ValueError:
+        pass
+    if SERIAL_DAYS.fullmatch(text):
+        serial = int(text.split(".")[0])
+        return (XLSX_EPOCH + datetime.timedelta(days=serial)).isoformat(), None
+    return None, f"'{text}' is not a date (YYYY-MM-DD or an xlsx serial)"
+
+
 def parse_seccion(value):
     seccion, error = parse_int(value)
     if error is None and seccion is not None and seccion < 1:
@@ -115,7 +137,7 @@ def _where(row):
     return f"row {row['_fila']}"
 
 
-def fichas_from(rows, mapping):
+def fichas_from(rows, mapping, enums):
     """(fichas, problems). A ficha is (row number, attributes)."""
     problems = missing_columns(rows, mapping, ["codigo_municipal"])
     if problems:
@@ -144,9 +166,24 @@ def fichas_from(rows, mapping):
         attributes["es_edificio"], error = parse_bool(column_for(row, mapping, "es_edificio"))
         if error:
             found.append(f"es_edificio {error}")
+        attributes["estado_levantamiento"], error = enum_option(column_for(row, mapping, "estado_levantamiento"),
+                                                                 enums["estado_levantamiento"])
+        if error:
+            found.append(f"estado_levantamiento {error}")
+        attributes["fecha_levantamiento"], error = parse_date(column_for(row, mapping, "fecha_levantamiento"))
+        if error:
+            found.append(f"fecha_levantamiento {error}")
         problems.extend(f"fichas {where} ({codigo}): {f}" for f in found)
         fichas.append((row["_fila"], attributes))
     return fichas, problems
+
+
+def present_fields(rows, mapping, fields):
+    """The fields whose mapped column is in the header (`rows[0]`); empty set when there are no rows. Used to
+    compare only the columns a file brings (the entrega diff of Task 4)."""
+    if not rows:
+        return set()
+    return {field for field in fields if mapping[field].lower() in rows[0]}
 
 
 def categorias_of(row, mapping):
@@ -322,7 +359,7 @@ def main(argv=None):
     except INPUT_ERRORS as e:
         print(f"input: {e}", file=sys.stderr)
         return 2
-    fichas, problems = fichas_from(ficha_rows, ficha_map)
+    fichas, problems = fichas_from(ficha_rows, ficha_map, enums)
     codigos = {a["codigo_municipal"] for _, a in fichas}
     pisos, found = pisos_from(piso_rows, piso_map, enums, codigos)
     obras, more = obras_from(obra_rows, obra_map, enums, codigos)

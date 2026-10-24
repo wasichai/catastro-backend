@@ -31,7 +31,7 @@ OBRAS = """cod_pre,codigo_vu,cantidad,anio_construccion,material,estado_conserva
 class ParseTests(unittest.TestCase):
     def test_fichas_map_and_types(self):
         path_rows = read_table(write_csv(self, FICHAS))
-        fichas, problems = imf.fichas_from(path_rows, parse_map([], imf.FICHA_COLUMNS))
+        fichas, problems = imf.fichas_from(path_rows, parse_map([], imf.FICHA_COLUMNS), ENUMS)
         self.assertEqual(problems, [])
         self.assertEqual(fichas[0][1]["codigo_municipal"], "120302-0001")
         self.assertEqual(fichas[0][1]["sector"], "01")
@@ -41,7 +41,7 @@ class ParseTests(unittest.TestCase):
 
     def test_map_override(self):
         rows = read_table(write_csv(self, "CPM,cod_sect\nA-1,01\n"))
-        fichas, problems = imf.fichas_from(rows, parse_map(["codigo_municipal=CPM"], imf.FICHA_COLUMNS))
+        fichas, problems = imf.fichas_from(rows, parse_map(["codigo_municipal=CPM"], imf.FICHA_COLUMNS), ENUMS)
         self.assertEqual((problems, fichas[0][1]["codigo_municipal"]), ([], "A-1"))
         with self.assertRaises(ValueError):
             parse_map(["color=COLOR"], imf.FICHA_COLUMNS)
@@ -49,11 +49,11 @@ class ParseTests(unittest.TestCase):
     def test_bad_fichas_are_all_listed(self):
         rows = read_table(write_csv(self, "cod_pre,area_terreno,anio_levantamiento,es_edificio\n"
                                          "A,abc,2026,no\nA,1,2026,no\n,1,2026,no\nB,1,20.5,quizas\nC,-4,,\n"))
-        _, problems = imf.fichas_from(rows, parse_map([], imf.FICHA_COLUMNS))
+        _, problems = imf.fichas_from(rows, parse_map([], imf.FICHA_COLUMNS), ENUMS)
         self.assertEqual(len(problems), 6, problems)  # one row can have several
 
     def test_missing_column_is_a_problem(self):
-        _, problems = imf.fichas_from(read_table(write_csv(self, "x\n1\n")), parse_map([], imf.FICHA_COLUMNS))
+        _, problems = imf.fichas_from(read_table(write_csv(self, "x\n1\n")), parse_map([], imf.FICHA_COLUMNS), ENUMS)
         self.assertEqual(len(problems), 1)
 
     def test_categorias_as_text_or_seven_columns(self):
@@ -173,9 +173,23 @@ class ParseTests(unittest.TestCase):
 
     def test_xlsx_input_with_float_codes(self):
         path = write_xlsx(self, ["COD_PRE", "COD_SECT", "AREA_TERRENO"], [["77", "1.0", "100.50"]])
-        fichas, problems = imf.fichas_from(read_table(path), parse_map([], imf.FICHA_COLUMNS))
+        fichas, problems = imf.fichas_from(read_table(path), parse_map([], imf.FICHA_COLUMNS), ENUMS)
         self.assertEqual(problems, [])
         self.assertEqual((fichas[0][1]["sector"], fichas[0][1]["area_terreno"]), ("1", "100.5"))
+
+    def test_estado_and_fecha_levantamiento(self):
+        rows = read_table(write_csv(self, "cod_pre,estado_levantamiento,fecha_levantamiento\nA,sin_levantar,2026-09-30\n"
+                                          "B,,46000\nC,LEVANTADO,30/09/2026\n"))
+        fichas, problems = imf.fichas_from(rows, parse_map([], imf.FICHA_COLUMNS), ENUMS)
+        self.assertEqual(fichas[0][1]["estado_levantamiento"], "SIN_LEVANTAR")
+        self.assertEqual(fichas[0][1]["fecha_levantamiento"], "2026-09-30")
+        self.assertEqual(fichas[1][1]["fecha_levantamiento"], "2025-12-09")   # xlsx serial 46000
+        self.assertIsNone(fichas[1][1]["estado_levantamiento"])               # no default
+        self.assertEqual(len(problems), 2, problems)                          # C: estado and fecha
+
+    def test_present_fields_reads_the_header(self):
+        rows = read_table(write_csv(self, "cod_pre,uso\nA,\n"))
+        self.assertEqual(imf.present_fields(rows, parse_map([], imf.FICHA_COLUMNS), ["uso", "lote"]), {"uso"})
 
 
 class LoadTests(unittest.TestCase):

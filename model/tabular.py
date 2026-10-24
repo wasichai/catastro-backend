@@ -166,13 +166,14 @@ def missing_columns(rows, mapping, required):
 
 
 def enum_option(value, options):
-    """The model option a cell means: case and underscores do not matter (MUY_BUENO is MUY BUENO). None if unknown."""
+    """The model option a cell means: case and underscores do not matter (MUY_BUENO is MUY BUENO, and an option
+    that is itself SIN_LEVANTAR matches sin levantar). None if unknown."""
     text = clean_text(value)
     if text is None:
         return None, None
     wanted = text.upper().replace("_", " ")
     for option in options:
-        if option.upper() == wanted:
+        if option.upper().replace("_", " ") == wanted:
             return option, None
     return None, f"'{text}' is not one of {', '.join(options)}"
 
