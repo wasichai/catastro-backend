@@ -7,6 +7,12 @@ Valoriza cada predio del levantamiento catastral (autoavalúo por predio y año)
 depreciación, para que srtm-backend calcule la brecha de recaudación contra el padrón declarado. **No calcula
 impuestos**: el impuesto predial es de srtm-backend.
 
+## Documentación
+
+- [Desarrollo local](docs/develop/README.md): requisitos, variables de entorno, base, tests, CI y cómo trabajar.
+- [Releases](docs/develop/releasing.md): release-please, el jar y la versión del motor.
+- [Decisiones (ADRs)](docs/adr/README.md): por qué el sistema es como es, normativa incluida.
+
 ## Requisitos
 
 - JDK 25
@@ -16,6 +22,7 @@ impuestos**: el impuesto predial es de srtm-backend.
 ## Cómo correrlo
 
 ```sh
+cp develop/example.env develop/.env && set -a && source develop/.env && set +a   # opcional: los valores por defecto
 docker compose up -d      # postgis en 127.0.0.1:5434 (CATASTRO_PG_PORT)
 ./gradlew bootRun         # http://localhost:8091
 ```
@@ -150,7 +157,7 @@ líneas `#` que citan su fuente; las filas van tal como en la fuente. Las rutas 
 | `depreciacion-rnt-2016.csv` | 492 filas de las tablas 01 a 04, copia exacta (sha256 verificado en las pruebas). Las 36 celdas `*` no tienen fila; `antiguedad_hasta` vacío es «más de 50» | Reglamento Nacional de Tasaciones, Anexo I (`fuentes/depreciacion-rnt-2016/depreciacion.csv`) |
 | `obras-complementarias-selva-2026.csv` | 96 partidas a costo directo, copia exacta de `model/data/obras_complementarias.csv` de srtm-backend. Llave `TIPO DE OBRA\|número`, la de `obra_complementaria.codigo_vu` | R.M. N.° 277-2025-VIVIENDA, Anexo III.4 Selva |
 | `obras-complementarias-costa-2026.csv` | 96 partidas a costo directo, transcritas del Anexo III.2 con dos métodos independientes (poppler y pdfplumber, idénticos) y verificadas por una persona contra el PDF. Mismas llaves que el de la selva: `tipo_obra` y `material` son los de la partida del mismo número | R.M. N.° 277-2025-VIVIENDA, Anexo III.2 Costa (`s3://sgtm-fuentes-normativas/fuentes-normativas/valores-unitarios/200105/2026-08-28T23-43-56Z__iii-2-obras-complem-costa-2026.pdf`) |
-| `uso-tabla-depreciacion.csv` | prefijo del código de `usos_predio` de srtm → tabla del RNT; gana el prefijo más largo. Editable | decisión D1 (ver Decisiones normativas) |
+| `uso-tabla-depreciacion.csv` | prefijo del código de `usos_predio` de srtm → tabla del RNT; gana el prefijo más largo. Editable | decisión D1 ([ADR-009](docs/adr/0009-decisiones-normativas-de-la-valorizacion.md)) |
 | `parametros.csv` | `FACTOR_OFICIALIZACION` 0.68, `PORCENTAJE_ACTUALIZACION` 0, `INCREMENTO_PISO_DESDE` 5 y `INCREMENTO_PISO_PORCENTAJE` 5, de 2026, cada uno con su fuente | `obras-complementarias-y-oficializacion-2026.md` §1.2, `predial-porcentaje-de-actualizacion.md` §1.6, `valores-unitarios-2026.md` §1.3 y §1.6 |
 
 `Tablas` responde con el vocabulario de la fuente (material `Concreto`, `Ladrillo`, `Liviano/Adobe`; estado `Muy Bueno`,
@@ -378,40 +385,9 @@ muestra el código (no el cuerpo, que dice `configuracion_catastro.region`).
 
 ## Decisiones normativas
 
-Confirmadas por la municipalidad el 2026-10-19, salvo lo que se dice abierto. D1 y D4 se investigaron el 2026-10-20.
-
-- **D1** uso a tabla de depreciación, por prefijo del código de `usos_predio` de srtm (`uso-tabla-depreciacion.csv`, con
-  la fuente de cada fila). Ninguna norma asigna usos a tablas: el RNT solo da los títulos de las Tablas 01 a 04 y dice
-  «en función de su uso» (art. 13.4). Residencial a 01; comercio, depósitos, recreación e **institucional** a 02 (el
-  título de la Tabla 02 dice «instituciones», y así lo tiene el padrón de Perené); oficinas, administración pública,
-  financieras y gobierno extranjero a 03; salud, educación, cines, teatros, industria y talleres a 04; terreno,
-  desocupado, garage y bienes comunes sin subclase a 01. Cubre los 324 códigos. **Abierto**, para la administración
-  tributaria con catastro: institucional en 02 o 03, hoteles (020503), consultorios médicos (03 o 04), servicios que
-  pueden ser taller u oficina, conventos y asilos. Conviene pedir el parámetro «Uso Predio – Depreciación» del SRTM del
-  MEF (Exportar a Excel) y cotejarlo. Cuando el levantamiento clasifica cada construcción (`construccion.clasificacion`,
-  como Ica, que lo hace por nivel), esa clasificación manda y el uso solo decide las construcciones sin ella y las obras.
-- **D2** material: CONCRETO a Concreto, LADRILLO a Ladrillo, todo lo demás a la columna `Liviano/Adobe`.
-- **D3** estado MUY MALO se trata como Malo; las celdas `*` (ausentes en `depreciacion.csv`) toman el último
-  porcentaje publicado de su fila.
-- **D4** se suman las 3 partidas (muros y columnas, techos, puertas y ventanas), cada una con su categoría. La nota del
-  Anexo I.4 dice «UNA DE LAS 3 COLUMNAS», sin «CADA»: es una errata que la Selva arrastra desde los cuadros de 7
-  columnas (la Sierra se corrigió), y el propio cuadro solo tiene sentido sumando. Con **muros A** no se considera
-  techos (nota de la casilla: «NO SE CONSIDERA LOS VALORES DE LA COLUMNA N° 2»). Los muros D «drywall o similar incluye
-  techo» (llamada 5) tampoco suman techos, pero la letra D sola no los distingue del ladrillo, que también es D: lo
-  resuelve el campo `techo_incluido` de la ficha del piso. Sin él (o en falso), D suma techos, que es el caso del
-  ladrillo. Marcarlo con muros que no sean A ni D es un error de captura: el predio queda sin valorizar con la llave
-  `TECHO_INCLUIDO_INVALIDO:<letra>`.
-- **D5** las celdas `.....` no son cero: el predio recibe un `motivo` (sin valor).
-- **D6** porcentaje de actualización 2026 = 0.
-- **D7** llave de cruce catastro y srtm: código municipal (= `predio.codigo` de srtm), luego `codigo_cpu`, luego
-  (sector, manzana, lote).
-- **D8** deducción Amazonía: no aplica a Perené hoy. **Abierta** para cuando se cargue una municipalidad de la
-  Amazonía (parámetro anual en srtm; antes, revisar si la deducción del padrón ya la incluye).
-- **D9** obras complementarias: VU × cantidad × 0.68 × (1 − dep%), con la tabla del predio y el material, estado y
-  antigüedad propios de la obra.
-- **D10** COINCIDE cuando |Δ autoavalúo| <= 5 %.
-- **D11** solo el año 2026.
-- **D12** varias secuencias de uso: el valor del catastro se reparte proporcional al autoavalúo declarado de cada una
-  (si no hay, por área construida).
-
-Además: +5 % al VU por piso cuando piso >= 5 (documento de VU, §1.6), aplicado antes de la depreciación.
+Las decisiones D1 a D12 (uso a tabla de depreciación, material, estado, suma de partidas, casillas `.....`, % de
+actualización, llave de cruce con srtm, deducción Amazonía, obras, umbral de coincidencia, año y secuencias de uso),
+confirmadas por la municipalidad el 2026-10-19, están en el
+[ADR-009](docs/adr/0009-decisiones-normativas-de-la-valorizacion.md), con lo que sigue abierto. D1 la enmienda el
+[ADR-010](docs/adr/0010-la-clasificacion-manda-y-la-costa-redondea.md) (la `clasificacion` de cada construcción
+manda). Una decisión nueva o un cambio es un ADR nuevo ([índice](docs/adr/README.md)).
