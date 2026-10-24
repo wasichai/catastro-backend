@@ -9,7 +9,9 @@
       "TIENDAS DEPOSITOS CENTROS DE RECREACION CLUBES E INSTITUCIONES",
       "EDIFICIO-OFICINAS",
       "CLINICAS HOSPITALES CINES INDUSTRIAS COLEGIOS TALLERES"
-    ]
+    ],
+    "estado_levantamiento": ["SIN_LEVANTAR", "PARCIAL", "COMPLETO"],
+    "fuente_entrega": ["BARRIDO", "INSPECCION", "LICENCIA", "GIS", "OTRA"]
   },
   "objects": [
     {
@@ -105,6 +107,19 @@
           "geometryType": "POLYGON",
           "srid": 32718,
           "description": "Polígono del lote (UTM 18S)."
+        },
+        {
+          "name": "fecha_levantamiento",
+          "label": "Fecha del levantamiento",
+          "type": "DATE",
+          "description": "Cuándo se levantó esta ficha en campo. Vacía cuando aún no se ha levantado."
+        },
+        {
+          "name": "estado_levantamiento",
+          "label": "Estado del levantamiento",
+          "type": "ENUM",
+          "enum": "estado_levantamiento",
+          "description": "SIN_LEVANTAR, PARCIAL o COMPLETO, según lo que la entrega trajo de esta ficha."
         }
       ]
     },
@@ -309,6 +324,67 @@
           "description": "COSTA (Anexos I.2 y III.2: costa excepto Lima Metropolitana y Callao) o SELVA (Anexos I.4 y III.4), según la demarcación de la nota de cada cuadro. Perené es SELVA; Ica, COSTA."
         }
       ]
+    },
+    {
+      "name": "entrega_catastral",
+      "label": "Entrega catastral",
+      "pluralLabel": "Entregas catastrales",
+      "description": "Una entrega del levantamiento: el lote de fichas, pisos, obras o titulares cargado en una corrida de los importadores, con su resumen de altas, cambios, sin cambio y ausentes. El loader la crea una sola vez, en la primera corrida que escribe algo.",
+      "fields": [
+        {
+          "name": "codigo",
+          "label": "Código",
+          "type": "TEXT",
+          "required": true,
+          "unique": true,
+          "description": "El nombre de la entrega, que viaja como X-Change-Reason: ^[A-Za-z0-9._:-]{1,64}$."
+        },
+        {
+          "name": "fecha_corte",
+          "label": "Fecha de corte",
+          "type": "DATE",
+          "required": true,
+          "description": "La fecha a la que corresponde la información de la entrega (LTM art. 10)."
+        },
+        {
+          "name": "fuente",
+          "label": "Fuente",
+          "type": "ENUM",
+          "enum": "fuente_entrega",
+          "description": "De dónde viene la entrega: barrido, inspección, licencia, GIS u otra."
+        },
+        {
+          "name": "archivo_sha256",
+          "label": "SHA-256 del archivo",
+          "type": "TEXT",
+          "description": "Sha256 de los bytes de cada archivo de entrada, en el orden de la línea de comandos."
+        },
+        {
+          "name": "descripcion",
+          "label": "Descripción",
+          "type": "TEXT"
+        },
+        {
+          "name": "altas",
+          "label": "Altas",
+          "type": "INTEGER"
+        },
+        {
+          "name": "cambios",
+          "label": "Cambios",
+          "type": "INTEGER"
+        },
+        {
+          "name": "sin_cambio",
+          "label": "Sin cambio",
+          "type": "INTEGER"
+        },
+        {
+          "name": "ausentes",
+          "label": "Ausentes",
+          "type": "INTEGER"
+        }
+      ]
     }
   ],
   "relationships": [
@@ -329,6 +405,15 @@
       "target": "predio_catastral",
       "fieldName": "predio",
       "required": true
+    },
+    {
+      "name": "predio_catastral_entrega",
+      "label": "Entrega",
+      "inverseLabel": "Predios",
+      "source": "predio_catastral",
+      "target": "entrega_catastral",
+      "fieldName": "entrega",
+      "required": false
     }
   ]
 }

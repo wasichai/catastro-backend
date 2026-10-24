@@ -5,8 +5,8 @@ Reads a JSON metadata model (objects, fields, relationships, enums), checks it
 against Core's rules (--validate-only stops there) and creates it in Core via
 the REST API, in file order (so relationship targets already exist), marking
 each required relationship's field required (an optional one is left optional), and last the object-level
-rules model.json declares (indexes, appendOnly). Today that is 5 objects and 2 relationships, none append-only:
-"done: 7 created, 0 updated" on an empty Core, "7 skipped" on a second run.
+rules model.json declares (indexes, appendOnly). Today that is 6 objects and 3 relationships, none append-only:
+"done: 9 created, 0 updated" on an empty Core, "9 skipped" on a second run.
 
 On a Core that already has the model it syncs instead: it adds the fields and
 the ENUM options model.json has and Core lacks, drops the ENUM options it no
@@ -189,7 +189,6 @@ def validate(model):
         errors.append("relationships must be a list")
         relationships = []
 
-    object_order = []
     seen_objects = set()
     fields_by_object = {}
 
@@ -199,7 +198,6 @@ def validate(model):
         if oname in seen_objects:
             errors.append(f"{label}: duplicate object name")
         seen_objects.add(oname)
-        object_order.append(oname)
         errors.extend(_check_identifier(oname, "object", MAX_OBJECT_NAME, label))
 
         field_names = set()
@@ -257,11 +255,9 @@ def validate(model):
 
         if source == target:
             errors.append(f"{label}: self-references are not allowed")
-        elif source in object_order and target in object_order:
-            if object_order.index(target) > object_order.index(source):
-                errors.append(
-                    f"{label}: target '{target}' must appear before source '{source}' in objects"
-                )
+        # no ordering is required between source and target in objects: do_apply creates every object
+        # (phase 1) before any relationship (phase 2), and --drop deletes every relationship before any
+        # object, so neither phase depends on where source or target sits in the file.
 
         field_name = rel.get("fieldName")
         errors.extend(_check_identifier(field_name, "field", MAX_FIELD_NAME, label))
