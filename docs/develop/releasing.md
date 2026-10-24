@@ -21,6 +21,11 @@ ese PR de release**; si no, cada PR siguiente volvería a proponer la misma vers
 - **1.0.0**: la config trae `"release-as": "1.0.0"`. El PR de release que abra release-please propone exactamente
   1.0.0; al mezclarlo, quitar `release-as`.
 
+`release-as` no basta: release-please solo abre el PR si hay algo para el CHANGELOG desde el último release
+(`No user facing commits found ... - skipping`). Por eso `changelog-sections` muestra también `docs:` (las guías y los
+ADRs son parte de lo que se entrega); `build:` (las dependencias de dependabot), `ci:`, `chore:`, `refactor:`, `test:`
+y `style:` quedan ocultos y no abren un release por sí solos.
+
 Desde 1.0.0, un `feat:` sube el minor, un `fix:` el patch y un cambio que rompe el contrato con srtm (`feat!:` o
 `BREAKING CHANGE:`) el major. Antes de 1.0.0, un cambio que rompía subía solo el minor (`bump-minor-pre-major`).
 
