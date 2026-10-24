@@ -1,7 +1,7 @@
 # catastro-backend
 
 Valorización catastral de los predios de una municipalidad (hoy Perené, ubigeo 120302, en la selva; Ica, en la
-costa), sobre el framework [wasichai](https://github.com/wasichai/wasichai) 1.2.0.
+costa), sobre el framework [wasichai](https://github.com/wasichai/wasichai) 1.3.0.
 
 Valoriza cada predio del levantamiento catastral (autoavalúo por predio y año) con aranceles, valores unitarios y
 depreciación, para que srtm-backend calcule la brecha de recaudación contra el padrón declarado. **No calcula
@@ -92,7 +92,9 @@ python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.
 
 **Aranceles** (`import_aranceles.py`): dos csv sacados de la geodatabase (solo lectura) y unidos por `ID_ARANC`.
 `VAL_ACT` 0 se carga tal cual (el motor reporta un `motivo`); `VAL_ACT` vacío no tiene valor y se omite (el comando
-dice cuántos). `--anio` filtra un año (por defecto todos).
+dice cuántos). `--anio` filtra un año (por defecto todos). Los aranceles son de srtm, que escribe aquí la copia con
+que se valúa ([ADR-012](docs/adr/0012-los-aranceles-son-de-srtm-y-catastro-guarda-la-copia.md)); este comando carga un
+catastro desde la geodatabase mientras srtm no los tenga.
 
 ```sh
 ogr2ogr -f CSV frentes.csv 120302_MD_Perene_ECF.gdb CF_ARANCEL_18 -select ID_ARANC,COD_VIA,CUADRA,LADO

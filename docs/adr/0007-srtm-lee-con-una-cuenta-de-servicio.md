@@ -1,6 +1,7 @@
 # ADR-007: srtm lee las valuaciones con una cuenta de servicio de solo lectura, por páginas estables
 
-**Estado**: aceptada · 2026-10-19
+**Estado**: aceptada · 2026-10-19 · ampliada por [ADR-011](0011-srtm-valua-insumos-sueltos-con-el-mismo-motor.md)
+· enmendada por [ADR-012](0012-los-aranceles-son-de-srtm-y-catastro-guarda-la-copia.md) (escribe los aranceles)
 
 ## Contexto
 
