@@ -12,12 +12,25 @@ Commits.
 4. El release dispara `release.yml`: compila `./gradlew bootJar` con la versión del tag y adjunta
    `catastro-backend-X.Y.Z.jar` y su `.sha256` al release.
 
-## Primer release: 0.1.0
+## Versiones forzadas: 0.1.0 y 1.0.0
 
-El manifest (`.release-please-manifest.json`) parte de `0.0.0` y `release-please-config.json` trae
-`"release-as": "0.1.0"`, así que el primer PR de release propone exactamente 0.1.0 (la de `gradle.properties`).
-**Después de mergearlo, quitar `release-as` de la config**; si no, cada PR siguiente volvería a proponer 0.1.0.
-Mientras la versión sea 0.x, un `feat:` sube el minor y un `fix:` el patch (`bump-minor-pre-major`).
+Para forzar una versión, `release-please-config.json` trae `"release-as": "X.Y.Z"`, y **se quita después de mezclar
+ese PR de release**; si no, cada PR siguiente volvería a proponer la misma versión.
+
+- **0.1.0** (wasichai/catastro-backend#1): el manifest partía de `0.0.0` y la config traía `"release-as": "0.1.0"`.
+- **1.0.0**: la config trae `"release-as": "1.0.0"`. El PR de release que abra release-please propone exactamente
+  1.0.0; al mezclarlo, quitar `release-as`.
+
+Desde 1.0.0, un `feat:` sube el minor, un `fix:` el patch y un cambio que rompe el contrato con srtm (`feat!:` o
+`BREAKING CHANGE:`) el major. Antes de 1.0.0, un cambio que rompía subía solo el minor (`bump-minor-pre-major`).
+
+## No cambiar el título del PR de release
+
+release-please reconoce su PR por el título (`chore(main): release X.Y.Z`) y la etiqueta `autorelease: pending`. Si
+se cambia el título antes de mezclarlo, el workflow no crea el tag ni el release (`Bad pull request title`) y aborta en
+cada push siguiente (`There are untagged, merged release PRs outstanding`). Pasó con 0.1.0, cuyo título se cambió a
+`feat(main)!: release 0.1.0`. Se arregla devolviéndole el título original al PR ya mezclado; el siguiente push a
+`main` crea el tag y el release.
 
 ## La versión del jar y la del motor
 

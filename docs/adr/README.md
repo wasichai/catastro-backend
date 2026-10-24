@@ -22,6 +22,10 @@ enmienda o la reemplaza, y lo dice en su línea de estado. Las de wasichai, el f
 - [ADR-009: Decisiones normativas de la valorización (D1 a D12)](0009-decisiones-normativas-de-la-valorizacion.md)
 - [ADR-010: La clasificación de cada construcción manda sobre el uso, y la costa redondea el VU al céntimo
   (valuacion-v2)](0010-la-clasificacion-manda-y-la-costa-redondea.md)
+- [ADR-011: srtm valúa insumos sueltos con el mismo motor, sin guardar, y esa respuesta trae el
+  detalle](0011-srtm-valua-insumos-sueltos-con-el-mismo-motor.md)
+- [ADR-012: Los aranceles son de srtm, y su cuenta de servicio escribe la copia con que valúa el
+  catastro](0012-los-aranceles-son-de-srtm-y-catastro-guarda-la-copia.md)
 
 ## Plantilla
 

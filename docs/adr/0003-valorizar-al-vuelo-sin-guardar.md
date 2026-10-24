@@ -1,6 +1,6 @@
 # ADR-003: Se valoriza al vuelo, sin guardar, y la respuesta dice la versión del motor
 
-**Estado**: aceptada · 2026-10-19
+**Estado**: aceptada · 2026-10-19 · ampliada por [ADR-011](0011-srtm-valua-insumos-sueltos-con-el-mismo-motor.md)
 
 ## Contexto
 

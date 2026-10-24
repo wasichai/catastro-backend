@@ -13,7 +13,7 @@ el motor y la API están en el [README principal](../../README.md); las decision
 | Node y yarn | >= 26 | prettier y commitlint (`yarn install` instala el hook de husky) |
 | GDAL (`ogr2ogr`) | cualquiera | solo para sacar aranceles y lotes de la geodatabase del catastro |
 
-Las librerías de wasichai (`wasichai:wasichai-bom:1.2.0` y sus starters) se resuelven así, en este orden:
+Las librerías de wasichai (`wasichai:wasichai-bom:1.3.0` y sus starters) se resuelven así, en este orden:
 
 1. **GitHub Packages**. Pide un token aunque sea para leer. En `~/.gradle/gradle.properties`:
    ```properties
