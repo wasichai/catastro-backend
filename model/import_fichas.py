@@ -47,6 +47,7 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from core_client import Client, CoreError  # noqa: E402
+from entregas import obra_key, piso_key, relation_id  # noqa: E402
 from tabular import (INPUT_ERRORS, LoadError, clean_text, code_text, column_for, enum_option, load_enums,  # noqa: E402
                      missing_columns, parse_decimal, parse_int, parse_map, post_all, read_table, report_problems)
 
@@ -292,23 +293,6 @@ def obras_from(rows, mapping, enums, codigos):
         problems.extend(f"obras {where} ({codigo}): {f}" for f in found)
         obras.append((row["_fila"], codigo, attributes))
     return obras, problems
-
-
-def relation_id(value):
-    """The id a RELATION reads back as. srtm's importers compare str(attributes["predio"]) with an id, so Core lists a
-    bare id; an object with an id is accepted too, in case a version embeds it."""
-    if isinstance(value, dict):
-        value = value.get("id")
-    return None if value is None else str(value)
-
-
-def piso_key(predio_id, a):
-    # a piso Core has without seccion (loaded before it existed) is seccion 1
-    return predio_id, str(a["piso"]), int(a.get("seccion") or 1)
-
-
-def obra_key(predio_id, a):
-    return predio_id, str(a["codigo_vu"]), str(a.get("anio_construccion"))
 
 
 def load(client, fichas, pisos, obras, workers):
