@@ -187,6 +187,16 @@ class ParseTests(unittest.TestCase):
         self.assertIsNone(fichas[1][1]["estado_levantamiento"])               # no default
         self.assertEqual(len(problems), 2, problems)                          # C: estado and fecha
 
+    def test_parse_date_accepts_only_iso_or_a_serial(self):
+        # Python 3.11+'s fromisoformat also reads "20260930" and ISO week dates like "2026-W01-2": neither is one
+        # of the two documented forms, so only a strict YYYY-MM-DD shape goes to fromisoformat
+        self.assertEqual(imf.parse_date("2026-09-30"), ("2026-09-30", None))
+        self.assertEqual(imf.parse_date("46000"), ("2025-12-09", None))
+        self.assertEqual(imf.parse_date("46000.0"), ("2025-12-09", None))
+        self.assertIsNone(imf.parse_date(None)[0])
+        for bad in ("2026-W01-2", "2026-13-45", "30/09/2026"):
+            self.assertIsNotNone(imf.parse_date(bad)[1], bad)
+
     def test_present_fields_reads_the_header(self):
         rows = read_table(write_csv(self, "cod_pre,uso\nA,\n"))
         self.assertEqual(imf.present_fields(rows, parse_map([], imf.FICHA_COLUMNS), ["uso", "lote"]), {"uso"})

@@ -81,6 +81,9 @@ TABLA_RNT = re.compile(r"0?([1-4])")
 # an xlsx serial day number, integer or as the float text an xlsx cell sends (46000.0)
 SERIAL_DAYS = re.compile(r"\d+(\.0+)?")
 XLSX_EPOCH = datetime.date(1899, 12, 30)
+# the only shape fromisoformat may see: Python 3.11+ also accepts "20260930" or "2026-W01-2", which are not one of
+# the two documented forms (contexto-comun.md)
+ISO_DATE = re.compile(r"\d{4}-\d{2}-\d{2}")
 
 
 def parse_bool(value):
@@ -116,10 +119,11 @@ def parse_date(value):
     text = clean_text(value)
     if text is None:
         return None, None
-    try:
-        return datetime.date.fromisoformat(text).isoformat(), None
-    except ValueError:
-        pass
+    if ISO_DATE.fullmatch(text):
+        try:
+            return datetime.date.fromisoformat(text).isoformat(), None
+        except ValueError:
+            return None, f"'{text}' is not a date (YYYY-MM-DD or an xlsx serial)"
     if SERIAL_DAYS.fullmatch(text):
         serial = int(text.split(".")[0])
         return (XLSX_EPOCH + datetime.timedelta(days=serial)).isoformat(), None
