@@ -48,7 +48,11 @@ set -a; source develop/.env; set +a
 | `WASICHAI_JWT_SECRET` | valor de desarrollo | firma de los tokens. Mínimo 32 bytes; en cualquier entorno real, uno propio |
 | `WASICHAI_SEED_DEV` | `true` | crea el usuario `admin@wasichai.local` / `admin`. Apagarlo fuera de desarrollo |
 | `WASICHAI_JWT_REVOCATION` / `WASICHAI_LOGIN_LIMIT` | comentadas (`false`) | encenderlas en un despliegue real |
-| `WASICHAI_GEOSERVER_ENABLED` | comentada (`false`) | solo para publicar capas WMS; los lotes salen de PostGIS sin él |
+| `WASICHAI_GEOSERVER_ENABLED` | `true` en el ejemplo (`false` sin variable) | solo para publicar capas WMS; los lotes salen de PostGIS sin él (ver 3.1) |
+| `WASICHAI_GEOSERVER_URL` / `_USERNAME` / `_PASSWORD` | `http://localhost:8085/geoserver` / `admin` / la tuya | el REST de GeoServer y su administrador. La clave no tiene valor por defecto |
+| `WASICHAI_GEOSERVER_WORKSPACE` | `catastro` | workspace de las capas (se crea solo) |
+| `WASICHAI_GEOSERVER_DS_HOST` / `_PORT` / `_DATABASE` / `_USERNAME` / `_PASSWORD` | `postgres` / `5432` / `catastro` / `catastro` / `catastro` | cómo llega *GeoServer* a PostGIS (desde su contenedor, no desde tu máquina) |
+| `CATASTRO_GEOSERVER_PORT` | `8085` | puerto que publica `compose.yml` para GeoServer, en `127.0.0.1` |
 | `WASICHAI_CORE` | `http://localhost:8091` | URL que usan los scripts de `model/` |
 | `WASICHAI_EMAIL` / `WASICHAI_PASSWORD` | el admin de desarrollo | login de esos scripts |
 | `WASICHAI_TEST_DB_*` | comentadas | solo para tests de integración contra una base externa (ver 6) |
@@ -75,6 +79,63 @@ de ese servidor. Hace falta un túnel y dejarlo abierto:
 ```bash
 ssh -N -L 5434:localhost:5434 <usuario>@<servidor>
 ```
+
+### 3.1 GeoServer (opcional)
+
+Publicar capas WMS (`/api/gis/layers`) necesita GeoServer; todo lo demás, incluidos los lotes, funciona sin él.
+
+```bash
+# en develop/.env: WASICHAI_GEOSERVER_ENABLED=true y WASICHAI_GEOSERVER_PASSWORD=<una clave tuya>
+set -a; source develop/.env; set +a
+docker compose --profile geoserver up -d         # postgis + docker.osgeo.org/geoserver:2.28.6 en 127.0.0.1:8085
+docker compose ps                                # geoserver tarda ~1 min en salir healthy
+curl -u "admin:$WASICHAI_GEOSERVER_PASSWORD" http://localhost:8085/geoserver/rest/about/version.json
+```
+
+- `docker compose up -d` a secas sigue levantando solo PostGIS: GeoServer va en el perfil `geoserver`.
+- La clave sale de `develop/.env` y nunca se versiona. Con la variable vacía GeoServer usa su clave pública por
+  defecto (`geoserver`): cárgala siempre antes de levantarlo. Sin datos de demostración (`SKIP_DEMO_DATA=true`).
+- Los datos de GeoServer (workspaces, capas) viven en el volumen `geoserver-data`; `docker compose down -v` los borra.
+- GeoServer llega a PostGIS por el nombre del servicio (`postgres:5432`), no por `localhost:5434`: por eso los
+  `WASICHAI_GEOSERVER_DS_*` valen distinto de los `WASICHAI_DB_*`. En el CI y en otros despliegues se ajustan a
+  donde corra esa base.
+- Con un Docker remoto, el puerto 8085 queda en el loopback del servidor: otro túnel, `ssh -N -L 8085:localhost:8085`.
+
+**Publicar las capas.** Con el backend corriendo (ver 4) y el modelo aplicado (ver 5). Publicar exige el permiso
+`MANAGE_METADATA`; el admin de desarrollo lo tiene.
+
+```bash
+TOKEN=$(curl -s localhost:8091/api/auth/login -H 'Content-Type: application/json' \
+  -d '{"email":"admin@wasichai.local","password":"admin"}' | python3 -c 'import sys,json;print(json.load(sys.stdin)["token"])')
+curl -X POST localhost:8091/api/gis/layers/predio_catastral/lote_geom -H "Authorization: Bearer $TOKEN"
+curl -X POST localhost:8091/api/gis/layers/tramo_via/geom             -H "Authorization: Bearer $TOKEN"
+curl localhost:8091/api/gis/layers -H "Authorization: Bearer $TOKEN"       # published: true en ambas
+```
+
+También se hace desde la pantalla de administración de wasichai-ui, `/gis/layers`. Publicar crea el workspace y el
+almacén PostGIS si faltan, y es idempotente. `DELETE /api/gis/layers/{objeto}/{geometría}` la retira.
+
+**Qué devuelve `GET /api/gis/services`** (requiere READ): `enabled`, `url`, `workspace` y las tres URL base de OGC:
+`wms` (`<url>/<workspace>/wms`), `wfs` (`<url>/<workspace>/wfs`) y `wmts` (`<url>/gwc/service/wmts`).
+
+**Cómo arma un cliente las teselas WMS.** El nombre de la capa es `<workspace>:<tabla>__<columna>`
+(`catastro:predio_catastral__lote_geom`, `catastro:tramo_via__geom`; `tabla` es la tabla física, que puede llevar
+prefijo por organización: la lista de `/api/gis/layers` la da). Un mapa de teselas (Leaflet, OpenLayers, MapLibre)
+pide por tesela, en EPSG:3857:
+
+```
+<wms>?service=WMS&version=1.3.0&request=GetMap&layers=catastro:predio_catastral__lote_geom
+  &styles=&format=image/png&transparent=true&width=256&height=256&crs=EPSG:3857&bbox={bbox-epsg-3857}
+```
+
+El visor «Brechas» de catastro-ui es el consumidor: pinta las capas WMS como fuente ráster de MapLibre bajo los
+lotes, con el `wmsTileUrl` de `@wasichai/gis` (la misma URL, en EPSG:3857). GeoServer corre en otro origen que el
+backend, así que en un despliegue real va detrás del mismo proxy (o con CORS habilitado).
+
+**Límite actual: sin estilo por atributo.** La capa sale con el estilo por defecto de GeoServer (un solo color).
+Colorear por un atributo (la brecha, el arancel) todavía no es posible; está en
+[wasichai-ui#86](https://github.com/wasichai/wasichai-ui/issues/86) y
+[wasichai#134](https://github.com/wasichai/wasichai/issues/134). Mientras tanto, esos mapas usan GeoJSON.
 
 ## 4. Iniciar el backend
 

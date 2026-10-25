@@ -24,6 +24,7 @@ impuestos**: el impuesto predial es de srtm-backend.
 ```sh
 cp develop/example.env develop/.env && set -a && source develop/.env && set +a   # opcional: los valores por defecto
 docker compose up -d      # postgis en 127.0.0.1:5434 (CATASTRO_PG_PORT)
+# GeoServer (solo para publicar capas WMS): docker compose --profile geoserver up -d, ver docs/develop/README.md 3.1
 ./gradlew bootRun         # http://localhost:8091
 ```
 

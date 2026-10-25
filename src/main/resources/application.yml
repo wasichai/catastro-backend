@@ -30,3 +30,15 @@ wasichai:
     geoserver:
       # without GeoServer the lotes are served straight from PostGIS; only publishing WMS layers needs it
       enabled: ${WASICHAI_GEOSERVER_ENABLED:false}
+      url: ${WASICHAI_GEOSERVER_URL:http://localhost:8085/geoserver}
+      username: ${WASICHAI_GEOSERVER_USERNAME:admin}
+      # no default password: with GeoServer enabled it comes from the environment (compose.yml sets the same one)
+      password: ${WASICHAI_GEOSERVER_PASSWORD:}
+      workspace: ${WASICHAI_GEOSERVER_WORKSPACE:catastro}
+      # how GeoServer itself reaches postgis: from inside compose that is the service name, not localhost:5434
+      datastore:
+        host: ${WASICHAI_GEOSERVER_DS_HOST:postgres}
+        port: ${WASICHAI_GEOSERVER_DS_PORT:5432}
+        database: ${WASICHAI_GEOSERVER_DS_DATABASE:catastro}
+        username: ${WASICHAI_GEOSERVER_DS_USERNAME:catastro}
+        password: ${WASICHAI_GEOSERVER_DS_PASSWORD:catastro}
