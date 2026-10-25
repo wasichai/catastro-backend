@@ -10,6 +10,7 @@ import wasichai.core.data.RecordCriterion
 import wasichai.core.data.RecordQuery
 import wasichai.core.data.RecordResponse
 import wasichai.core.data.RecordService
+import java.util.UUID
 
 // wasichai's RecordService read as the caller, with catastro's dtos on it (the minimal read side of srtm-backend's
 // Registros). RecordService checks the caller's object and field permissions, so nothing here repeats that: a role
@@ -46,6 +47,17 @@ class Registros(
                 objectName,
                 RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), sort = sort, filters = filters, criteria = listOf(enGrupo), count = false)
             ).map { read(type, it) }
+        }
+
+    // every record of `ids`, read whole, one query per MAX_SIZE ids: a page's predios point at a handful of entregas,
+    // cheaper to fetch once by id than per predio
+    suspend fun <T : Any> porIds(
+        objectName: String,
+        type: Class<T>,
+        ids: Collection<UUID>
+    ): List<T> =
+        ids.distinct().chunked(PageRequest.MAX_SIZE).flatMap { grupo ->
+            records.list(objectName, RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), ids = grupo, count = false)).content.map { read(type, it) }
         }
 
     private suspend fun todas(

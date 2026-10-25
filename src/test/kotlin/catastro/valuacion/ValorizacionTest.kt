@@ -378,6 +378,21 @@ class ValorizacionTest {
         assertEquals(bd("2014.96"), v.autoavaluo)
     }
 
+    // --- levantamiento
+
+    @Test
+    fun `una ficha sin levantar no se valoriza ni se estima`() {
+        val v = sinValor(insumos(areaTerreno = null, arancelM2 = null).copy(levantamiento = "SIN_LEVANTAR"))
+        assertEquals("SIN_LEVANTAMIENTO", v.llave)
+        assertEquals("SIN_LEVANTAMIENTO", v.motivo)
+    }
+
+    @Test
+    fun `una ficha parcial o completa se valoriza como siempre`() {
+        assertEquals(bd("9100.00"), valorizada(insumos().copy(levantamiento = "PARCIAL")).autoavaluo)
+        assertEquals(bd("9100.00"), valorizada(insumos().copy(levantamiento = "COMPLETO")).autoavaluo)
+    }
+
     // --- obras complementarias
 
     @Test

@@ -343,7 +343,10 @@ Authorization: Bearer <token de POST /api/auth/token>
       "autoavaluo": 96752.21,
       "motivo": null,
       "llave": null,
-      "loteGeom": { "type": "Polygon", "coordinates": [[[-75.22, -10.95], [-75.2195, -10.95], [-75.2195, -10.9495], [-75.22, -10.9495], [-75.22, -10.95]]] }
+      "loteGeom": { "type": "Polygon", "coordinates": [[[-75.22, -10.95], [-75.2195, -10.95], [-75.2195, -10.9495], [-75.22, -10.9495], [-75.22, -10.95]]] },
+      "estadoLevantamiento": null,
+      "fechaLevantamiento": null,
+      "entrega": null
     }
   ]
 }
@@ -354,6 +357,38 @@ Cada ítem trae siempre todas sus llaves. Sin valor, `terreno`, `construccion`, 
 pisos (0 sin pisos). `loteGeom` es el polígono del lote como geometría GeoJSON en EPSG:4326 (se guarda en 32718), o
 `null`. El código del lote es `lote`, por eso la geometría se llama `loteGeom`. `version` cambia cuando cambia la
 aritmética del motor; `region` es la de la organización, la de los cuadros con que se valorizó la página.
+`estadoLevantamiento` (`SIN_LEVANTAR`, `PARCIAL` o `COMPLETO`) y `fechaLevantamiento` son los de la ficha misma;
+`entrega` es el código de la `entrega_catastral` que trajo el último cambio de la ficha (o de uno de sus hijos), no
+el id de la relación. Las tres son `null` sin dato, nunca ausentes. Una ficha `SIN_LEVANTAR` no se valoriza: su
+`llave` y su `motivo` son `SIN_LEVANTAMIENTO` (ver Motivos), y no hace falta pedirle área, arancel ni construcciones.
+
+**Motivos** (`llave` de un predio sin valor; `motivo` es la misma frase para una persona, o el mismo código cuando el
+motivo no es una frase fija). Varios llevan un sufijo dinámico (`:dato`) que no está en esta tabla:
+
+| `llave` | Por qué |
+|---|---|
+| `SIN_LEVANTAMIENTO` | La ficha tiene `estado_levantamiento = SIN_LEVANTAR`: aún no se ha levantado en campo |
+| `AREA_TERRENO_FALTANTE` | El predio no declara área de terreno |
+| `ARANCEL_FALTANTE` | La vía del predio no tiene arancel por m² para el año |
+| `PARAMETRO_FALTANTE:<clave>:<año>` | Las tablas no traen ese parámetro para ese año |
+| `TABLA_DE_DEPRECIACION:<uso>` | No hay tabla de depreciación del RNT para ese uso (D1) |
+| `AREA_CONSTRUIDA_FALTANTE` | Una construcción no declara área construida |
+| `AREA_CONSTRUIDA_INVALIDA` | Una construcción declara un área construida negativa |
+| `ANIO_CONSTRUCCION_FALTANTE` | Una construcción u obra no declara año de construcción |
+| `ANTIGUEDAD_NEGATIVA` | El año de construcción es posterior al año de la valuación |
+| `MATERIAL_FALTANTE` | Una construcción u obra no declara material |
+| `ESTADO_FALTANTE` | Una construcción u obra no declara estado de conservación |
+| `ESTADO_DESCONOCIDO:<estado>` | El RNT no conoce ese estado de conservación |
+| `CATEGORIA_FALTANTE:<partida>` | Una construcción no declara la categoría (letra) de esa partida |
+| `CATEGORIA_INVALIDA:<partida>:<categoria>` | La categoría declarada está fuera del rango del cuadro de la región |
+| `VU_SIN_VALOR:<partida>:<categoria>` | La celda del cuadro para esa partida y categoría es «.....», no cero |
+| `TECHO_INCLUIDO_INVALIDO:<muros>` | El indicador de techo incluido se marcó con muros que no son A ni D (drywall) |
+| `CLASIFICACION_DESCONOCIDA:<clasificacion>` | La `clasificacion` de la construcción no tiene tabla del RNT en el motor |
+| `DEPRECIACION_FALTANTE:<tabla>:<material>:<estado>` | El RNT no trae esa fila de depreciación |
+| `OBRAS_SIN_CUADRO:<region>` | El predio declara obras y la región no tiene cuadro de obras complementarias |
+| `OBRA_DESCONOCIDA:<codigoVu>` | El cuadro de obras complementarias de la región no tiene esa partida |
+| `OBRA_CANTIDAD_FALTANTE` | Una obra no declara cantidad |
+| `OBRA_CANTIDAD_INVALIDA` | Una obra declara una cantidad negativa |
 
 **Valuar insumos sueltos.** srtm también valúa los datos de un predio que no están en el catastro (la DJ de un
 contribuyente, por ejemplo), con el mismo motor y las tablas de la región de la organización. No se guarda nada:

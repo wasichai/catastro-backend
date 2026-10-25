@@ -10,6 +10,7 @@ const val CONSTRUCCION = "construccion"
 const val OBRA_COMPLEMENTARIA = "obra_complementaria"
 const val ARANCEL = "arancel"
 const val CONFIGURACION_CATASTRO = "configuracion_catastro"
+const val ENTREGA_CATASTRAL = "entrega_catastral"
 
 // the relation field construccion and obra_complementaria hang from
 const val PREDIO = "predio"
@@ -31,7 +32,13 @@ data class PredioCatastral(
     val longitudFrente: BigDecimal? = null,
     val esEdificio: Boolean? = null,
     // GeoJSON geometry, EPSG:4326 (wasichai-gis transforms it from the column's 32718)
-    val loteGeom: Map<String, Any?>? = null
+    val loteGeom: Map<String, Any?>? = null,
+    // entrega_catastral.id (relation field "entrega"); the last entrega that changed this ficha or a child of it
+    val entrega: String? = null,
+    // DATE as ISO text ("2026-09-30"); empty when the ficha has not been surveyed yet
+    val fechaLevantamiento: String? = null,
+    // SIN_LEVANTAR, PARCIAL or COMPLETO; what Valorizacion.calcular reads as Insumos.levantamiento
+    val estadoLevantamiento: String? = null
 )
 
 // material and estado_conservacion come in the model's enum spelling (CONCRETO, MUY BUENO …), which is what
@@ -77,4 +84,12 @@ data class Arancel(
 data class ConfiguracionCatastro(
     val id: String,
     val region: String? = null
+)
+
+// just enough of an entrega to name it: the codigo an item's "entrega" key carries, resolved from the predio's
+// relation id
+@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
+data class EntregaCatastral(
+    val id: String,
+    val codigo: String? = null
 )

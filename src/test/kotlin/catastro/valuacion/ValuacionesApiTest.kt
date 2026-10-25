@@ -191,6 +191,38 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
     }
 
     @Test
+    fun `una ficha sin levantar dice su estado, su fecha y su entrega, y no tiene valor`() {
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        val marca = uniqueName("t20").uppercase()
+        val idAranc = "$marca-A"
+        registro(ARANCEL, mapOf("clave" to "$idAranc|2026", "id_aranc" to idAranc, "anio" to 2026, "valor_m2" to 45.50))
+        val codigoEntrega = uniqueName("ent")
+        val entrega =
+            registro(ENTREGA_CATASTRAL, mapOf("codigo" to codigoEntrega, "fecha_corte" to "2026-10-01"))
+        predio(
+            "$marca-1",
+            idAranc,
+            mapOf("estado_levantamiento" to "SIN_LEVANTAR", "fecha_levantamiento" to "2026-09-30", "entrega" to entrega)
+        )
+        predio("$marca-2", idAranc)
+
+        val items = leerTodo(srtm, 500).associateBy { it["codigoMunicipal"].asString() }
+        val sin = items.getValue("$marca-1")
+        assertTrue(sin["autoavaluo"].isNull, sin.toString())
+        assertEquals("SIN_LEVANTAMIENTO", sin["motivo"].asString())
+        assertEquals("SIN_LEVANTAMIENTO", sin["llave"].asString())
+        assertEquals(
+            listOf("SIN_LEVANTAR", "2026-09-30", codigoEntrega),
+            listOf("estadoLevantamiento", "fechaLevantamiento", "entrega").map { sin[it].asString() }
+        )
+
+        val otroItem = items.getValue("$marca-2")
+        listOf("estadoLevantamiento", "fechaLevantamiento", "entrega").forEach {
+            assertTrue(otroItem.has(it) && otroItem[it].isNull, "$it: $otroItem")
+        }
+    }
+
+    @Test
     fun `las páginas suman el total, sin repetir, por código municipal`() {
         val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
         val marca = uniqueName("t5").uppercase()
