@@ -210,6 +210,31 @@ class ValuacionesApiTest : CatastroApiTest() {
     }
 
     @Test
+    fun `un predio rústico sale con PREDIO_RUSTICO por GET y por POST`() {
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        val marca = uniqueName("t27").uppercase()
+        val idAranc = "$marca-A"
+        registro(ARANCEL, mapOf("clave" to "$idAranc|2026", "id_aranc" to idAranc, "anio" to 2026, "valor_m2" to 45.50))
+        predio("$marca-1", idAranc, mapOf("tipo_predio" to "RUSTICO"))
+
+        val item = leerTodo(srtm, 500).first { it["codigoMunicipal"].asString() == "$marca-1" }
+        assertEquals("PREDIO_RUSTICO", item["motivo"].asString())
+        assertEquals("PREDIO_RUSTICO", item["llave"].asString())
+        assertTrue(item["autoavaluo"].isNull, item.toString())
+        assertEquals(
+            "valuacion-v3",
+            arbol(send("GET", "/api/catastro/valuaciones?anio=2026&size=1", null, HttpStatus.OK, srtm))["version"].asString()
+        )
+
+        val insumos = mapOf("anio" to 2026, "areaTerreno" to 200, "arancelM2" to 45.5, "tipoPredio" to "RUSTICO")
+        val v = valuacion(srtm, insumos)
+        assertEquals("PREDIO_RUSTICO", v["motivo"].asString())
+        assertEquals("PREDIO_RUSTICO", v["llave"].asString())
+        assertTrue(v["autoavaluo"].isNull, v.toString())
+        assertEquals("valuacion-v3", v["version"].asString())
+    }
+
+    @Test
     fun `el vínculo y los códigos del SNIC llegan a srtm, nulos sin dato`() {
         val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
         val marca = uniqueName("t21").uppercase()
@@ -250,7 +275,7 @@ class ValuacionesApiTest : CatastroApiTest() {
         val primera = valuaciones(srtm, "anio=2026&page=0&size=3")
         val total = primera["total"].asLong()
         assertEquals(2026, primera["anio"].asInt())
-        assertEquals("valuacion-v2", primera["version"].asString())
+        assertEquals("valuacion-v3", primera["version"].asString())
         assertEquals(0, primera["page"].asInt())
         assertEquals(3, primera["size"].asInt())
         val codigos = leerTodo(srtm, 3).map { it["codigoMunicipal"].asString() }
@@ -341,7 +366,7 @@ class ValuacionesApiTest : CatastroApiTest() {
         numero("96752.21", v["autoavaluo"])
         for (campo in listOf("terreno", "construccion", "obras")) numero(guardado[campo].decimalValue().toPlainString(), v[campo])
         assertEquals(2026, v["anio"].asInt())
-        assertEquals("valuacion-v2", v["version"].asString())
+        assertEquals("valuacion-v3", v["version"].asString())
         assertEquals("SELVA", v["region"].asString())
         assertEquals("CUERPO", v["origenArancel"].asString())
         numero("45.50", v["arancelM2"])
