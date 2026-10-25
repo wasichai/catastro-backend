@@ -1,6 +1,7 @@
 # ADR-013: El levantamiento llega por entregas, se carga solo por la API y no guarda estimaciones
 
-**Estado**: aceptada · 2026-10-25
+**Estado**: aceptada · 2026-10-25 · enmienda [ADR-008](0008-modelo-y-cargadores-en-python-stdlib.md) (con `--entrega`,
+los cargadores actualizan, no solo crean)
 
 ## Contexto
 
