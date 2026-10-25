@@ -1,7 +1,7 @@
 # catastro-backend
 
 Valorización catastral de los predios de una municipalidad (hoy Perené, ubigeo 120302, en la selva; Ica, en la
-costa), sobre el framework [wasichai](https://github.com/wasichai/wasichai) 1.3.0.
+costa), sobre el framework [wasichai](https://github.com/wasichai/wasichai) 1.5.0.
 
 Valoriza cada predio del levantamiento catastral (autoavalúo por predio y año) con aranceles, valores unitarios y
 depreciación, para que srtm-backend calcule la brecha de recaudación contra el padrón declarado. **No calcula
