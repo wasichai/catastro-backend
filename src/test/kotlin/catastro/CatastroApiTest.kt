@@ -166,9 +166,10 @@ abstract class CatastroApiTest : WasichaiIntegrationTest() {
         path: String,
         body: Any?,
         status: HttpStatus,
-        token: String
+        token: String,
+        headers: Map<String, String> = emptyMap()
     ): String {
-        val (actual, response) = exchange(method, path, body, token)
+        val (actual, response) = exchange(method, path, body, token, headers)
         assertEquals(status, actual, "$method $path: $response")
         return response
     }
@@ -177,18 +178,21 @@ abstract class CatastroApiTest : WasichaiIntegrationTest() {
         method: String,
         path: String,
         body: Any?,
-        token: String
+        token: String,
+        headers: Map<String, String> = emptyMap()
     ): Pair<HttpStatus, String> {
         val spec =
             when (method) {
                 "GET" -> client.get().uri(path)
                 "PUT" -> client.put().uri(path).bodyValue(body!!)
+                "PATCH" -> client.patch().uri(path).bodyValue(body!!)
                 "DELETE" -> client.delete().uri(path)
                 else -> client.post().uri(path).bodyValue(body!!)
             }
         val result =
             spec
                 .header(HttpHeaders.AUTHORIZATION, token)
+                .headers { h -> headers.forEach { (nombre, valor) -> h.set(nombre, valor) } }
                 .exchange()
                 .expectBody(String::class.java)
                 .returnResult()

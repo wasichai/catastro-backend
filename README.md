@@ -554,6 +554,69 @@ Cada ítem trae siempre sus seis llaves, `null` sin dato. `tipoDocumento` y `con
 escribe el padrón de origen (el vocabulario varía entre municipalidades); un documento de relleno (por ejemplo
 `000000000`) se carga vacío (`numeroDocumento: null`) y se reporta por código de predio y fila, nunca por su valor.
 
+**Cambios.** srtm sigue los cambios del catastro con un cursor, en vez de traer todas las valuaciones en cada corrida
+para saber si algo cambió ([ADR-014](docs/adr/0014-srtm-sigue-los-cambios-por-un-cursor.md)). Así puede avisar a rentas
+de una ampliación levantada en campo y volver a correr la brecha solo cuando hace falta:
+
+```
+GET /api/catastro/cambios?desde=<cursor>&size=200
+Authorization: Bearer <token de POST /api/auth/token>
+```
+
+- Trae las altas, cambios y bajas (`CREATE`, `UPDATE`, `DELETE`) de `predio_catastral`, `construccion`,
+  `obra_complementaria` y `titular_catastral`, del más viejo al más nuevo. Salen del `audit_log` de wasichai, que
+  catastro lee por dentro.
+- `desde` es opcional; sin él, empieza desde el principio. `size` va de 1 a 500 (por defecto 200). Un parámetro que
+  sobra, un `size` fuera de rango o un `desde` que este endpoint no devolvió es un **422** que lo nombra
+  (`errors[0].field`).
+- Sin token, **401**. Sin `READ` sobre esos cuatro objetos y sobre `entrega_catastral`, **403** (SRTM_LECTOR los
+  tiene).
+- **El cursor es opaco.** Se guarda tal como llega y se pasa como `desde` la próxima vez; no se arma ni se interpreta.
+  Se piden páginas mientras `hayMas` sea `true`. Si no hay nada nuevo, vuelve el mismo `cursor` con `items` vacío y
+  `hayMas: false`. El `cursor` es `null` solo si no hay ningún cambio y no vino `desde`.
+
+Ejemplo con valores sintéticos:
+
+```json
+{
+  "items": [
+    {
+      "codigoMunicipal": "0101001",
+      "objeto": "construccion",
+      "operacion": "UPDATE",
+      "campos": ["area_construida"],
+      "en": "2026-10-25T14:03:12.481263Z",
+      "entrega": "BARRIDO-2026-10"
+    },
+    {
+      "codigoMunicipal": "0101001",
+      "objeto": "obra_complementaria",
+      "operacion": "DELETE",
+      "campos": [],
+      "en": "2026-10-25T14:03:12.902114Z",
+      "entrega": "BARRIDO-2026-10"
+    }
+  ],
+  "cursor": "YzEKMjAyNi0xMC0yNVQxNDowMzoxMi45MDIxMTRaCjNmMmM5YjRlLTdkMWEtNGU1Ni05YjBhLTJjOGQ0ZTZmMWEyMw",
+  "hayMas": false
+}
+```
+
+Cada ítem trae siempre sus seis llaves:
+
+- `codigoMunicipal` es el del predio. Una construcción u obra lleva el de su predio, que se lee del audit log, así que
+  sale aunque el predio ya se haya borrado. Es `null` si no se puede resolver, y srtm tiene que aceptarlo.
+- `campos` son los nombres de lo que cambió, nunca sus valores: en un alta, los campos que se llenaron; en un cambio,
+  los que cambiaron de valor; en una baja, ninguno.
+- `en` es el instante del cambio.
+- `entrega` es el código de la `entrega_catastral` que lo cargó (el `X-Change-Reason` del cargador). Es `null` si el
+  cambio se hizo a mano o si su motivo no es una entrega.
+
+**El feed puede perder un cambio.** wasichai no guarda un registro y su fila de auditoría en una misma transacción
+(`RecordChanges`), y `en` es el inicio de la transacción. Por eso un cambio que se confirma tarde, con un `en` anterior
+a un cursor ya entregado, no aparece. srtm lo cubre con una corrida completa cada semana (wasichai/srtm-backend#203),
+que lee todas las valuaciones sin mirar el feed.
+
 **Puesta en marcha** (contra el Core del catastro, como admin):
 
 ```sh

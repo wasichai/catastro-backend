@@ -2,6 +2,7 @@
 
 **Estado**: aceptada · 2026-10-19 · ampliada por [ADR-011](0011-srtm-valua-insumos-sueltos-con-el-mismo-motor.md)
 · enmendada por [ADR-012](0012-los-aranceles-son-de-srtm-y-catastro-guarda-la-copia.md) (escribe los aranceles)
+· enmendada por [ADR-014](0014-srtm-sigue-los-cambios-por-un-cursor.md) (sigue los cambios con el mismo rol)
 
 ## Contexto
 
