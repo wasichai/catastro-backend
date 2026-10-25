@@ -445,6 +445,26 @@ class BrechasApiTest : CatastroApiTest() {
         assertEquals(0, arbol(send("GET", "/api/objects/$DECISION_BRECHA/records", null, HttpStatus.OK, org))["content"].size())
     }
 
+    @Test
+    fun `corte_origen es el corte más reciente del año de la decisión`() {
+        cargarCorte("2026-10-25")
+        // a later corte of another year
+        registro(
+            CORTE_BRECHA,
+            mapOf(
+                "clave" to "ica-prueba|2027-01-01",
+                "org_slug" to "ica-prueba",
+                "fecha" to "2027-01-01",
+                "anio" to 2027,
+                "cargado_en" to "2027-01-01T12:00:00Z"
+            ),
+            token = org
+        )
+        decidir(listOf("01-01-0001"), "A_INSPECCIONAR")
+        val decision = arbol(send("GET", "/api/objects/$DECISION_BRECHA/records?clave=01-01-0001|2026", null, HttpStatus.OK, org))["content"][0]["attributes"]
+        assertEquals("ica-prueba|2026-10-25", decision["corte_origen"].asString())
+    }
+
     // a role of the organization with these permissions: its name
     private fun rol(
         nombre: String,

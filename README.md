@@ -1030,7 +1030,7 @@ El dashboard «Brechas» de catastro-ui muestra la brecha de recaudación de los
   `<codigo>|<anio>`). `anio` tiene que ser el de un corte cargado, y `nota` y `motivo_descarte` no pasan de 2000
   caracteres (si no, 400 en el campo). Un rol con `UPDATE` pero sin `CREATE` recibe 403 antes de escribir nada.
   - Lo fija el servidor: `responsable` (el email de quien llama), `decidido_en` (ahora) y `corte_origen` (el corte
-    más reciente).
+    más reciente del año de la decisión).
   - `DESCARTADO` sin `motivo_descarte` es un 400 con `field: motivo_descarte`; otro estado borra el motivo.
   - Sin `nota`, se conserva la que había.
   - Un código que no es de ninguna ficha, o que el Core rechaza, va a `errores` y el resto se escribe igual.
@@ -1042,7 +1042,7 @@ cambian a ritmos distintos:
 
 - **la base del corte**: sus fichas (una pasada keyset por `clave`) y el lote de cada una (lotes de 200 códigos, 4 a la
   vez), que da a la vez `con_geometria` y las geometrías de `/lotes`. Solo cambia cuando el corte se recarga, así que se
-  guarda **2 minutos** con la llave organización, roles de quien llama (un campo que un rol no puede leer nunca le
+  guarda **5 minutos**, contados desde que termina de leerse, con la llave organización, roles de quien llama (un campo que un rol no puede leer nunca le
   llega a otro), id del corte y `cargado_en`;
 - **las decisiones del año**: pocas filas, una pasada, guardadas **15 segundos** con la llave organización, roles, año
   y una generación que cada `POST /decisiones` avanza. Una decisión se ve al momento en esta instancia sin releer la

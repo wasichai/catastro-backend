@@ -45,7 +45,7 @@ import java.util.concurrent.atomic.AtomicLong
 //
 // - the Base of a corte: its fichas (one keyset pass by clave) and the lotes of their predios (batches of 200 codes,
 //   4 at a time, read once: they give both con_geometria and /lotes' geometries). it changes only when the corte is
-//   reloaded, so it is kept VIGENCIA_BASE, keyed by organization, the caller's roles (a field a role may not read never
+//   reloaded, so it is kept VIGENCIA_BASE from the end of its read, keyed by organization, the caller's roles (a field a role may not read never
 //   reaches another role), the corte's id and its cargado_en (a reload writes a new one);
 // - the decisions of a year: few rows, one keyset pass, kept VIGENCIA_DECISIONES and keyed by the organization's
 //   generation, which a POST /decisiones moves on. so a decision shows at once here, never drops a Base, and one
@@ -133,7 +133,7 @@ class BrechasService(
     }
 
     // a batch of decisions of one year: each codigo_municipal gets its decision_brecha created or updated, by clave
-    // codigo|anio, DECISIONES_A_LA_VEZ at a time. responsable, decidido_en and corte_origen (the most recent corte) are
+    // codigo|anio, DECISIONES_A_LA_VEZ at a time. responsable, decidido_en and corte_origen (the most recent corte of that year) are
     // the server's. a code that is no ficha, or one core refuses, is reported in errores and the others are still
     // written; a 403 of core stops the batch (what was written stays written). the writes carry EscrituraDeBrechas:
     // DecisionesSoloPorLaApi refuses any other write of decision_brecha
@@ -164,7 +164,8 @@ class BrechasService(
                 if (pedido.nota != null) put("nota", pedido.nota.valor)
                 put("responsable", usuario.email.takeIf { '@' in it })
                 put("decidido_en", Instant.now().truncatedTo(ChronoUnit.SECONDS).toString())
-                put("corte_origen", cortes.first().clave)
+                // the most recent corte of the decision's year (there is one: checked above)
+                put("corte_origen", cortes.first { it.anio == pedido.anio }.clave)
             }
         val creadas = AtomicInteger()
         val actualizadas = AtomicInteger()
@@ -265,7 +266,8 @@ class BrechasService(
 
     // `leer` once per key while it lasts: concurrent callers await the same read, which runs in the first caller's
     // context (as that caller: the key carries the roles) but outlives it, so a client that goes away does not fail
-    // the others. a read that failed is forgotten
+    // the others. a read that failed is forgotten. `vigencia` counts from when the read finished, not from when it
+    // started: a cold read of a big corte takes seconds of it otherwise
     private suspend fun <K : Any, T> unaVez(
         mapa: ConcurrentHashMap<K, EnVuelo<T>>,
         llave: K,
@@ -278,7 +280,9 @@ class BrechasService(
         val enVuelo =
             mapa.compute(llave) { _, actual ->
                 actual?.takeIf { it.hasta.isAfter(ahora) }
-                    ?: EnVuelo(CoroutineScope(contexto + SupervisorJob()).async(start = CoroutineStart.LAZY) { leer() }, ahora.plus(vigencia))
+                    ?: EnVuelo(CoroutineScope(contexto + SupervisorJob()).async(start = CoroutineStart.LAZY) { leer() }).also { nuevo ->
+                        nuevo.valor.invokeOnCompletion { nuevo.hasta = Instant.now().plus(vigencia) }
+                    }
             }!!
         return try {
             enVuelo.valor.await()
@@ -322,10 +326,12 @@ class BrechasService(
         val generacion: Long
     )
 
+    // until its read finishes it never expires; then it lasts its vigencia
     private class EnVuelo<T>(
-        val valor: Deferred<T>,
-        val hasta: Instant
-    )
+        val valor: Deferred<T>
+    ) {
+        @Volatile var hasta: Instant = Instant.MAX
+    }
 
     // a corte's fichas (by Δ impuesto) and the lote of each codigo_municipal that has one, GeoJSON in 4326
     class Base(
@@ -339,7 +345,7 @@ class BrechasService(
     )
 
     companion object {
-        val VIGENCIA_BASE: Duration = Duration.ofMinutes(2)
+        val VIGENCIA_BASE: Duration = Duration.ofMinutes(5)
         val VIGENCIA_DECISIONES: Duration = Duration.ofSeconds(15)
         const val LOTES_A_LA_VEZ = 4
         const val DECISIONES_A_LA_VEZ = 8
