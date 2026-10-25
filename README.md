@@ -269,7 +269,9 @@ padrón de srtm, no el catastro. Las reglas son las de wasichai/catastro-backend
   fila de vínculo no se carga**. El método se lee contra el enum `vinculo_metodo` sin distinguir mayúsculas
   (`CODIGO_RENTAS`, `LLAVE_HU_MZ_LOTE`, `GEOMETRICO`, `MANUAL`), o con `--metodo TEXTO=ENUM` (repetible) para el texto
   que use el gpkg; un texto que no se lee sale con 2 y lo nombra. Un método vacío vincula el predio con
-  `vinculo_metodo` vacío. Sin `--vinculos` se cargan todas las fichas, con `vinculo_metodo` vacío.
+  `vinculo_metodo` vacío. Sin `--vinculos` se cargan todas las fichas, y `fichas.csv` no lleva la columna
+  `vinculo_metodo`: el convertidor nunca escribe vacía una columna que no leyó, así la entrega no borra el vínculo
+  que ya tuviera el predio (regla R11).
 
 Las columnas por defecto son las del libro; `--map-predio`, `--map-construccion`, `--map-titulares` y `--map-vinculos`
 `campo=columna` las cambian. Todas son obligatorias salvo `cuc_catastro` y `urbanizacion_catastro`: una hoja o una
