@@ -77,7 +77,7 @@
     {
       "name": "CATASTRO_ANALISTA",
       "label": "Analista de catastro",
-      "description": "El rol del personal municipal que trabaja el dashboard de brechas en catastro-ui: lee todo lo que lee CATASTRO_LECTOR y además decide sobre las fichas de un corte (POST /api/catastro/brechas/decisiones), lo que pide CREATE y UPDATE sobre decision_brecha. No borra decisiones ni toca otro objeto, y tampoco lee titular_catastral (Ley 29733).",
+      "description": "El rol del personal municipal que trabaja el dashboard de brechas en catastro-ui: lee todo lo que lee CATASTRO_LECTOR y además decide sobre las fichas de un corte con POST /api/catastro/brechas/decisiones, que escribe decision_brecha como quien llama y por eso pide CREATE y UPDATE sobre ella. Es la única puerta: catastro-backend rechaza cualquier escritura de decision_brecha que no venga de ese endpoint (la API genérica de registros incluida), así que responsable, decidido_en, corte_origen y el motivo de un descarte los pone siempre el servidor. No borra decisiones ni toca otro objeto, y tampoco lee titular_catastral (Ley 29733).",
       "permisos": {
         "predio_catastral": [
           "READ"

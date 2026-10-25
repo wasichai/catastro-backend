@@ -91,11 +91,11 @@ def escribir_parquet(con, ruta, columnas, filas):
     con.execute(f"COPY t TO '{ruta}' (FORMAT parquet)")
 
 
-def armar_corte(testcase, filas=FILAS, parametros=UIT, la_corrida=None):
+def armar_corte(testcase, filas=FILAS, parametros=UIT, la_corrida=None, fecha=FECHA, listar_parametro=True):
     """A corte <org>/<fecha>/ as srtm's make corte writes it: the Parquet and a manifiesto.json with their sha256."""
     raiz = tempfile.TemporaryDirectory()
     testcase.addCleanup(raiz.cleanup)
-    carpeta = os.path.join(raiz.name, ORG, FECHA)
+    carpeta = os.path.join(raiz.name, ORG, fecha)
     os.makedirs(carpeta)
     con = duckdb.connect()
     tablas = {"srtm_brecha_corrida.parquet": (COLUMNAS_CORRIDA, [la_corrida or corrida()]),
@@ -105,10 +105,12 @@ def armar_corte(testcase, filas=FILAS, parametros=UIT, la_corrida=None):
     for nombre, (columnas, contenido) in tablas.items():
         ruta = os.path.join(carpeta, nombre)
         escribir_parquet(con, ruta, columnas, contenido)
+        if nombre == "srtm_parametro.parquet" and not listar_parametro:
+            continue
         archivos.append({"archivo": nombre, "bytes": os.path.getsize(ruta), "sha256": _sha(ruta),
                          "filas": len(contenido), "tabla": nombre[:-8]})
     con.close()
-    manifiesto = {"formato": 1, "organizacion": ORG, "fecha_corte": FECHA, "tipo": "mensual", "anio": 2026,
+    manifiesto = {"formato": 1, "organizacion": ORG, "fecha_corte": fecha, "tipo": "mensual", "anio": 2026,
                   "leido_en": "2026-10-25T15:00:00Z", "motor": {"version": "valuacion-v3", "region": "COSTA"},
                   "brecha_corrida": {"id": CORRIDA, "terminado": "2026-10-25T10:05:00Z",
                                      "version_catastro": "valuacion-v3"},
@@ -235,22 +237,135 @@ class ImportarCorteTests(unittest.TestCase):
         self.assertIn("corte ica-prueba|2026-10-25: unchanged; fichas: 0 created, 0 updated, 0 deleted, 5 unchanged", out)
         self.assertEqual(self.core.records["corte_brecha"][0]["attributes"]["cargado_en"], cargado)
 
-    def test_una_fila_que_cambia_se_actualiza_y_la_que_falta_solo_con_reemplazar(self):
+    def test_una_fila_que_cambia_se_actualiza_y_una_que_falta_pide_reemplazar(self):
         self.assertEqual(self.cli(armar_corte(self))[0], 0)
         cambiadas = [fila(1, "1-2-3", "SUBVALUADO", "30000", "99.10")] + FILAS[1:4]
         self.core.requests.clear()
+        # PR-5 no longer comes: without --reemplazar nothing is written, so the total and the fichas never disagree
         code, out, err = self.cli(armar_corte(self, filas=cambiadas))
-        self.assertEqual(code, 0, err)
-        self.assertIn("fichas: 0 created, 1 updated, 0 deleted, 3 unchanged, 1 absent from the corte kept", out)
-        self.assertEqual(self.fichas()["PR-1"]["delta_impuesto"], "99.1")
-        self.assertIn("PR-5", self.fichas())
-        # the corte's totals moved with it: 4 fichas, no omiso
-        self.assertEqual(self.core.records["corte_brecha"][0]["attributes"]["total_fichas"], 4)
+        self.assertEqual(code, 2)
+        self.assertIn("1 fichas del corte guardado ya no vienen en el corte: --reemplazar", err)
+        self.assertIn("fichas: 0 to create, 1 to update, 0 to delete, 3 unchanged, 1 absent from the corte kept", out)
+        self.assertEqual(self.escrituras(), [])
+        self.assertEqual(self.fichas()["PR-1"]["delta_impuesto"], "120.5")
         code, out, err = self.cli(armar_corte(self, filas=cambiadas), "--reemplazar")
         self.assertEqual(code, 0, err)
-        self.assertIn("fichas: 0 created, 0 updated, 1 deleted, 4 unchanged, 1 absent from the corte deleted", out)
+        self.assertIn("fichas: 0 created, 1 updated, 1 deleted, 3 unchanged, 1 absent from the corte deleted", out)
+        self.assertEqual(self.fichas()["PR-1"]["delta_impuesto"], "99.1")
         self.assertNotIn("PR-5", self.fichas())
+        self.assertEqual(self.core.records["corte_brecha"][0]["attributes"]["total_fichas"], 4)
         self.assertEqual(len(self.core.records["corte_brecha"]), 1)
+
+    def test_reemplazar_no_toca_las_fichas_de_otro_corte(self):
+        self.assertEqual(self.cli(armar_corte(self))[0], 0)
+        # another corte: another fecha, the same rows
+        otro = armar_corte(self, fecha="2026-11-25")
+        self.assertEqual(self.cli(otro, "--reemplazar")[0], 0)
+        self.assertEqual(len(self.core.records["corte_brecha"]), 2)
+        self.assertEqual(len(self.core.records["brecha_ficha"]), 10)
+        code, out, err = self.cli(armar_corte(self, filas=FILAS[:1], fecha="2026-11-25"), "--reemplazar")
+        self.assertEqual(code, 0, err)
+        self.assertIn("4 deleted", out)
+        por_corte = {}
+        for r in self.core.records["brecha_ficha"]:
+            por_corte[r["attributes"]["corte"]] = por_corte.get(r["attributes"]["corte"], 0) + 1
+        self.assertEqual(sorted(por_corte.values()), [1, 5])
+
+    def test_el_corte_se_hace_visible_al_final(self):
+        # cargado_en (what the API needs to show a corte) goes in a last PATCH, after every ficha
+        self.assertEqual(self.cli(armar_corte(self))[0], 0)
+        escrituras = [(m, p, b) for m, p, _, b in self.core.requests if m in ("POST", "PATCH")
+                      and p.startswith("/api/objects/")]
+        crear = escrituras[0]
+        self.assertEqual(crear[1], "/api/objects/corte_brecha/records")
+        self.assertNotIn("cargado_en", crear[2]["attributes"])
+        self.assertTrue(all(p == "/api/objects/brecha_ficha/records" for _, p, _ in escrituras[1:-1]))
+        self.assertEqual(len(escrituras[1:-1]), 5)
+        ultimo = escrituras[-1]
+        self.assertTrue(ultimo[1].startswith("/api/objects/corte_brecha/records/"), ultimo)
+        self.assertEqual(list(ultimo[2]["attributes"]), ["cargado_en"])
+        # a reload hides it first, then shows it again at the end
+        self.core.requests.clear()
+        cambiadas = [fila(1, "1-2-3", "SUBVALUADO", "30000", "99.10")] + FILAS[1:]
+        self.assertEqual(self.cli(armar_corte(self, filas=cambiadas))[0], 0)
+        cortes = [b["attributes"] for m, p, _, b in self.core.requests if m == "PATCH" and "/corte_brecha/" in p]
+        self.assertIsNone(cortes[0]["cargado_en"])
+        self.assertEqual(list(cortes[-1]), ["cargado_en"])
+
+    def test_una_carga_a_medias_queda_oculta_y_la_siguiente_la_termina(self):
+        self.core.fail_record_after = {"brecha_ficha": 2}
+        code, _, err = self.cli(armar_corte(self))
+        self.assertEqual(code, 1)
+        # only the status and the fields Core names, never its message
+        self.assertIn("-> 400 (campos: piso)", err)
+        self.assertNotIn("boom-after", err)
+        self.assertNotIn("cargado_en", self.core.records["corte_brecha"][0]["attributes"])
+        self.core.fail_record_after = {}
+        code, out, err = self.cli(armar_corte(self))
+        self.assertEqual(code, 0, err)
+        self.assertIn("cargado_en", self.core.records["corte_brecha"][0]["attributes"])
+        self.assertEqual(len(self.fichas()), 5)
+        # all loaded but cargado_en: the next run only shows it
+        del self.core.records["corte_brecha"][0]["attributes"]["cargado_en"]
+        self.core.requests.clear()
+        code, out, err = self.cli(armar_corte(self))
+        self.assertEqual(code, 0, err)
+        self.assertIn("cargado_en", self.core.records["corte_brecha"][0]["attributes"])
+        self.assertEqual([m for m, p in self.escrituras()], ["PATCH", "PATCH"])
+
+    def test_la_cpu_de_una_ficha_sin_codigo_no_empata_con_otra(self):
+        # X has no codigo_municipal and CPU 123: srtm writes its row with codigo_catastro 123. Y (01-01-0006) shares
+        # the CPU: matching the row to Y would put X's brecha on Y's predio. the same with sector-manzana-lote
+        self.core.add_record("predio_catastral", {"codigo_cpu": "123", "sector": "5", "manzana": "5", "lote": "5"})
+        self.core.add_record("predio_catastral", {"codigo_municipal": "01-01-0006", "codigo_cpu": "0123",
+                                                  "sector": "05", "manzana": "05", "lote": "05"})
+        filas = [fila(1, "123", "OMISO", "0", "0"), fila(2, "5-5-5", "OMISO", "0", "0"),
+                 fila(3, "1-1-6", "COINCIDE", "0", "0")]
+        code, out, err = self.cli(armar_corte(self, filas=filas))
+        self.assertEqual(code, 0, err)
+        f = self.fichas()
+        self.assertNotIn("codigo_municipal", f["PR-1"])
+        self.assertNotIn("codigo_municipal", f["PR-2"])
+        self.assertEqual(f["PR-3"]["codigo_municipal"], "01-01-0006")
+
+    def test_un_digito_que_no_es_ascii_no_se_normaliza(self):
+        # as Kotlin's \\d in Brecha.llave(): only ASCII digits lose their zeros
+        self.assertEqual(corte.llave("0\u0663"), "0\u0663")
+
+    def test_un_archivo_que_el_manifiesto_no_lista_sale_con_2(self):
+        carpeta = armar_corte(self)
+        with open(os.path.join(carpeta, "otra.parquet"), "wb") as f:
+            f.write(b"x")
+        code, _, err = self.cli(carpeta)
+        self.assertEqual(code, 2)
+        self.assertIn("sobran otra.parquet", err)
+        self.assertEqual(self.core.requests, [])
+
+    def test_un_srtm_parametro_sin_listar_no_se_lee(self):
+        carpeta = armar_corte(self, listar_parametro=False)
+        code, _, err = self.cli(carpeta)
+        self.assertEqual(code, 2)
+        self.assertIn("sobran srtm_parametro.parquet", err)
+
+    def test_otro_formato_o_filas_distintas_salen_con_2(self):
+        carpeta = armar_corte(self)
+        ruta = os.path.join(carpeta, "manifiesto.json")
+        with open(ruta, encoding="utf-8") as f:
+            manifiesto = json.load(f)
+        manifiesto["formato"] = 2
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(manifiesto, f)
+        code, _, err = self.cli(carpeta)
+        self.assertEqual(code, 2)
+        self.assertIn("de formato 2", err)
+        manifiesto["formato"] = 1
+        next(a for a in manifiesto["archivos"] if a["archivo"] == "srtm_brecha_predio.parquet")["filas"] = 9
+        with open(ruta, "w", encoding="utf-8") as f:
+            json.dump(manifiesto, f)
+        code, _, err = self.cli(carpeta)
+        self.assertEqual(code, 2)
+        self.assertIn("filas de srtm_brecha_predio.parquet", err)
+        self.assertEqual(self.core.requests, [])
 
     def test_sin_uit_en_el_corte_usa_la_de_la_opcion(self):
         carpeta = armar_corte(self, parametros=[])

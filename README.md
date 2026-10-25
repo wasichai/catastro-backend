@@ -442,8 +442,10 @@ un Parquet por tabla, publicada en S3. `importar_corte_brecha.py` la carga en tr
 - `decision_brecha`, la bandeja (`clave` `<codigo_municipal>|<anio>`): no la toca la carga, la escribe la API, y así
   una decisión sobrevive a los cortes nuevos.
 
-Antes de leer nada verifica cada archivo del manifiesto (bytes y sha256): uno que falta o no coincide, o un
-manifiesto sin `srtm_brecha_corrida.parquet` y `srtm_brecha_predio.parquet`, sale con 2 sin llamar al Core. Lee con
+Antes de leer nada verifica el corte como `manifiesto.verificar_corte` de srtm: `formato` 1, cada archivo del
+manifiesto con sus bytes, su sha256 y su número de filas, y ningún archivo que el manifiesto no liste. Un archivo que
+falta, sobra o no coincide, o un manifiesto sin `srtm_brecha_corrida.parquet` y `srtm_brecha_predio.parquet`, sale
+con 2 sin llamar al Core. Lee con
 **duckdb** (`requirements-corte.txt`, la misma versión que el venv del corte: `python3 -m pip install -r
 model/requirements-corte.txt`) la corrida del manifiesto y sus filas, y la UIT del año de `srtm_parametro` (tipo `UIT`,
 vigente al 1 de enero); si el corte no la trae, `--uit`, y sin ninguna `supera_5_uit` queda vacío. `supera_5_uit` es
@@ -452,11 +454,16 @@ vigente al 1 de enero); si el corte no la trae, `--uit`, y sin ninguna `supera_5
 Cada fila empata con su ficha por la llave de `Brecha.llave()` de srtm: sin espacios, en mayúsculas y cada grupo de
 dígitos sin ceros a la izquierda (`01-01-0006` es `1-1-6`). `codigo_catastro` es el código del ítem de catastro como lo
 muestra srtm (su código municipal, si no su CPU, si no sector-manzana-lote), así que se busca primero entre los
-`codigo_municipal` de las fichas, luego entre sus `codigo_cpu` y al final entre su sector-manzana-lote; una llave que
-comparten dos fichas no empata con ninguna (y se cuenta).
+`codigo_municipal` de las fichas, luego entre sus `codigo_cpu` y al final entre su sector-manzana-lote. Cada llave se
+arma sobre **todas** las fichas: una llave que comparten dos fichas, o que tiene una ficha sin `codigo_municipal`
+(srtm escribe la CPU o el S-M-L solo para un ítem sin código, así que la fila es de esa ficha), no empata con ninguna.
 
 Es idempotente por `clave`: crea lo que falta, actualiza (`PATCH`) lo que cambió y un corte igual no escribe nada, ni
-`cargado_en`. Las fichas del corte que el corte ya no trae solo se cuentan; `--reemplazar` las borra. Cada escritura
+`cargado_en`. **`cargado_en` se escribe al final**, después de todas las fichas, y la API solo muestra los cortes que lo
+tienen: un corte nunca se ve a medio cargar. Una recarga lo borra primero, y una carga que falla a la mitad deja el
+corte oculto; la siguiente corrida la termina. Si el corte guardado tiene fichas que el corte ya no trae, la carga
+sale con 2 sin escribir nada; `--reemplazar` las borra (nunca toca las de otro corte). Un rechazo del Core imprime
+solo el estado y los campos que nombra. Cada escritura
 lleva `X-Change-Reason` `corte-brecha:<org>:<fecha>`. Solo imprime conteos: filas, por categoría, empatadas con ficha,
 sin ficha (con y sin código), llaves repetidas y cuántas superan 5 UIT; nunca un código ni un monto. `--org` espera el
 id de la organización, como `import_vias.py`. `--s3` baja el corte con `aws s3 cp --recursive` a una carpeta temporal

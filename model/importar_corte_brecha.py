@@ -18,14 +18,16 @@ fichas share matches neither.
 Idempotent upsert by clave: corte_brecha by <org>|<fecha>, brecha_ficha by <id of the corte>|<codigo_catastro>
 (<id of the corte>|id:<srtm's row id> when the row has no codigo_catastro, or shares it with another row of the
 corte). A row Core lacks is created, one that differs is updated (PATCH, a None clears), and an equal corte writes
-nothing, not even cargado_en. --reemplazar also deletes the fichas of the corte the corte no longer has; without it
-they are only counted. Every write carries X-Change-Reason corte-brecha:<org>:<fecha>. Only counts are printed: no
+nothing, not even cargado_en. cargado_en is written last, after every ficha: the API shows only cortes that have it,
+so a corte is never seen half loaded (a reload clears it first). Fichas of the stored corte the corte no longer has
+stop the load (exit 2, nothing written) unless --reemplazar, which deletes them. Every write carries X-Change-Reason corte-brecha:<org>:<fecha>. Only counts are printed: no
 code, no amount of a predio. --org refuses to write unless the account of --email belongs to that organization (its
 id, as import_vias.py). --dry-run reads Core and says what it would write, writing nothing.
 
 Run: python3 -I importar_corte_brecha.py (--corte DIR | --s3 s3://…/<org>/<fecha>) [--org <organization id>]
              [--uit 5500] [--reemplazar] [--dry-run] [--workers 4]
-Exit: 0 ok, 1 Core refused something, 2 the corte does not fit (sha256, files, corrida, rows), duckdb is missing,
+Exit: 0 ok, 1 Core refused something (only the status and the fields it names are printed), 2 the corte does not fit
+      (format, sha256, extra or missing files, row counts, corrida, rows), fichas absent without --reemplazar, duckdb is missing,
       the S3 copy failed or --org is another organization.
 """
 import argparse
@@ -52,13 +54,16 @@ from tabular import LoadError, clean_text, load_enums, write_all  # noqa: E402
 
 CORTE, FICHA, PREDIO = "corte_brecha", "brecha_ficha", "predio_catastral"
 MANIFIESTO = "manifiesto.json"
+# the manifest format srtm writes (herramientas/manifiesto.py FORMATO)
+FORMATO = 1
 CORRIDA_PARQUET, PREDIO_PARQUET, PARAMETRO_PARQUET = (
     "srtm_brecha_corrida.parquet", "srtm_brecha_predio.parquet", "srtm_parametro.parquet")
 MODEL_PATH = os.path.join(HERE, "model.json")
 # the S3 CLI; a test points it at a fake
 AWS = "aws"
 CINCO = Decimal(5)
-DIGITOS = re.compile(r"\d+")
+# ASCII digits only, as Kotlin's \\d in Brecha.llave() (python's \d also takes other scripts' digits)
+DIGITOS = re.compile(r"\d+", re.ASCII)
 
 DECIMALES_FICHA = ("autoavaluo_declarado", "autoavaluo_catastro", "delta_autoavaluo", "impuesto_declarado",
                    "impuesto_catastro", "delta_impuesto", "delta_arbitrios")
@@ -100,8 +105,9 @@ def sha256(path):
 
 
 def verificar(carpeta):
-    """The manifest of `carpeta`, and its own sha256, once every file it lists is there with its bytes and sha256 and
-    the two brecha tables are among them; a CorteError naming every problem otherwise."""
+    """The manifest of `carpeta`, and its own sha256, once it is of FORMATO, every file it lists is there with its bytes
+    and sha256, no other file is, and the two brecha tables are among them; a CorteError naming every problem
+    otherwise. The row counts are checked by leer, with duckdb."""
     ruta = os.path.join(carpeta, MANIFIESTO)
     if not os.path.isfile(ruta):
         raise CorteError(f"falta {MANIFIESTO} en {carpeta}")
@@ -114,8 +120,14 @@ def verificar(carpeta):
     if not isinstance(archivos, list) or not all(isinstance(a, dict) and "archivo" in a and "sha256" in a
                                                  for a in archivos):
         raise CorteError(f"{MANIFIESTO} sin la lista de archivos con su sha256")
+    if manifiesto.get("formato") != FORMATO:
+        raise CorteError(f"{MANIFIESTO} de formato {manifiesto.get('formato')!r}: se espera {FORMATO}")
     problemas = []
     listados = {a["archivo"] for a in archivos}
+    # as srtm's manifiesto.verificar_corte: a file the manifest does not list is never read
+    sobrantes = sorted(set(os.listdir(carpeta)) - listados - {MANIFIESTO})
+    if sobrantes:
+        problemas.append(f"sobran {', '.join(sobrantes)}")
     for necesario in (CORRIDA_PARQUET, PREDIO_PARQUET):
         if necesario not in listados:
             problemas.append(f"el manifiesto no lista {necesario}")
@@ -160,6 +172,11 @@ def leer(carpeta, manifiesto):
     duckdb = _duckdb()
     con = duckdb.connect()
     try:
+        distintos = [e["archivo"] for e in manifiesto["archivos"] if "filas" in e and e["archivo"].endswith(".parquet")
+                     and con.execute("SELECT count(*) FROM read_parquet(?)", [os.path.join(carpeta, e["archivo"])])
+                     .fetchone()[0] != e["filas"]]
+        if distintos:
+            raise CorteError(f"el corte no coincide con su manifiesto: filas de {', '.join(distintos)}")
         corridas = _filas(con, os.path.join(carpeta, CORRIDA_PARQUET),
                           f"SELECT {', '.join(COLUMNAS_CORRIDA)} FROM {{tabla}} WHERE id = ?", [elegida["id"]])
         if len(corridas) != 1:
@@ -170,7 +187,8 @@ def leer(carpeta, manifiesto):
         uit = None
         anio = corridas[0].get("anio") or manifiesto.get("anio")
         parametros = os.path.join(carpeta, PARAMETRO_PARQUET)
-        if anio is not None and os.path.isfile(parametros):
+        listado = any(e["archivo"] == PARAMETRO_PARQUET for e in manifiesto["archivos"])
+        if anio is not None and listado and os.path.isfile(parametros):
             primero_enero = date(int(anio), 1, 1)
             uits = [p for p in _filas(con, parametros, "SELECT vigencia_desde, vigencia_hasta, valor_numerico, estado"
                                                        " FROM {tabla} WHERE tipo = 'UIT'")
@@ -218,21 +236,25 @@ def _texto_decimal(numero):
 
 
 def indice_de_fichas(predios):
-    """llave -> codigo_municipal, by codigo_municipal, by codigo_cpu and by sector|manzana|lote, in that order of
-    strength; a key two fichas share is left out (and counted)."""
+    """llave -> codigo_municipal, by codigo_municipal, by codigo_cpu and by sector-manzana-lote, in that order of
+    strength. Each layer is built over every ficha, also those without codigo_municipal: srtm writes a CPU or an S-M-L
+    as codigo_catastro only for an item without one, so a key shared with a ficha that has no codigo_municipal is that
+    ficha's, and matching it to another one would put the row on the wrong predio. A key with two owners, or with an
+    owner without codigo_municipal, matches nothing (and the ones with two or more owners are counted)."""
     capas, ambiguas = [], 0
     for clave_de in (lambda a: llave(a.get("codigo_municipal")),
                      lambda a: llave(a.get("codigo_cpu")),
                      lambda a: _sml(a)):
-        vistas = {}
+        duenos = {}
         for predio in predios:
             atributos = predio.get("attributes") or {}
-            codigo, clave = atributos.get("codigo_municipal"), clave_de(atributos)
-            if codigo is None or clave is None:
+            clave = clave_de(atributos)
+            if clave is None:
                 continue
-            vistas.setdefault(clave, set()).add(codigo)
-        ambiguas += sum(1 for codigos in vistas.values() if len(codigos) > 1)
-        capas.append({clave: next(iter(codigos)) for clave, codigos in vistas.items() if len(codigos) == 1})
+            codigo = atributos.get("codigo_municipal")
+            duenos.setdefault(clave, set()).add(codigo if codigo is not None else ("sin codigo", predio.get("id")))
+        ambiguas += sum(1 for d in duenos.values() if len(d) > 1)
+        capas.append({clave: next(iter(d)) for clave, d in duenos.items() if len(d) == 1 and isinstance(next(iter(d)), str)})
     return capas, ambiguas
 
 
@@ -421,29 +443,49 @@ def cargar(args, carpeta):
     existentes = client.list_all(FICHA, corte=guardado["id"]) if guardado else []
     todo = plan_fichas(nuevas, existentes, args.reemplazar)
     cambio_corte = cambios(corte, guardado.get("attributes") or {}) if guardado else corte
-    escribe = bool(cambio_corte or todo["create"] or todo["update"] or todo["delete"])
+    # a corte without cargado_en is one a load left half done: it is finished even if nothing else changed
+    a_medias = guardado is not None and not (guardado.get("attributes") or {}).get("cargado_en")
+    escribe = bool(cambio_corte or todo["create"] or todo["update"] or todo["delete"] or a_medias)
     accion = "create" if guardado is None else ("update" if escribe else "unchanged")
     resumen = (f"corte {corte['clave']}: {accion}; fichas: {len(todo['create'])} {{create}}, {len(todo['update'])}"
                f" {{update}}, {len(todo['delete'])} {{delete}}, {todo['unchanged']} unchanged, "
                + (f"{len(todo['absent'])} absent from the corte deleted" if args.reemplazar
                   else f"{len(todo['absent'])} absent from the corte kept (--reemplazar deletes them)"))
+    if todo["absent"] and not args.reemplazar:
+        # the same org|fecha is the same corte: fichas it no longer has would stay in the panel and its total would
+        # not add up, so nothing is written until --reemplazar says to delete them
+        print(resumen.format(create="to create", update="to update", delete="to delete"))
+        raise CorteError(f"{len(todo['absent'])} fichas del corte guardado ya no vienen en el corte: --reemplazar las"
+                         " borra; nothing was written")
     if args.dry_run:
         print(resumen.format(create="to create", update="to update", delete="to delete"))
         return
     if escribe:
-        cambio_corte = {**cambio_corte, "cargado_en": _ahora()}
+        # cargado_en goes last, after every ficha: until then the API does not show the corte, so a reader never sees
+        # it half loaded, and a load that fails half way leaves it hidden (the next run finishes it)
         if guardado is None:
             corte_id = write_all(client, [("corte", 0, "POST", CORTE, None, cambio_corte)], 1, razon)["corte"]
             for atributos in nuevas:
                 atributos["corte"] = corte_id
                 atributos["clave"] = atributos["clave"].replace("<corte nuevo>", corte_id, 1)
         else:
-            write_all(client, [("corte", 0, "PATCH", CORTE, corte_id, cambio_corte)], 1, razon)
-    ops = ([(n, n, "POST", FICHA, None, a) for n, a in todo["create"]]
-           + [(n, n, "PATCH", FICHA, i, a) for i, n, a in todo["update"]]
-           + [(f"d{r['id']}", 0, "DELETE", FICHA, r["id"], None) for r in todo["delete"]])
-    write_all(client, ops, args.workers, razon)
+            write_all(client, [("corte", 0, "PATCH", CORTE, corte_id, {**cambio_corte, "cargado_en": None})], 1, razon)
+        ops = ([(n, n, "POST", FICHA, None, a) for n, a in todo["create"]]
+               + [(n, n, "PATCH", FICHA, i, a) for i, n, a in todo["update"]]
+               + [(f"d{r['id']}", 0, "DELETE", FICHA, r["id"], None) for r in todo["delete"]])
+        write_all(client, ops, args.workers, razon)
+        write_all(client, [("corte", 0, "PATCH", CORTE, corte_id, {"cargado_en": _ahora()})], 1, razon)
     print("done: " + resumen.format(create="created", update="updated", delete="deleted"))
+
+
+def _campos(cuerpo):
+    """Only the fields Core's refusal names, never its message: it may echo a value of the row (only counts leave)."""
+    try:
+        errores = json.loads(cuerpo).get("errors") or []
+        nombres = sorted({str(e.get("field")) for e in errores if isinstance(e, dict) and e.get("field")})
+    except (ValueError, AttributeError, TypeError):
+        nombres = []
+    return f" (campos: {', '.join(nombres)})" if nombres else ""
 
 
 def main(argv=None):
@@ -460,11 +502,11 @@ def main(argv=None):
         print(f"error: {e}", file=sys.stderr)
         return 2
     except LoadError as e:
-        print(f"error /api/objects/{e.object_name}/records (row {e.fila}) -> {e.error.status}\n{e.error.body}",
+        print(f"error /api/objects/{e.object_name}/records (row {e.fila}) -> {e.error.status}{_campos(e.error.body)}",
               file=sys.stderr)
         return 1
     except CoreError as e:
-        print(f"error -> {e.status}\n{e.body}", file=sys.stderr)
+        print(f"error -> {e.status}{_campos(e.body)}", file=sys.stderr)
         return 1
     finally:
         if temporal:
