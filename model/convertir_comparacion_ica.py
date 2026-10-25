@@ -24,7 +24,7 @@ Rules (wasichai/catastro-backend#10, contexto-comun.md «Ruling (#10)»):
   vínculos: vinculo_metodo matches the model's enum in any case (with _ or a space) or through --metodo TEXTO=ENUM;
           any other text exits 2. A row without cod_predio_rentas links nothing; an empty method links the code with
           an empty vinculo_metodo; a repeated code keeps its first row. Without --vinculos every ficha is loaded and
-          vinculo_metodo goes empty.
+          fichas.csv leaves the vinculo_metodo column out (ruling R11), so the upsert does not clear it.
 Every rule that drops or empties something is counted, so the operator sees what the delivery lost.
 
 The default columns are the libro's; --map-predio, --map-construccion, --map-titulares and --map-vinculos
@@ -363,11 +363,13 @@ def main(argv=None):
     pisos, n_pisos = pisos_de(construcciones, codigos, mapas["construccion"], enums, args.anio_maximo)
     titulares, n_titulares = titulares_de(titular_filas, codigos, mapas["titulares"])
 
-    # a column the libro lacks is left out, so the upsert leaves that field as it is (README «Entregas»)
+    # a column the libro lacks, or vinculo_metodo without --vinculos, is left out, so the upsert leaves that field as
+    # it is (ruling R11, README «Entregas»)
     con_cuc = bool(predios) and mapas["predio"]["cuc"].lower() in predios[0]
+    columnas_fichas = [c for c in FICHAS_CSV if (c != "cuc" or con_cuc) and (c != "vinculo_metodo" or vinculos is not None)]
     try:
         os.makedirs(args.salida, exist_ok=True)
-        _escribir(os.path.join(args.salida, "fichas.csv"), [c for c in FICHAS_CSV if c != "cuc" or con_cuc], fichas)
+        _escribir(os.path.join(args.salida, "fichas.csv"), columnas_fichas, fichas)
         _escribir(os.path.join(args.salida, "pisos.csv"), PISOS_CSV, pisos)
         _escribir(os.path.join(args.salida, "titulares.csv"), TITULARES_CSV, titulares)
     except OSError as e:
