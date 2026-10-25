@@ -413,6 +413,54 @@
           "type": "INTEGER"
         }
       ]
+    },
+    {
+      "name": "titular_catastral",
+      "label": "Titular catastral",
+      "pluralLabel": "Titulares catastrales",
+      "description": "Un titular que la ficha catastral levanta sobre un predio: propietario, poseedor u otra condición. Datos personales (Ley 29733): SRTM_LECTOR es su único lector, y los reportes de carga nunca imprimen documentos ni nombres.",
+      "indexes": [
+        ["codigo_municipal"]
+      ],
+      "fields": [
+        {
+          "name": "codigo_municipal",
+          "label": "Código municipal",
+          "type": "TEXT",
+          "required": true,
+          "description": "Igual al código municipal del predio (predio_catastral.codigo_municipal), repetido aquí porque Core solo pagina por un campo propio del objeto, más el id."
+        },
+        {
+          "name": "tipo_documento",
+          "label": "Tipo de documento",
+          "type": "TEXT",
+          "description": "DNI, RUC, carné de extranjería, etc., tal como lo escribe el padrón de origen: el vocabulario varía entre municipalidades."
+        },
+        {
+          "name": "numero_documento",
+          "label": "Número de documento",
+          "type": "TEXT",
+          "description": "Tal como viene en la ficha. Un documento de relleno (por ejemplo 000000000) se carga vacío."
+        },
+        {
+          "name": "nombre",
+          "label": "Nombre",
+          "type": "TEXT",
+          "description": "Nombre del titular. Dato personal (Ley 29733)."
+        },
+        {
+          "name": "porcentaje",
+          "label": "Porcentaje",
+          "type": "DECIMAL",
+          "description": "Porcentaje de propiedad del titular sobre el predio, cuando la ficha lo trae."
+        },
+        {
+          "name": "condicion",
+          "label": "Condición",
+          "type": "TEXT",
+          "description": "Propietario, poseedor u otra condición, tal como la nombra el padrón de origen."
+        }
+      ]
     }
   ],
   "relationships": [
@@ -442,6 +490,15 @@
       "target": "entrega_catastral",
       "fieldName": "entrega",
       "required": false
+    },
+    {
+      "name": "titular_catastral_predio",
+      "label": "Predio",
+      "inverseLabel": "Titulares",
+      "source": "titular_catastral",
+      "target": "predio_catastral",
+      "fieldName": "predio",
+      "required": true
     }
   ]
 }
