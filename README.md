@@ -42,10 +42,11 @@ yarn install && yarn format:check
 ## Modelo y carga
 
 El modelo (`model/model.json`) y los cargadores son Python solo con la biblioteca estándar, con la forma de los de
-srtm-backend. Siete objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
+srtm-backend. Ocho objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
 `construccion`, `obra_complementaria` y `titular_catastral` (cuelgan de un predio; este último, datos personales de
 Ley 29733, ver [Modelo y carga](#modelo-y-carga)), `arancel`, `configuracion_catastro` (la región de la organización, ver
-abajo) y `entrega_catastral` (cada entrega del levantamiento, ver [Entregas](#entregas)). wasichai
+abajo) y `entrega_catastral` (cada entrega del levantamiento, ver [Entregas](#entregas)) y `tramo_via` (un frente del eje vial con el código SAT
+de su arancel, ver «Vías» abajo). wasichai
 no tiene únicos compuestos, así que `arancel.clave` (`id_aranc|anio`) garantiza el par único. `codigo_vu` de una obra
 es `TIPO DE OBRA|número`, como `obra_categoria` de srtm (`model/data/obras_complementarias.csv`).
 
@@ -156,6 +157,37 @@ ogr2ogr -f GeoJSON -t_srs EPSG:4326 lotes.geojson 120302_MD_Perene_ECF.gdb CF_LO
 python3 -I import_lotes.py --geojson lotes.geojson --map codigo_municipal=COD_PRE --dry-run
 python3 -I import_lotes.py --geojson lotes.geojson --actualizar-geometria --entrega GIS-2026-10 \
   --fecha-corte 2026-10-01 --fuente GIS
+```
+
+**Vías** (`import_vias.py`): el eje vial de un GeoPackage hacia `tramo_via`, cada frente con el código SAT de su
+arancel (`id_aranc`, el `codigo_de_via` completo del padrón, por ejemplo `0010000401-01`). Lee con `sqlite3`, sin GDAL,
+`cf_eje_vial`, `cf_lotes_pol` y `padron_predial` de `--gpkg` (las tres en EPSG:32718; el encabezado del GeoPackage y el
+WKB se leen a mano), y de la hoja `padron` de `--padron-xlsx` solo `codigo_predio`, `codigo_de_via`,
+`nombre_de_la_via` y `tipo_predio` (se quedan los urbanos, `tipo_predio` 1). El plano predial fija el valor por frente
+de vía (notas 2 y 3), así que cada tramo se asigna así:
+
+1. su nombre normalizado (sin tildes, sin el tipo inicial CA., AV., JR., PJE., etc., con los espacios colapsados) es de
+   un solo código urbano, y ningún otro `cod_via` del eje se llama igual: `NOMBRE_UNICO`, una fila `AMBOS`;
+2. si no, los lotes de los predios de cada código con ese nombre (`cod_predio` → `id_lote_p_vinculado` →
+   `cf_lotes_pol`) se ubican a la izquierda o a la derecha del tramo (el signo del producto cruz con su segmento más
+   cercano; un lote más allá de un extremo no cuenta). Cada lado toma el código con el centroide más cercano, a
+   `--distancia` metros o menos (30): `CERCANIA`. Si los dos lados dan el mismo código, o solo un lado tiene lotes, queda
+   una fila `AMBOS`; si dan dos códigos, dos filas, `IZQUIERDO` y `DERECHO` (según el sentido de la línea);
+3. si nada se cumple, o el tramo es «SIN NOMBRE»: `SIN_ARANCEL`, una fila `AMBOS` sin `id_aranc`.
+
+`cuadra` queda vacía: el eje no la trae. La geometría va al Core en GeoJSON EPSG:4326, como `MultiLineString`
+(wasichai-gis la guarda en la 32718 de la columna); la conversión desde UTM 18S es la serie de Krüger en Python, sin
+proj. El comando es idempotente por `tramo_via.clave` = `<fid>|<lado>`: crea lo que falta, actualiza (`PATCH`) lo que
+cambió (atributos, o un vértice a más de 1e-6 grados) y borra la fila de un fid cuyo lado ya no sale (un `AMBOS` que
+ahora es `IZQUIERDO` y `DERECHO`, o al revés); las filas de un fid que el archivo no trae se dejan y se cuentan. Solo
+imprime conteos (tramos por asignación, ejes partidos por lado, códigos sin tramo, sin lotes y con lotes lejanos).
+`--revision` escribe un csv con `cod_via_eje`, `fid_eje`, `lado`, `id_aranc` y `asignacion`, sin datos personales, y
+se niega a escribirlo dentro del repositorio. `--org` (el id de la organización) se niega a escribir si la cuenta de
+`--email` es de otra. `--dry-run` lee el Core y dice cuánto crearía, actualizaría y borraría, sin escribir nada.
+
+```sh
+python3 -I import_vias.py --gpkg ica.gpkg --padron-xlsx PADRON_CONSTRUCCION.xlsx --revision /tmp/revision-vias.csv \
+  --org <id de la organización> --dry-run
 ```
 
 ### Entregas
@@ -720,6 +752,49 @@ anterior). srtm pide su token con `POST /api/auth/token {"clientId", "clientSecr
 
 Si se cambia el jar antes, cada corrida de la brecha de srtm falla en la página 0 con uno de esos códigos, y srtm solo
 muestra el código (no el cuerpo, que dice `configuracion_catastro.region`).
+
+## API para catastro-ui: aranceles por vía
+
+El mapa de catastro-ui pinta cada tramo de vía con su valor arancelario de un año.
+
+```
+GET /api/catastro/vias/aranceles?anio=2026
+Authorization: Bearer <token>
+```
+
+- `anio` de 1900 a 2100; sin él, el año en curso (America/Lima). Un `anio` que no se lee, o un parámetro que sobra, es
+  un **400** que lo nombra (`errors[0].field`): ese es el contrato con catastro-ui.
+- Sin token, **401**. Lee como quien llama: sin `READ` sobre `tramo_via`, **403** de core. `SRTM_LECTOR` lo tiene.
+- Responde un `FeatureCollection` GeoJSON en EPSG:4326, un `Feature` por fila de `tramo_via` (las que no tienen
+  geometría no se dibujan y no salen), ordenados por `clave`. `id` es el id del registro. Un `MultiLineString` de una
+  parte sale como su `LineString`.
+- `valor_m2` sale del `arancel` con clave `id_aranc|anio`, leído en un solo lote por `id_aranc` como lo leen las
+  valuaciones; nunca se copia al tramo, así que un arancel que srtm sincroniza se ve en el mapa sin escribir nada más.
+  Es `null` si el tramo no tiene `id_aranc` o si su vía no tiene arancel ese año (nunca se toma el de otro año).
+
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "6c1f…",
+      "geometry": { "type": "LineString", "coordinates": [[-75.7300, -14.0700], [-75.7290, -14.0700]] },
+      "properties": {
+        "cod_via_eje": "026220",
+        "tip_via": "CA.",
+        "nom_via": "CA. LOS ÁLAMOS",
+        "cuadra": null,
+        "lado": "AMBOS",
+        "id_aranc": "0010000401-01",
+        "asignacion": "NOMBRE_UNICO",
+        "anio": 2026,
+        "valor_m2": 356.0
+      }
+    }
+  ]
+}
+```
 
 ## Decisiones normativas
 
