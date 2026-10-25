@@ -16,7 +16,11 @@ data class Insumos(
     val uso: String?,
     val esEdificio: Boolean,
     val construcciones: List<Construccion>,
-    val obras: List<Obra>
+    val obras: List<Obra>,
+    // predio_catastral.estado_levantamiento (SIN_LEVANTAR, PARCIAL, COMPLETO); SIN_LEVANTAR is the first motivo asked
+    val levantamiento: String? = null,
+    // URBANO or RUSTICO (model's tipo_predio); read by #26, not yet by this task
+    val tipoPredio: String? = null
 )
 
 // one piso, or one seccion of a piso. material and estado in catastro's enum spelling (CONCRETO, MUY BUENO …); the
@@ -112,6 +116,9 @@ object Valorizacion {
             "CLINICAS HOSPITALES CINES INDUSTRIAS COLEGIOS TALLERES" to "04"
         )
 
+    // predio_catastral.estado_levantamiento = SIN_LEVANTAR: a ficha not yet surveyed has no insumos worth asking for
+    const val SIN_LEVANTAMIENTO = "SIN_LEVANTAMIENTO"
+
     private const val ESCALA = 2
     private const val MUROS_SIN_TECHOS = 'A'
     private const val MUROS_DRYWALL = 'D'
@@ -142,6 +149,8 @@ object Valorizacion {
         i: Insumos,
         t: Tablas
     ): Valuacion.Valorizada {
+        // checked first: an unsurveyed ficha has nothing worth asking for, not even its área
+        if (i.levantamiento == "SIN_LEVANTAR") falta(SIN_LEVANTAMIENTO, SIN_LEVANTAMIENTO)
         val area = i.areaTerreno?.takeIf { it.signum() > 0 } ?: falta("AREA_TERRENO_FALTANTE", "El predio no tiene área de terreno")
         val arancel =
             i.arancelM2?.takeIf { it.signum() > 0 }

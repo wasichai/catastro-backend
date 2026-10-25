@@ -20,7 +20,8 @@ CLASIFICACION = ["CASA HABITACION Y DEPARTAMENTOS PARA VIVIENDA",
 OBJETOS = {
     "predio_catastral": (
         ["codigo_municipal", "codigo_cpu", "sector", "manzana", "lote", "id_aranc", "cod_via", "cuadra", "lado", "uso",
-         "area_terreno", "longitud_frente", "anio_levantamiento", "es_edificio", "lote_geom"],
+         "area_terreno", "longitud_frente", "anio_levantamiento", "es_edificio", "lote_geom", "fecha_levantamiento",
+         "estado_levantamiento"],
         {"codigo_municipal"}, {"codigo_municipal"}),
     "construccion": (["piso", "area_construida", "anio_construccion", "material", "estado_conservacion", *CATEGORIAS,
                       "techo_incluido", "clasificacion", "seccion"], set(), set()),
@@ -28,6 +29,10 @@ OBJETOS = {
     "arancel": (["clave", "id_aranc", "anio", "valor_m2", "cod_via", "cuadra", "lado"],
                 {"clave", "id_aranc", "anio", "valor_m2"}, {"clave"}),
     "configuracion_catastro": (["region"], {"region"}, set()),
+    "entrega_catastral": (
+        ["codigo", "fecha_corte", "fuente", "archivo_sha256", "descripcion", "altas", "cambios", "sin_cambio",
+         "ausentes"],
+        {"codigo", "fecha_corte"}, {"codigo"}),
 }
 
 
@@ -86,10 +91,29 @@ class ModelTests(unittest.TestCase):
 
     def test_children_hang_from_a_required_predio(self):
         relations = {r["name"]: r for r in self.model["relationships"]}
-        self.assertEqual(set(relations), {"construccion_predio", "obra_complementaria_predio"})
-        for relation in relations.values():
+        for name in ("construccion_predio", "obra_complementaria_predio"):
+            relation = relations[name]
             self.assertEqual((relation["target"], relation["fieldName"], relation["required"]),
                              ("predio_catastral", "predio", True))
+
+    def test_the_levantamiento_state_has_no_default(self):
+        f = {x["name"]: x for x in self.objects["predio_catastral"]["fields"]}
+        self.assertEqual(self.model["enums"]["estado_levantamiento"], ["SIN_LEVANTAR", "PARCIAL", "COMPLETO"])
+        self.assertEqual((f["estado_levantamiento"]["type"], f["fecha_levantamiento"]["type"]), ("ENUM", "DATE"))
+        self.assertNotIn("default", f["estado_levantamiento"])
+
+    def test_a_predio_points_to_its_entrega(self):
+        r = {x["name"]: x for x in self.model["relationships"]}["predio_catastral_entrega"]
+        self.assertEqual((r["source"], r["target"], r["fieldName"], r.get("required", False)),
+                         ("predio_catastral", "entrega_catastral", "entrega", False))
+
+    def test_the_entrega_names_its_source_and_declares_its_summary(self):
+        enums = self.model["enums"]
+        self.assertEqual(enums["fuente_entrega"], ["BARRIDO", "INSPECCION", "LICENCIA", "GIS", "OTRA"])
+        f = {x["name"]: x for x in self.objects["entrega_catastral"]["fields"]}
+        self.assertEqual((f["fuente"]["type"], f["fuente"]["enum"]), ("ENUM", "fuente_entrega"))
+        for name in ("altas", "cambios", "sin_cambio", "ausentes"):
+            self.assertEqual(f[name]["type"], "INTEGER", name)
 
     def test_region_is_an_enum_of_the_engine_regions(self):
         # catastro.tablas.Region: an option here without its tables there is a 409 for that organization

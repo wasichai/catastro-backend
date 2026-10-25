@@ -166,13 +166,14 @@ def missing_columns(rows, mapping, required):
 
 
 def enum_option(value, options):
-    """The model option a cell means: case and underscores do not matter (MUY_BUENO is MUY BUENO). None if unknown."""
+    """The model option a cell means: case and underscores do not matter (MUY_BUENO is MUY BUENO, and an option
+    that is itself SIN_LEVANTAR matches sin levantar). None if unknown."""
     text = clean_text(value)
     if text is None:
         return None, None
     wanted = text.upper().replace("_", " ")
     for option in options:
-        if option.upper() == wanted:
+        if option.upper().replace("_", " ") == wanted:
             return option, None
     return None, f"'{text}' is not one of {', '.join(options)}"
 
@@ -216,6 +217,48 @@ def post_all(client, object_name, items, workers):
                 ids[key] = record_id
                 if done % PROGRESS_EVERY == 0:
                     print(f"  {object_name}: {done}/{len(items)}", flush=True)
+        except LoadError:
+            for future in futures:
+                future.cancel()
+            raise
+    return ids
+
+
+def write_all(client, ops, workers, reason):
+    """Writes (key, fila, method, object_name, record_id, attributes) ops with X-Change-Reason `reason`.
+
+    POST creates (attributes with None stripped, as `payload`); PATCH merges `attributes` as given, so a None clears
+    a field; DELETE ignores `attributes`. Returns key -> new id (POST only). The first refusal raises LoadError and
+    cancels the rest (as post_all).
+    """
+    ids = {}
+    if not ops:
+        return ids
+
+    def one(op):
+        key, fila, method, object_name, record_id, attributes = op
+        path = f"/api/objects/{object_name}/records"
+        try:
+            if method == "POST":
+                _, record = client.post(path, payload(attributes), reason=reason)
+                return key, record["id"]
+            if method == "PATCH":
+                client.patch(f"{path}/{record_id}", {"attributes": attributes}, reason=reason)
+            elif method == "DELETE":
+                client.delete(f"{path}/{record_id}", reason=reason)
+            else:
+                raise ValueError(f"write_all: unknown method '{method}'")
+        except CoreError as e:
+            raise LoadError(object_name, fila, e)
+        return key, None
+
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        futures = [pool.submit(one, op) for op in ops]
+        try:
+            for future in as_completed(futures):
+                key, record_id = future.result()
+                if record_id is not None:
+                    ids[key] = record_id
         except LoadError:
             for future in futures:
                 future.cancel()

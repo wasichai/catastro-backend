@@ -5,6 +5,7 @@ Run: cd model && python3 -m unittest -v
 import os
 import unittest
 
+import entregas as ent
 import import_fichas as imf
 from fake_core import FakeCore
 from helpers import run, write_csv, write_xlsx
@@ -31,7 +32,7 @@ OBRAS = """cod_pre,codigo_vu,cantidad,anio_construccion,material,estado_conserva
 class ParseTests(unittest.TestCase):
     def test_fichas_map_and_types(self):
         path_rows = read_table(write_csv(self, FICHAS))
-        fichas, problems = imf.fichas_from(path_rows, parse_map([], imf.FICHA_COLUMNS))
+        fichas, problems = imf.fichas_from(path_rows, parse_map([], imf.FICHA_COLUMNS), ENUMS)
         self.assertEqual(problems, [])
         self.assertEqual(fichas[0][1]["codigo_municipal"], "120302-0001")
         self.assertEqual(fichas[0][1]["sector"], "01")
@@ -41,7 +42,7 @@ class ParseTests(unittest.TestCase):
 
     def test_map_override(self):
         rows = read_table(write_csv(self, "CPM,cod_sect\nA-1,01\n"))
-        fichas, problems = imf.fichas_from(rows, parse_map(["codigo_municipal=CPM"], imf.FICHA_COLUMNS))
+        fichas, problems = imf.fichas_from(rows, parse_map(["codigo_municipal=CPM"], imf.FICHA_COLUMNS), ENUMS)
         self.assertEqual((problems, fichas[0][1]["codigo_municipal"]), ([], "A-1"))
         with self.assertRaises(ValueError):
             parse_map(["color=COLOR"], imf.FICHA_COLUMNS)
@@ -49,11 +50,11 @@ class ParseTests(unittest.TestCase):
     def test_bad_fichas_are_all_listed(self):
         rows = read_table(write_csv(self, "cod_pre,area_terreno,anio_levantamiento,es_edificio\n"
                                          "A,abc,2026,no\nA,1,2026,no\n,1,2026,no\nB,1,20.5,quizas\nC,-4,,\n"))
-        _, problems = imf.fichas_from(rows, parse_map([], imf.FICHA_COLUMNS))
+        _, problems = imf.fichas_from(rows, parse_map([], imf.FICHA_COLUMNS), ENUMS)
         self.assertEqual(len(problems), 6, problems)  # one row can have several
 
     def test_missing_column_is_a_problem(self):
-        _, problems = imf.fichas_from(read_table(write_csv(self, "x\n1\n")), parse_map([], imf.FICHA_COLUMNS))
+        _, problems = imf.fichas_from(read_table(write_csv(self, "x\n1\n")), parse_map([], imf.FICHA_COLUMNS), ENUMS)
         self.assertEqual(len(problems), 1)
 
     def test_categorias_as_text_or_seven_columns(self):
@@ -173,9 +174,33 @@ class ParseTests(unittest.TestCase):
 
     def test_xlsx_input_with_float_codes(self):
         path = write_xlsx(self, ["COD_PRE", "COD_SECT", "AREA_TERRENO"], [["77", "1.0", "100.50"]])
-        fichas, problems = imf.fichas_from(read_table(path), parse_map([], imf.FICHA_COLUMNS))
+        fichas, problems = imf.fichas_from(read_table(path), parse_map([], imf.FICHA_COLUMNS), ENUMS)
         self.assertEqual(problems, [])
         self.assertEqual((fichas[0][1]["sector"], fichas[0][1]["area_terreno"]), ("1", "100.5"))
+
+    def test_estado_and_fecha_levantamiento(self):
+        rows = read_table(write_csv(self, "cod_pre,estado_levantamiento,fecha_levantamiento\nA,sin_levantar,2026-09-30\n"
+                                          "B,,46000\nC,LEVANTADO,30/09/2026\n"))
+        fichas, problems = imf.fichas_from(rows, parse_map([], imf.FICHA_COLUMNS), ENUMS)
+        self.assertEqual(fichas[0][1]["estado_levantamiento"], "SIN_LEVANTAR")
+        self.assertEqual(fichas[0][1]["fecha_levantamiento"], "2026-09-30")
+        self.assertEqual(fichas[1][1]["fecha_levantamiento"], "2025-12-09")   # xlsx serial 46000
+        self.assertIsNone(fichas[1][1]["estado_levantamiento"])               # no default
+        self.assertEqual(len(problems), 2, problems)                          # C: estado and fecha
+
+    def test_parse_date_accepts_only_iso_or_a_serial(self):
+        # Python 3.11+'s fromisoformat also reads "20260930" and ISO week dates like "2026-W01-2": neither is one
+        # of the two documented forms, so only a strict YYYY-MM-DD shape goes to fromisoformat
+        self.assertEqual(imf.parse_date("2026-09-30"), ("2026-09-30", None))
+        self.assertEqual(imf.parse_date("46000"), ("2025-12-09", None))
+        self.assertEqual(imf.parse_date("46000.0"), ("2025-12-09", None))
+        self.assertIsNone(imf.parse_date(None)[0])
+        for bad in ("2026-W01-2", "2026-13-45", "30/09/2026"):
+            self.assertIsNotNone(imf.parse_date(bad)[1], bad)
+
+    def test_present_fields_reads_the_header(self):
+        rows = read_table(write_csv(self, "cod_pre,uso\nA,\n"))
+        self.assertEqual(imf.present_fields(rows, parse_map([], imf.FICHA_COLUMNS), ["uso", "lote"]), {"uso"})
 
 
 class LoadTests(unittest.TestCase):
@@ -341,6 +366,231 @@ class LoadTests(unittest.TestCase):
         code, _, err = self.cli()
         self.assertEqual(code, 1)
         self.assertIn("-> 400", err)
+
+    def test_pisos_is_required_without_entrega(self):
+        code, _, err = run(imf.main, ["--fichas", self.fichas, "--core", self.core.base_url])
+        self.assertEqual(code, 2)
+        self.assertIn("--pisos", err)
+        self.assertEqual(self.core.requests, [])
+
+
+class EntregaLoadTests(unittest.TestCase):
+    """--entrega: an upsert through the API, every write with the entrega's code as X-Change-Reason (ADR-013)."""
+
+    def setUp(self):
+        self.core = FakeCore()
+        self.addCleanup(self.core.stop)
+        self.fichas = write_csv(self, FICHAS)
+        self.pisos = write_csv(self, PISOS)
+        self.obras = write_csv(self, OBRAS)
+
+    def cli(self, *extra, fichas=None, pisos=None):
+        return run(imf.main, ["--fichas", fichas or self.fichas, "--pisos", pisos or self.pisos, "--core", self.core.base_url,
+                              *extra])
+
+    def entrega(self, *extra, codigo="E-1", fichas=None, pisos=None):
+        return self.cli("--entrega", codigo, "--fecha-corte", "2026-10-01", "--fuente", "BARRIDO", *extra, fichas=fichas,
+                        pisos=pisos)
+
+    def writes(self):
+        return [r for r in self.core.requests if r[0] in ("POST", "PATCH", "DELETE") and "records" in r[1]]
+
+    def entregas(self):
+        return {r["attributes"]["codigo"]: r for r in self.core.records.get("entrega_catastral", [])}
+
+    def predio(self, codigo):
+        return next(r for r in self.core.records["predio_catastral"] if r["attributes"]["codigo_municipal"] == codigo)
+
+    def test_first_load_creates_the_fichas_and_the_entrega(self):
+        code, out, err = self.entrega("--obras", self.obras, "--descripcion", "barrido de octubre")
+        self.assertEqual(code, 0, err)
+        e = self.core.records["entrega_catastral"][0]
+        a = e["attributes"]
+        self.assertEqual((a["codigo"], a["altas"], a["cambios"], a["sin_cambio"], a["ausentes"], a["fuente"]),
+                         ("E-1", 2, 0, 0, 0, "BARRIDO"))
+        self.assertEqual((a["fecha_corte"], a["descripcion"]), ("2026-10-01", "barrido de octubre"))
+        self.assertEqual(a["archivo_sha256"], ent.sha256_of([self.fichas, self.pisos, self.obras]))
+        self.assertTrue(all(p["attributes"]["entrega"] == e["id"] for p in self.core.records["predio_catastral"]))
+        self.assertEqual(len(self.core.records["construccion"]), 3)
+        self.assertEqual(self.core.records["obra_complementaria"][0]["attributes"]["predio"], self.predio("120302-0001")["id"])
+        self.assertIn("alta 120302-0001", out)
+        self.assertIn("done: entrega E-1: 2 altas, 0 cambios, 0 sin cambio, 0 ausentes", out)
+
+    def test_the_same_entrega_twice_changes_nothing(self):
+        self.entrega("--obras", self.obras)
+        before = len(self.writes())
+        code, out, err = self.entrega("--obras", self.obras)
+        self.assertEqual((code, len(self.writes())), (0, before), err)
+        self.assertIn("sin cambio 120302-0001", out)
+        self.assertIn("done: entrega E-1: 0 altas, 0 cambios, 2 sin cambio, 0 ausentes", out)
+        self.assertEqual(self.entregas()["E-1"]["attributes"]["altas"], 2)
+
+    def test_a_later_entrega_with_nothing_new_writes_nothing_not_even_itself(self):
+        self.entrega()
+        before = len(self.writes())
+        code, out, err = self.entrega(codigo="E-2")
+        self.assertEqual((code, len(self.writes())), (0, before), err)
+        self.assertNotIn("E-2", self.entregas())
+        self.assertIn("done: entrega E-2: 0 altas, 0 cambios, 2 sin cambio, 0 ausentes", out)
+
+    def test_a_corrected_piso_is_patched_and_reported(self):
+        self.entrega()
+        corrected = write_csv(self, PISOS.replace("120302-0001,2,86,", "120302-0001,2,90,"))
+        code, out, err = self.entrega(codigo="E-2", pisos=corrected)
+        self.assertEqual(code, 0, err)
+        self.assertIn("cambio 120302-0001 piso 2/1: area_construida 86 → 90", out)
+        self.assertIn("sin cambio 120302-0002", out)
+        piso = next(r for r in self.core.records["construccion"] if r["attributes"]["piso"] == "2")
+        patches = [r for r in self.core.requests if r[0] == "PATCH" and r[1].endswith(piso["id"])]
+        self.assertEqual([r[3] for r in patches], [{"attributes": {"area_construida": "90"}}])
+        e2 = self.entregas()["E-2"]
+        self.assertEqual((e2["attributes"]["altas"], e2["attributes"]["cambios"], e2["attributes"]["sin_cambio"]), (0, 1, 1))
+        # the predio points to the last entrega that changed it; the one without changes keeps E-1
+        self.assertEqual(self.predio("120302-0001")["attributes"]["entrega"], e2["id"])
+        self.assertEqual(self.predio("120302-0002")["attributes"]["entrega"], self.entregas()["E-1"]["id"])
+
+    def test_a_changed_field_of_the_ficha_is_patched_with_the_entrega(self):
+        self.entrega()
+        changed = write_csv(self, FICHAS.replace("180.50,9", "175,9"))
+        code, out, err = self.entrega(codigo="E-2", fichas=changed)
+        self.assertEqual(code, 0, err)
+        self.assertIn("cambio 120302-0001: area_terreno 180.5 → 175", out)
+        p = self.predio("120302-0001")
+        patches = [r[3] for r in self.core.requests if r[0] == "PATCH" and r[1].endswith(p["id"])]
+        self.assertEqual(patches, [{"attributes": {"area_terreno": "175", "entrega": self.entregas()["E-2"]["id"]}}])
+
+    def test_a_changed_category_letter_is_reported(self):
+        # the single `categorias` column stands for the seven letter fields
+        self.entrega()
+        changed = write_csv(self, PISOS.replace("BBCBBCB", "BBCBBCA"))
+        code, out, err = self.entrega(codigo="E-2", pisos=changed)
+        self.assertEqual(code, 0, err)
+        self.assertIn("cambio 120302-0001 piso 2/1: instalaciones B → A", out)
+
+    def test_an_absent_ficha_is_listed_not_deleted(self):
+        self.core.add_record("predio_catastral", {"codigo_municipal": "120302-0099"})
+        code, out, err = self.entrega()
+        self.assertEqual(code, 0, err)
+        self.assertIn("ausente 120302-0099", out)
+        self.assertEqual(len(self.core.records["predio_catastral"]), 3)
+        self.assertEqual(self.entregas()["E-1"]["attributes"]["ausentes"], 1)
+        self.assertNotIn("entrega", self.predio("120302-0099")["attributes"])
+
+    def test_a_piso_the_entrega_no_longer_brings_is_listed_and_kept(self):
+        self.entrega()
+        fewer = write_csv(self, "\n".join(line for line in PISOS.splitlines() if ",2,86," not in line) + "\n")
+        code, out, err = self.entrega(codigo="E-2", pisos=fewer)
+        self.assertEqual(code, 0, err)
+        self.assertIn("ausente 120302-0001 piso 2/1", out)
+        self.assertEqual(len(self.core.records["construccion"]), 3)
+
+    def test_reemplazar_pisos_deletes_the_pisos_the_entrega_no_longer_brings(self):
+        self.entrega()
+        fewer = write_csv(self, "\n".join(line for line in PISOS.splitlines() if ",2,86," not in line) + "\n")
+        code, out, err = self.entrega("--reemplazar-pisos", codigo="E-2", pisos=fewer)
+        self.assertEqual(code, 0, err)
+        self.assertIn("cambio 120302-0001 piso 2/1: baja", out)
+        self.assertEqual(sorted(r["attributes"]["piso"] for r in self.core.records["construccion"]), ["1", "1"])
+        deletes = [r for r in self.core.reasons if r[0] == "DELETE"]
+        self.assertEqual([r[2] for r in deletes], ["E-2"])
+        self.assertEqual(self.predio("120302-0001")["attributes"]["entrega"], self.entregas()["E-2"]["id"])
+
+    def test_reemplazar_obras_deletes_an_obra_whose_year_changed(self):
+        self.entrega("--obras", self.obras)
+        other_year = write_csv(self, OBRAS.replace(",42,1998,", ",42,1999,"))
+        code, out, err = self.entrega("--obras", other_year, "--reemplazar-obras", codigo="E-2")
+        self.assertEqual(code, 0, err)
+        self.assertIn("cambio 120302-0001 obra CERCOS METALICOS|88/1999: alta", out)
+        self.assertIn("cambio 120302-0001 obra CERCOS METALICOS|88/1998: baja", out)
+        self.assertEqual([r["attributes"]["anio_construccion"] for r in self.core.records["obra_complementaria"]], [1999])
+
+    def test_a_new_piso_of_an_existing_ficha_is_created_under_it(self):
+        self.entrega()
+        more = write_csv(self, PISOS + "120302-0002,2,30,2020,CONCRETO,BUENO,AABAABA\n")
+        code, out, err = self.entrega(codigo="E-2", pisos=more)
+        self.assertEqual(code, 0, err)
+        self.assertIn("cambio 120302-0002 piso 2/1: alta", out)
+        new = next(r for r in self.core.records["construccion"] if r["attributes"]["area_construida"] == "30")
+        self.assertEqual(new["attributes"]["predio"], self.predio("120302-0002")["id"])
+
+    def test_an_entrega_may_bring_only_fichas(self):
+        self.entrega()
+        code, out, err = run(imf.main, ["--fichas", self.fichas, "--core", self.core.base_url, "--entrega", "GIS-1",
+                                        "--fecha-corte", "2026-10-02", "--fuente", "gis"])
+        self.assertEqual(code, 0, err)
+        self.assertIn("done: entrega GIS-1: 0 altas, 0 cambios, 2 sin cambio, 0 ausentes", out)
+        self.assertNotIn("ausente 120302-0001 piso", out)
+        self.assertEqual(len(self.core.records["construccion"]), 3)
+
+    def test_every_write_carries_the_entrega_as_reason(self):
+        self.entrega("--obras", self.obras)
+        writes = [x for x in self.core.reasons if x[0] in ("POST", "PATCH", "DELETE") and "/records" in x[1]]
+        self.assertTrue(writes)
+        self.assertEqual({r for _, _, r in writes}, {"E-1"})
+
+    def test_dry_run_reports_and_writes_nothing(self):
+        code, out, err = self.entrega("--dry-run")
+        self.assertEqual((code, self.writes()), (0, []), err)
+        self.assertIn("alta 120302-0001", out)
+        self.assertIn("entrega E-1: 2 altas, 0 cambios, 0 sin cambio, 0 ausentes", out)
+        self.assertNotIn("done:", out)
+        self.assertTrue(all(r[0] == "GET" for r in self.core.requests if r[1] != "/api/auth/login"))
+
+    def test_same_codigo_another_file_exits_2(self):
+        self.entrega()
+        before = len(self.writes())
+        corrected = write_csv(self, PISOS.replace("120302-0001,2,86,", "120302-0001,2,90,"))
+        code, _, err = self.entrega(pisos=corrected)
+        self.assertEqual((code, len(self.writes())), (2, before))
+        self.assertIn("E-1", err)
+        self.assertEqual(sorted(r["attributes"]["area_construida"] for r in self.core.records["construccion"]),
+                         ["120.4", "50", "86"])
+
+    def test_a_run_that_failed_half_way_is_completed_and_keeps_the_summary(self):
+        self.core.fail_record_after = {"construccion": 1}
+        self.assertEqual(self.entrega()[0], 1)
+        self.core.fail_record_after = {}
+        before = len(self.core.requests)
+        code, _, err = self.entrega()
+        self.assertEqual(code, 0, err)
+        # the predios already point to E-1: no PATCH of their entrega again
+        self.assertEqual([r for r in self.core.requests[before:] if r[0] == "PATCH"], [])
+        self.assertEqual(len(self.core.records["construccion"]), 3)
+        keys = {(r["attributes"]["predio"], r["attributes"]["piso"]) for r in self.core.records["construccion"]}
+        self.assertEqual(len(keys), 3)
+        self.assertEqual(len(self.core.records["predio_catastral"]), 2)
+        self.assertEqual(len(self.core.records["entrega_catastral"]), 1)
+        self.assertEqual(self.core.records["entrega_catastral"][0]["attributes"]["altas"], 2)
+        # a third run finds nothing to do
+        before = len(self.writes())
+        self.assertEqual(self.entrega()[0], 0)
+        self.assertEqual(len(self.writes()), before)
+
+    def test_reemplazar_without_entrega_or_its_file_exits_2(self):
+        self.assertEqual(self.cli("--reemplazar-pisos")[0], 2)
+        self.assertEqual(self.cli("--obras", self.obras, "--reemplazar-obras")[0], 2)
+        code, _, err = run(imf.main, ["--fichas", self.fichas, "--core", self.core.base_url, "--entrega", "E-1",
+                                      "--fecha-corte", "2026-10-01", "--fuente", "BARRIDO", "--reemplazar-pisos"])
+        self.assertEqual(code, 2)
+        self.assertIn("--pisos", err)
+        self.assertEqual(self.entrega("--reemplazar-obras")[0], 2)
+        self.assertEqual(self.core.requests, [])
+
+    def test_a_bad_codigo_fecha_or_fuente_exits_2(self):
+        bad = [
+            ["--entrega", "E 1", "--fecha-corte", "2026-10-01", "--fuente", "BARRIDO"],
+            ["--entrega", "Entrega-ñ", "--fecha-corte", "2026-10-01", "--fuente", "BARRIDO"],
+            ["--entrega", "E-1", "--fecha-corte", "2026-10-01", "--fuente", "CENSO"],
+            ["--entrega", "E-1", "--fuente", "BARRIDO"],
+            ["--entrega", "E-1", "--fecha-corte", "2026-10-01"],
+            ["--entrega", "E-1", "--fecha-corte", "01/10/2026", "--fuente", "BARRIDO"],
+            ["--fecha-corte", "2026-10-01"],
+        ]
+        for argv in bad:
+            code, _, err = self.cli(*argv)
+            self.assertEqual(code, 2, argv)
+            self.assertTrue(err, argv)
+        self.assertEqual(self.core.requests, [])
 
 
 if __name__ == "__main__":

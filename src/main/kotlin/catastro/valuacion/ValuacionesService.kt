@@ -46,9 +46,10 @@ class ValuacionesService(
                 registros.conCampoEn(OBRA_COMPLEMENTARIA, FichaObra::class.java, PREDIO, ids, sort = "codigo_vu").groupBy { it.predio }
             }
         val aranceles = aranceles(predios.content.mapNotNull { it.idAranc }, anio)
+        val entregas = entregas(predios.content.mapNotNull { it.entrega })
         val items =
             predios.content.map { p ->
-                item(p, anio, pisos[p.id].orEmpty(), obras[p.id].orEmpty(), p.idAranc?.let { aranceles[it] }, tablas)
+                item(p, anio, pisos[p.id].orEmpty(), obras[p.id].orEmpty(), p.idAranc?.let { aranceles[it] }, tablas, entregas)
             }
         return Valuaciones(anio, VERSION, tablas.region.name, page, size, predios.totalElements ?: 0L, items)
     }
@@ -59,7 +60,8 @@ class ValuacionesService(
         pisos: List<FichaConstruccion>,
         obras: List<FichaObra>,
         arancel: Arancel?,
-        tablas: Tablas
+        tablas: Tablas,
+        entregas: Map<String, EntregaCatastral>
     ): ItemValuacion {
         val insumos =
             Insumos(
@@ -84,7 +86,8 @@ class ValuacionesService(
                             seccion = it.seccion
                         )
                     },
-                obras = obras.map { Obra(it.codigoVu, it.cantidad, it.anioConstruccion, it.material, it.estadoConservacion) }
+                obras = obras.map { Obra(it.codigoVu, it.cantidad, it.anioConstruccion, it.material, it.estadoConservacion) },
+                levantamiento = p.estadoLevantamiento
             )
         val v = Valorizacion.valorizar(insumos, tablas)
         val valor = v as? Valuacion.Valorizada
@@ -105,7 +108,10 @@ class ValuacionesService(
             autoavaluo = valor?.autoavaluo,
             motivo = falta?.motivo,
             llave = falta?.llave,
-            loteGeom = p.loteGeom
+            loteGeom = p.loteGeom,
+            estadoLevantamiento = p.estadoLevantamiento,
+            fechaLevantamiento = p.fechaLevantamiento,
+            entrega = p.entrega?.let { entregas[it]?.codigo }
         )
     }
 
@@ -163,6 +169,15 @@ class ValuacionesService(
             registros
                 .conCampoEn(ARANCEL, Arancel::class.java, "id_aranc", idsArancel.distinct(), filters = mapOf("anio" to anio.toString()))
                 .associateBy { it.idAranc }
+        }
+
+    // the entregas the page's predios point at, read once by id (Registros.porIds): the item's "entrega" key is the
+    // codigo, never the relation's own id
+    private suspend fun entregas(idsEntrega: List<String>): Map<String, EntregaCatastral> =
+        if (idsEntrega.isEmpty()) {
+            emptyMap()
+        } else {
+            registros.porIds(ENTREGA_CATASTRAL, EntregaCatastral::class.java, idsEntrega.distinct().map { UUID.fromString(it) }).associateBy { it.id }
         }
 
     // the tables of the region in the caller's configuracion_catastro (core scopes the read to its organization)
