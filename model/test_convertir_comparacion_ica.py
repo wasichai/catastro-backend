@@ -369,6 +369,12 @@ class CliTests(unittest.TestCase):
                          [("S-0001", DOCUMENTO, NOMBRE), ("S-0002", "000000000", "LUIS SINTETICO")])
         self.assertEqual(list(titulares[0]), TITULARES_CSV)
 
+    def test_titulares_csv_is_written_with_mode_0600(self):
+        code, _, err = self.convertir()
+        self.assertEqual(code, 0, err)
+        modo = os.stat(os.path.join(self.salida, "titulares.csv")).st_mode
+        self.assertEqual(modo & 0o777, 0o600)
+
     def test_the_columns_can_be_mapped(self):
         libro = escribir_libro(self, [predio()], [construccion()], [titular()],
                                titulares_header=["COD_PREDIO", "TIPO_DOC", *TITULARES_HEADER[2:]])

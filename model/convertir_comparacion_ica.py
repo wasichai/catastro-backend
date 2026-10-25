@@ -298,7 +298,9 @@ def _dentro_del_repositorio(path):
 
 
 def _escribir(path, columnas, filas):
-    with open(path, "w", encoding="utf-8", newline="") as f:
+    """Writes the csv with mode 0o600: it holds datos personales (Ley 29733)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=columnas, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(filas)
