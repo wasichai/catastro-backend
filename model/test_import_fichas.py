@@ -456,6 +456,26 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(code, 1)
         self.assertIn("-> 400", err)
 
+    def test_codigo_municipal_is_an_alias_of_cod_pre_in_every_file(self):
+        alias = {nombre: write_csv(self, texto.replace("cod_pre", "codigo_municipal", 1))
+                 for nombre, texto in (("fichas", FICHAS), ("pisos", PISOS), ("obras", OBRAS),
+                                       ("titulares", TITULARES))}
+        base = self.cli("--obras", self.obras, "--titulares", write_csv(self, TITULARES), "--dry-run")
+        code, out, err = self.cli("--obras", alias["obras"], "--titulares", alias["titulares"], "--dry-run",
+                                  fichas=alias["fichas"], pisos=alias["pisos"])
+        self.assertEqual(code, 0, err)
+        self.assertEqual((code, out), base[:2])
+
+    def test_cod_pre_wins_over_codigo_municipal_and_an_explicit_map_overrides_both(self):
+        both = write_csv(self, "cod_pre,codigo_municipal,area_terreno\n120302-0001,OTRO-1,100\n")
+        pisos = write_csv(self, "cod_pre,piso\n120302-0001,1\n")
+        code, out, err = self.cli("--dry-run", fichas=both, pisos=pisos)
+        self.assertEqual(code, 0, err)  # the piso hangs from 120302-0001: the ficha's code is the cod_pre one
+        self.assertIn("fichas: 1\npisos: 1", out)
+        code, _, err = self.cli("--dry-run", "--map", "codigo_municipal=codigo_municipal", fichas=both, pisos=pisos)
+        self.assertEqual(code, 2)  # explicit map: the ficha is OTRO-1 and the piso's predio is no ficha
+        self.assertIn("120302-0001", err)  # the orphan piso is named by the cod_pre value, the ficha is OTRO-1
+
     def test_pisos_is_required_without_entrega(self):
         code, _, err = run(imf.main, ["--fichas", self.fichas, "--core", self.core.base_url])
         self.assertEqual(code, 2)

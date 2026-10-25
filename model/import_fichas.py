@@ -34,6 +34,9 @@ Default columns follow the MEF carga masiva contract (kamayuk ContratoDeImportac
           key repeated in the file loads once and is a warning, not an error. A predio whose titulares' porcentaje
           (as the file brings them, before the repeated-key collapse) sum to other than 100% ± 0.01 is reported by
           codigo, unless every one of its titulares lacks porcentaje.
+A file (fichas, pisos, obras or titulares) with a `codigo_municipal` column and no `cod_pre` is read as if it brought
+cod_pre (an alias, detected from the header, i.e. the first row; cod_pre wins if both are there, and an explicit
+--map codigo_municipal=... is kept).
 --map, --map-pisos, --map-obras and --map-titulares field=column override those defaults (repeatable). material and
 estado_conservacion take the model's options in any case, with _ for a space (MUY_BUENO).
 
@@ -514,6 +517,17 @@ def load_entrega(client, args, parsed, present):
     return f"done: {plan.lines[-1]}"
 
 
+def _with_alias(rows, mapping, pairs):
+    """`mapping` with codigo_municipal on the sheet's `codigo_municipal` column when the sheet lacks the MEF contract's
+    `cod_pre` and has that one (detected from the header, i.e. the first row; cod_pre wins if both are there; an
+    explicit --map codigo_municipal=... is kept)."""
+    if any(pair.partition("=")[0] == "codigo_municipal" for pair in pairs) or not rows:
+        return mapping
+    if mapping["codigo_municipal"] not in rows[0] and "codigo_municipal" in rows[0]:
+        return {**mapping, "codigo_municipal": "codigo_municipal"}
+    return mapping
+
+
 def main(argv=None):
     args = _parse_args(sys.argv[1:] if argv is None else argv)
     try:
@@ -542,6 +556,10 @@ def main(argv=None):
     except INPUT_ERRORS as e:
         print(f"input: {e}", file=sys.stderr)
         return 2
+    ficha_map = _with_alias(ficha_rows, ficha_map, args.map)
+    piso_map = _with_alias(piso_rows, piso_map, args.map_pisos)
+    obra_map = _with_alias(obra_rows, obra_map, args.map_obras)
+    titular_map = _with_alias(titular_rows, titular_map, args.map_titulares)
     fichas, problems = fichas_from(ficha_rows, ficha_map, enums)
     codigos = {a["codigo_municipal"] for _, a in fichas}
     pisos, found = pisos_from(piso_rows, piso_map, enums, codigos)

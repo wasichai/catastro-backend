@@ -68,7 +68,9 @@ Se corren con `python3 -I`, porque leen archivos de afuera: así ni el directori
 `codigo_municipal`), `--obras` y `--titulares` (opcionales, mismo vínculo), en csv o xlsx. Las columnas por defecto
 salen del contrato de carga masiva del MEF (`cod_pre`, `cod_cpu`, `cod_sect`, `cod_mzn`, `cod_lote`, `id_aranc`,
 `area_terreno`, `longitud_frente`...); `--map`, `--map-pisos`, `--map-obras` y `--map-titulares` `campo=columna` las
-cambian. Cinco columnas opcionales más, las cinco vacías
+cambian. Un archivo con la columna `codigo_municipal` y sin `cod_pre` se lee como si trajera `cod_pre` (alias, que se
+detecta por el encabezado, la primera fila: si vienen las dos gana `cod_pre`, y un `--map codigo_municipal=...`
+explícito manda). Cinco columnas opcionales más, las cinco vacías
 no se envían: `vinculo_metodo` (una opción del enum `vinculo_metodo`, sin distinguir mayúsculas: `CODIGO_RENTAS`,
 `LLAVE_HU_MZ_LOTE`, `GEOMETRICO` o `MANUAL`) dice cómo se vinculó la ficha con su predio de rentas; `vinculo_revisado`
 (`SI`/`NO`, igual que `techo_incluido`) si una persona ya revisó ese vínculo; `cuc` y `codigo_referencia_catastral`
@@ -358,9 +360,12 @@ padrón de srtm, no el catastro. Las reglas son las de wasichai/catastro-backend
   que ya tuviera el predio (regla R11).
 
 Las columnas por defecto son las del libro; `--map-predio`, `--map-construccion`, `--map-titulares` y `--map-vinculos`
-`campo=columna` las cambian. Todas son obligatorias salvo `cuc_catastro` y `urbanizacion_catastro`: una hoja o una
-columna que falta sale con 2 y la nombra, sin escribir nada. Sin `cuc_catastro`, `fichas.csv` no lleva la columna
-`cuc`, y la entrega no toca el que hubiera.
+`campo=columna` las cambian; las de titulares son las del libro v3 (`nro_documento_catastro` y `porcentaje`). Todas son
+obligatorias salvo `cuc_catastro`, `urbanizacion_catastro` y `condicion_catastro`: una hoja o una columna que falta sale
+con 2 y la nombra, sin escribir nada. Sin `cuc_catastro`, `fichas.csv` no lleva la columna `cuc`, y la entrega no toca
+el que hubiera. El libro v3 no trae la condición del titular (su `estado` es el de la comparación y nunca se lee
+como condición): sin `condicion_catastro`, la `condicion` de `titulares.csv` queda vacía, el conteo
+`titulares_sin_condicion` lo dice y stderr nombra la columna que falta, sin ningún dato del titular.
 
 **La salida va fuera del repositorio.** Los titulares son datos personales (Ley 29733): `--salida` dentro del
 repositorio (también por un enlace) sale con 2, y el comando solo imprime conteos, líneas `<clave>: <n>` con lo que
