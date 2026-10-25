@@ -377,14 +377,18 @@ Los motivos (una ficha puede tener varios, y cada uno cuenta):
 - `id_aranc_vacio`: la ficha no tiene `id_aranc`;
 - `clave_inexistente`: no hay arancel con ese `id_aranc` para el año;
 - `clave_provisional`: el `id_aranc` no tiene el formato de código de vía (`^\d{10}-\d{2}$`), p. ej. `R<valor>`;
-- `varios_codigos_alguno_no_vigente` (con `--padron`): dos o más códigos, y alguno sin arancel vigente;
-- `varios_codigos_valores_distintos` (con `--padron`): dos o más códigos vigentes con `valor_m2` distintos;
+- `varios_codigos_alguno_no_vigente` (con `--padron`): dos o más códigos, y alguno sin arancel vigente (también
+  cuando los códigos vigentes tienen valores distintos entre sí: cuenta aquí, no en el motivo siguiente);
+- `varios_codigos_valores_distintos` (con `--padron`): dos o más códigos, todos vigentes, con `valor_m2` distintos;
 - `codigo_sin_arancel_vigente` (con `--padron`): ninguno de sus códigos tiene arancel vigente.
 
 Con `--padron` también cuenta `sin_padron` (fichas sin fila en el padrón) y lo que haría la corrección: `corregibles`,
-`ya_apunta` y `sin_levantar_no_se_corrige`. `--reporte reporte.csv` escribe una fila por ficha y motivo
-(`codigo_municipal,id_aranc,motivo,codigos_padron`, los códigos separados por `;`). El padrón trae datos personales
-(Ley 29733): de él solo salen el código del predio y los códigos de vía.
+`ya_apunta` y `sin_levantar_no_se_corrige`. Cada motivo y `sin_padron` salen con su parte por estado, p. ej.
+`codigo_sin_arancel_vigente: 8488 (levantadas 5273, sin levantar 3215)`: las levantadas son las `COMPLETO` y
+`PARCIAL` (y las sin estado), las otras las `SIN_LEVANTAR`, que la corrección no toca. `--reporte reporte.csv` escribe
+una fila por ficha y motivo (`codigo_municipal,id_aranc,estado_levantamiento,motivo,codigos_padron`, los códigos
+separados por `;`). El padrón trae datos personales (Ley 29733): de él solo salen el código del predio y los códigos de
+vía.
 
 **Corrección.** Con `--entrega <codigo> --fecha-corte AAAA-MM-DD` (y `--padron`), una ficha cuyos códigos tienen
 **todos** arancel vigente y del **mismo** valor pasa a apuntar al código más frecuente (en un empate, el menor); si

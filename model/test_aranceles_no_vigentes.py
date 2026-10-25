@@ -79,6 +79,21 @@ class MotivoTests(unittest.TestCase):
         self.assertEqual(result.counts["codigo_sin_arancel_vigente"], 1)
         self.assertEqual(result.counts["id_aranc_vacio"], 0)
 
+    def test_the_counts_split_sin_levantar(self):
+        result = classify("R50", {"0020000101-01": 1}, estado="SIN_LEVANTAR")
+        self.assertEqual((result.counts["clave_provisional"], result.sin_levantar["clave_provisional"]), (1, 1))
+        self.assertEqual(result.sin_levantar["id_aranc_vacio"], 0)
+        self.assertEqual(classify("R50", {"0020000101-01": 1}).sin_levantar["clave_provisional"], 0)
+
+    def test_the_rows_carry_the_estado(self):
+        self.assertEqual({r.estado_levantamiento for r in classify("R50", estado="PARCIAL").rows}, {"PARCIAL"})
+
+    def test_the_padron_is_looked_up_with_the_code_without_whitespace(self):
+        vig = {k: Decimal(v) for k, v in VIGENTES.items()}
+        ficha = {"codigo_municipal": " P-1 ", "id_aranc": "R50", "estado_levantamiento": "COMPLETO"}
+        result = anv.analyze([ficha], vig, {"P-1": Counter({"0010000101-01": 1})})
+        self.assertEqual((result.counts["sin_padron"], result.candidates), (0, [(" P-1 ", "0010000101-01")]))
+
 
 class TargetTests(unittest.TestCase):
     def target(self, codes, **kwargs):
@@ -172,23 +187,31 @@ class CliTests(unittest.TestCase):
         report = os.path.join(self.out_dir, "reporte.csv")
         code, out, err = self.cli("--padron", self.padron, "--reporte", report)
         self.assertEqual(code, 0, err)
-        for line in ["fichas: 7", "id_aranc_vacio: 1", "clave_inexistente: 4", "clave_provisional: 4",
-                     "varios_codigos_alguno_no_vigente: 1", "varios_codigos_valores_distintos: 1",
-                     "codigo_sin_arancel_vigente: 0", "sin_padron: 1", "corregibles: 2",
+        for line in ["fichas: 7", "id_aranc_vacio: 1 (levantadas 1, sin levantar 0)",
+                     "clave_inexistente: 4 (levantadas 3, sin levantar 1)",
+                     "clave_provisional: 4 (levantadas 3, sin levantar 1)",
+                     "varios_codigos_alguno_no_vigente: 1 (levantadas 1, sin levantar 0)",
+                     "varios_codigos_valores_distintos: 1 (levantadas 1, sin levantar 0)",
+                     "codigo_sin_arancel_vigente: 0 (levantadas 0, sin levantar 0)",
+                     "sin_padron: 1 (levantadas 1, sin levantar 0)", "corregibles: 2",
                      "sin_levantar_no_se_corrige: 1"]:
             self.assertIn(line, out.splitlines())
         self.assertEqual(self.writes(), [])
         with open(report, encoding="utf-8", newline="") as f:
             rows = list(csv.DictReader(f))
-        self.assertEqual(list(rows[0]), ["codigo_municipal", "id_aranc", "motivo", "codigos_padron"])
-        self.assertIn({"codigo_municipal": "P-3", "id_aranc": "R50", "motivo": "varios_codigos_alguno_no_vigente",
+        self.assertEqual(list(rows[0]), ["codigo_municipal", "id_aranc", "estado_levantamiento", "motivo",
+                                         "codigos_padron"])
+        self.assertIn({"codigo_municipal": "P-5", "id_aranc": "R50", "estado_levantamiento": "SIN_LEVANTAR",
+                       "motivo": "clave_provisional", "codigos_padron": "0010000201-01"}, rows)
+        self.assertIn({"codigo_municipal": "P-3", "id_aranc": "R50", "estado_levantamiento": "COMPLETO",
+                       "motivo": "varios_codigos_alguno_no_vigente",
                        "codigos_padron": "0010000101-01;0020000101-01"}, rows)
         self.assertNotIn("P-7", {r["codigo_municipal"] for r in rows})
 
     def test_without_padron_only_the_id_aranc_motives(self):
         code, out, err = self.cli()
         self.assertEqual(code, 0, err)
-        self.assertIn("clave_provisional: 4", out)
+        self.assertIn("clave_provisional: 4 (levantadas 3, sin levantar 1)", out)
         self.assertNotIn("sin_padron", out)
         self.assertNotIn("varios_codigos", out)
 

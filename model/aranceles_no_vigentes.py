@@ -18,7 +18,8 @@ plus sin_padron (fichas without a padrón row), and the correction's counts: cor
 sin_levantar_no_se_corrige.
 
 The padrón holds personal data (Ley 29733): only codigo_municipal and via codes ever reach the output. --reporte
-writes the CSV codigo_municipal,id_aranc,motivo,codigos_padron, one row per (ficha, motivo); stdout has the counts.
+writes the CSV codigo_municipal,id_aranc,estado_levantamiento,motivo,codigos_padron, one row per (ficha, motivo);
+stdout has the counts, each motive and sin_padron split as (levantadas N, sin levantar M).
 Without --entrega nothing is written to Core.
 
 --entrega CODIGO (needs --padron and --fecha-corte): a ficha whose codes all have a vigente arancel of one same
@@ -62,13 +63,16 @@ PADRON_MOTIVOS = MOTIVOS[3:]
 COUNTS = (*MOTIVOS, "sin_padron", "corregibles", "ya_apunta", "sin_levantar_no_se_corrige")
 SIN_LEVANTAR = "SIN_LEVANTAR"
 
-Row = namedtuple("Row", "codigo_municipal id_aranc motivo codigos_padron")
+Row = namedtuple("Row", "codigo_municipal id_aranc estado_levantamiento motivo codigos_padron")
+# the counts printed with their levantadas / sin levantar split
+SPLIT = (*MOTIVOS, "sin_padron")
 
 
 @dataclass
 class Result:
     rows: list = field(default_factory=list)
     counts: Counter = field(default_factory=Counter)
+    sin_levantar: Counter = field(default_factory=Counter)  # the part of each count that is SIN_LEVANTAR
     candidates: list = field(default_factory=list)  # (codigo_municipal, target id_aranc), by codigo
 
 
@@ -121,7 +125,8 @@ def analyze(fichas, vig, padron=None):
     result = Result(counts=Counter(dict.fromkeys(COUNTS if padron is not None else MOTIVOS[:3], 0)))
     for a in sorted(fichas, key=lambda a: a["codigo_municipal"]):
         codigo, id_aranc = a["codigo_municipal"], _code(a.get("id_aranc"))
-        codes = (padron or {}).get(codigo, Counter())
+        estado = a.get("estado_levantamiento") or ""
+        codes = (padron or {}).get(_code(codigo), Counter())
         motivos = []
         if id_aranc is None:
             motivos.append("id_aranc_vacio")
@@ -140,11 +145,12 @@ def analyze(fichas, vig, padron=None):
                 motivos.append("codigo_sin_arancel_vigente")
             if not codes:
                 result.counts["sin_padron"] += 1
+                result.sin_levantar["sin_padron"] += estado == SIN_LEVANTAR
             via = target(codes, vig)
             if via is not None:
                 if via == id_aranc:
                     result.counts["ya_apunta"] += 1
-                elif a.get("estado_levantamiento") == SIN_LEVANTAR:
+                elif estado == SIN_LEVANTAR:
                     result.counts["sin_levantar_no_se_corrige"] += 1
                 else:
                     result.counts["corregibles"] += 1
@@ -152,7 +158,8 @@ def analyze(fichas, vig, padron=None):
         joined = ";".join(sorted(codes))
         for motivo in motivos:
             result.counts[motivo] += 1
-            result.rows.append(Row(codigo, id_aranc or "", motivo, joined))
+            result.sin_levantar[motivo] += estado == SIN_LEVANTAR
+            result.rows.append(Row(codigo, id_aranc or "", estado, motivo, joined))
     return result
 
 
@@ -164,7 +171,8 @@ def _parse_args(argv):
     p.add_argument("--hoja", default="PREDIO URBANO", help="the padrón's xlsx sheet (default PREDIO URBANO)")
     p.add_argument("--columna-codigo", default="Código Predio", help="the padrón's codigo_municipal column")
     p.add_argument("--columna-via", default="Codigo de via", help="the padrón's via code column")
-    p.add_argument("--reporte", metavar="PATH", help="CSV codigo_municipal,id_aranc,motivo,codigos_padron")
+    p.add_argument("--reporte", metavar="PATH",
+                   help="CSV codigo_municipal,id_aranc,estado_levantamiento,motivo,codigos_padron")
     p.add_argument("--model", default=os.path.join(HERE, "model.json"))
     p.add_argument("--core", default=os.environ.get("WASICHAI_CORE", "http://localhost:8091"))
     p.add_argument("--email", default=os.environ.get("WASICHAI_EMAIL", "admin@wasichai.local"))
@@ -250,7 +258,11 @@ def main(argv=None):
         _write_csv(args.reporte, Row._fields, result.rows)
     print(f"fichas: {len(fichas)}\naranceles vigentes {args.anio}: {len(vig)}")
     for name, n in result.counts.items():
-        print(f"{name}: {n}")
+        if name in SPLIT:
+            sin = result.sin_levantar[name]
+            print(f"{name}: {n} (levantadas {n - sin}, sin levantar {sin})")
+        else:
+            print(f"{name}: {n}")
     if args.entrega is None:
         return 0
     if not result.candidates:
