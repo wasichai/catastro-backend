@@ -35,8 +35,11 @@ PISOS_CONTEOS = {"pisos", "pisos_de_predios_sin_ficha", "pisos_nivel_71_81", "ni
                  "materiales_vaciados", "estados_vaciados"}
 
 
-TITULARES_HEADER = ["cod_predio", "tipo_documento_catastro", "numero_documento_catastro", "nombre_catastro",
-                    "porcentaje_catastro", "condicion_catastro"]
+TITULARES_HEADER = ["cod_predio", "tipo_documento_catastro", "nro_documento_catastro", "nombre_catastro",
+                    "porcentaje", "condicion_catastro"]
+# the libro v3's titulares_catastro: no condicion of the titular; `estado` is the comparison's, never a condicion
+TITULARES_HEADER_V3 = ["cod_predio", "tipo_documento_catastro", "nro_documento_catastro", "nombre_catastro",
+                       "porcentaje", "estado"]
 TITULARES_CSV = ["cod_pre", "tipo_documento", "numero_documento", "nombre", "porcentaje", "condicion"]
 # made-up personal data that must never reach stdout or stderr
 NOMBRE, DOCUMENTO = "ROSA QUISPE SINTETICA", "00412345"
@@ -375,6 +378,22 @@ class CliTests(unittest.TestCase):
         modo = os.stat(os.path.join(self.salida, "titulares.csv")).st_mode
         self.assertEqual(modo & 0o777, 0o600)
 
+    def test_the_v3_titulares_sheet_loads_with_the_default_columns_and_an_empty_condicion(self):
+        v3 = [titular(condicion="IGUAL"), titular(cod="S-0002", numero="000000000", nombre="LUIS SINTETICO",
+                                                  condicion="DIFERENTE")]
+        libro = escribir_libro(self, [predio(cod="S-0001"), predio(cod="S-0002")], [construccion()], v3,
+                               titulares_header=TITULARES_HEADER_V3)
+        code, out, err = self.convertir(libro=libro)
+        self.assertEqual(code, 0, err)
+        titulares = self.leer("titulares.csv")
+        self.assertEqual([(t["cod_pre"], t["numero_documento"], t["porcentaje"], t["condicion"]) for t in titulares],
+                         [("S-0001", DOCUMENTO, "100", ""), ("S-0002", "000000000", "100", "")])
+        self.assertIn("titulares_sin_condicion: 2", out.splitlines())
+        self.assertIn("condicion_catastro", err)
+        self.assertIn("titulares_sin_condicion: 0", self.convertir()[1].splitlines())
+        for secreto in ("ROSA", DOCUMENTO, "LUIS", "IGUAL", "DIFERENTE"):
+            self.assertNotIn(secreto, out + err)
+
     def test_the_columns_can_be_mapped(self):
         libro = escribir_libro(self, [predio()], [construccion()], [titular()],
                                titulares_header=["COD_PREDIO", "TIPO_DOC", *TITULARES_HEADER[2:]])
@@ -408,6 +427,7 @@ class CliTests(unittest.TestCase):
         for secreto in ("ROSA", DOCUMENTO, "LUIS"):
             self.assertNotIn(secreto, out)
         claves = [line.split(":")[0] for line in out.splitlines()]
+        self.assertIn("titulares_sin_condicion", cv.CONTEOS_TITULARES)
         self.assertEqual(claves, ["vinculos", *cv.CONTEOS_FICHAS, *cv.CONTEOS_PISOS, *cv.CONTEOS_TITULARES])
 
     def test_a_missing_sheet_or_column_exits_2_naming_it(self):

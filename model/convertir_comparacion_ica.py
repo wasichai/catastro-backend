@@ -28,8 +28,11 @@ Rules (wasichai/catastro-backend#10, contexto-comun.md «Ruling (#10)»):
 Every rule that drops or empties something is counted, so the operator sees what the delivery lost.
 
 The default columns are the libro's; --map-predio, --map-construccion, --map-titulares and --map-vinculos
-field=column override them (repeatable). Every column is required (exit 2 naming it) except cuc_catastro and
-urbanizacion_catastro; without cuc_catastro, fichas.csv leaves its cuc column out, so an upsert does not clear it.
+field=column override them (repeatable). Every column is required (exit 2 naming it) except cuc_catastro,
+urbanizacion_catastro and condicion_catastro. The titulares' default columns are the v3's (nro_documento_catastro and
+porcentaje). v3 brings no condicion (its `estado` is the comparison's and is never read as one): without the column the
+condicion goes empty, titulares_sin_condicion counts the titulares and stderr names the missing column, never a titular
+value. Without cuc_catastro, fichas.csv leaves its cuc column out, so an upsert does not clear it.
 
 Writes fichas.csv, pisos.csv and titulares.csv in --salida, which must be outside the repository, and prints only
 `<clave>: <n>` lines. Exit: 0 ok, 2 a missing sheet or column, an unknown vínculo method or a bad flag (nothing is
@@ -71,12 +74,15 @@ CONSTRUCCION_COLUMNS = {
 }
 TITULAR_COLUMNS = {
     "codigo_municipal": "cod_predio", "tipo_documento": "tipo_documento_catastro",
-    "numero_documento": "numero_documento_catastro", "nombre": "nombre_catastro", "porcentaje": "porcentaje_catastro",
+    "numero_documento": "nro_documento_catastro", "nombre": "nombre_catastro", "porcentaje": "porcentaje",
     "condicion": "condicion_catastro",
 }
 VINCULO_COLUMNS = {"codigo_municipal": "cod_predio_rentas", "metodo": "vinculo_metodo"}
 # the predio columns the libro may lack; every other mapped column is required
 PREDIO_OPCIONALES = {"cuc", "urbanizacion"}
+# the libro v3 brings no condicion of the titular (its `estado` is the comparison's): the column is optional, left
+# empty and reported, and `estado` is never read as one
+TITULAR_OPCIONALES = {"condicion"}
 FICHAS_CSV = ["cod_pre", "cod_sect", "cod_mzn", "cod_lote", "area_terreno", "uso", "id_aranc", "estado_levantamiento",
               "vinculo_metodo", "codigo_referencia_catastral", "cuc"]
 PISOS_CSV = ["cod_pre", "piso", "seccion", "area_construida", "anio_construccion", "material", "estado_conservacion",
@@ -98,7 +104,7 @@ CONTEOS_FICHAS = ["predios_sin_vinculo", "fichas", "fichas_repetidas", "fichas_s
 CONTEOS_PISOS = ["pisos", "pisos_de_predios_sin_ficha", "pisos_nivel_71_81", "niveles_sin_numero",
                  "pisos_en_seccion_2_o_mas", "anios_vaciados", "areas_construidas_vaciadas", "letras_vaciadas",
                  "materiales_vaciados", "estados_vaciados"]
-CONTEOS_TITULARES = ["titulares", "titulares_de_predios_sin_ficha"]
+CONTEOS_TITULARES = ["titulares", "titulares_de_predios_sin_ficha", "titulares_sin_condicion"]
 CATEGORIA = re.compile(r"[A-J]")
 DIGITOS = re.compile(r"\d+")
 
@@ -230,11 +236,17 @@ def pisos_de(filas, codigos, mapa, enums, anio_maximo=ANIO_MAXIMO):
     return pisos, n
 
 
+def sin_condicion(filas, mapa):
+    """True when the titulares sheet has rows but lacks the condicion column."""
+    return bool(filas) and mapa["condicion"].lower() not in filas[0]
+
+
 def titulares_de(filas, codigos, mapa):
     """(titulares, counts) from the titulares_catastro rows of the loaded fichas' `codigos`, every value as it comes:
     a filler document stays (import_fichas.py empties it and reports it by codigo and row)."""
     n = Counter(dict.fromkeys(CONTEOS_TITULARES, 0))
     titulares = []
+    sin_columna = sin_condicion(filas, mapa)
     for row in filas:
         codigo = code_text(column_for(row, mapa, "codigo_municipal"))
         if codigo not in codigos:
@@ -246,9 +258,10 @@ def titulares_de(filas, codigos, mapa):
             "numero_documento": code_text(column_for(row, mapa, "numero_documento")) or "",
             "nombre": clean_text(column_for(row, mapa, "nombre")) or "",
             "porcentaje": clean_text(column_for(row, mapa, "porcentaje")) or "",
-            "condicion": clean_text(column_for(row, mapa, "condicion")) or "",
+            "condicion": clean_text(_optional(row, mapa, "condicion")) or "",
         })
     n["titulares"] = len(titulares)
+    n["titulares_sin_condicion"] = len(titulares) if sin_columna else 0
     return titulares, n
 
 
@@ -359,8 +372,9 @@ def main(argv=None):
     problems = [f"{HOJA_PREDIO}: {p}" for p in missing_columns(predios, mapas["predio"], requeridas)]
     problems += [f"{HOJA_CONSTRUCCION}: {p}"
                  for p in missing_columns(construcciones, mapas["construccion"], list(CONSTRUCCION_COLUMNS))]
+    requeridas_titulares = [f for f in TITULAR_COLUMNS if f not in TITULAR_OPCIONALES]
     problems += [f"{HOJA_TITULARES}: {p}"
-                 for p in missing_columns(titular_filas, mapas["titulares"], list(TITULAR_COLUMNS))]
+                 for p in missing_columns(titular_filas, mapas["titulares"], requeridas_titulares)]
     vinculos = None
     if vinculo_filas is not None:
         faltan = missing_columns(vinculo_filas, mapas["vinculos"], list(VINCULO_COLUMNS))
@@ -373,6 +387,10 @@ def main(argv=None):
 
     def codigos_de(filas, mapa):
         return {c for c in (code_text(column_for(r, mapa, "codigo_municipal")) for r in filas) if c}
+
+    if sin_condicion(titular_filas, mapas["titulares"]):
+        print(f"aviso: {HOJA_TITULARES} has no column '{mapas['titulares']['condicion']}' (field condicion): the "
+              "titulares go without condicion", file=sys.stderr)
 
     fichas, n_fichas = fichas_de(predios, codigos_con_piso(construcciones, mapas["construccion"]),
                                  codigos_de(titular_filas, mapas["titulares"]), vinculos, mapas["predio"])
