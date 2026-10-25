@@ -81,13 +81,21 @@ class HappyPathTests(ApplyCliTestCase):
         puts = {r[1]: r[3] for r in self.core.requests if r[0] == "PUT" and r[1].startswith("/api/objects/")}
         self.assertEqual(puts["/api/objects/arancel"]["indexes"], [["id_aranc", "anio"]])
 
+    def test_decision_brecha_is_written_only_by_the_app(self):
+        # apiOnly (ADR-040): the generic record api refuses it and wasichai-ui shows it read-only; it goes with the
+        # indexes in the object's PUT, and only there
+        self.run_cli([])
+        puts = {r[1]: r[3] for r in self.core.requests if r[0] == "PUT" and r[1].startswith("/api/objects/")}
+        self.assertIs(puts["/api/objects/decision_brecha"]["apiOnly"], True)
+        self.assertTrue(all("apiOnly" not in b for p, b in puts.items() if p != "/api/objects/decision_brecha"))
+
 
 class IdempotencyTests(ApplyCliTestCase):
     def test_everything_skips(self):
         model = load_model()
         self.core = FakeCore(
             existing_objects=OBJECT_ORDER, existing_relationships=RELATIONSHIP_ORDER,
-            object_rules={o["name"]: {k: o[k] for k in ("indexes",) if k in o} for o in model["objects"]},
+            object_rules={o["name"]: {k: o[k] for k in ("indexes", "apiOnly") if k in o} for o in model["objects"]},
             existing_fields={n: core_fields(model, n) for n in OBJECT_ORDER},
         )
         self.addCleanup(self.core.stop)

@@ -440,7 +440,8 @@ un Parquet por tabla, publicada en S3. `importar_corte_brecha.py` la carga en tr
   `<id del corte>|id:<id de la fila en srtm>` si la fila no tiene `codigo_catastro` o lo comparte con otra), con
   `codigo_municipal` de la ficha que empata y `supera_5_uit`;
 - `decision_brecha`, la bandeja (`clave` `<codigo_municipal>|<anio>`): no la toca la carga, la escribe la API, y así
-  una decisión sobrevive a los cortes nuevos.
+  una decisión sobrevive a los cortes nuevos. Es `apiOnly` (ADR-040, `apply.py` lo sincroniza como `appendOnly`): la
+  API genérica de registros no la escribe y wasichai-ui la muestra de solo lectura.
 
 Antes de leer nada verifica el corte como `manifiesto.verificar_corte` de srtm: `formato` 1, cada archivo del
 manifiesto con sus bytes, su sha256 y su número de filas, y ningún archivo que el manifiesto no liste. Un archivo que

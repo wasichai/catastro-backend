@@ -204,6 +204,9 @@ class ModelTests(unittest.TestCase):
         decision = {x["name"]: x for x in self.objects["decision_brecha"]["fields"]}
         self.assertEqual((decision["estado"]["enum"], decision["responsable"]["type"], decision["decidido_en"]["type"]),
                          ("estado_decision", "EMAIL", "DATETIME"))
+        # the decisions are written only by POST /api/catastro/brechas/decisiones (apiOnly, ADR-040)
+        self.assertIs(self.objects["decision_brecha"].get("apiOnly"), True)
+        self.assertTrue(all(not o.get("apiOnly") for o in self.model["objects"] if o["name"] != "decision_brecha"))
         r = {x["name"]: x for x in self.model["relationships"]}["brecha_ficha_corte"]
         self.assertEqual((r["source"], r["target"], r["fieldName"], r["required"]),
                          ("brecha_ficha", "corte_brecha", "corte", True))

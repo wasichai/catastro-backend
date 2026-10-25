@@ -47,5 +47,17 @@ class ModeloBrechaTest : CatastroApiTest() {
         send("PATCH", "/api/objects/corte_brecha/records/$corte", mapOf("attributes" to mapOf("cargado_en" to null)), HttpStatus.OK, admin)
         val limpio = arbol(send("GET", "/api/objects/corte_brecha/records/$corte", null, HttpStatus.OK, admin))["attributes"]
         assertTrue(limpio["cargado_en"] == null || limpio["cargado_en"].isNull, limpio.toString())
+
+        // decision_brecha is written only by the app: apiOnly, which the generic record api refuses
+        val decision = arbol(send("GET", "/api/objects", null, HttpStatus.OK, admin)).lista().single { it["name"].asString() == "decision_brecha" }
+        assertTrue(decision["apiOnly"].asBoolean(), decision.toString())
+        val (estado, respuesta) =
+            exchange(
+                "POST",
+                "/api/objects/decision_brecha/records",
+                mapOf("attributes" to mapOf("clave" to "$marca|2026", "codigo_municipal" to marca, "anio" to 2026, "estado" to "PENDIENTE")),
+                admin
+            )
+        assertEquals(HttpStatus.FORBIDDEN, estado, respuesta)
     }
 }

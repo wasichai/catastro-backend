@@ -148,7 +148,8 @@ abstract class CatastroApiTest : WasichaiIntegrationTest() {
             val indexes = obj["indexes"]?.lista()?.map { set -> set.lista().map { it.asString().trim().lowercase() } }.orEmpty()
             val actual = guardados.getValue(obj["name"].asString())
             val tiene = actual["indexes"]?.lista()?.map { set -> set.lista().map { it.asString() } }.orEmpty()
-            if (indexes == tiene) continue
+            val apiOnly = obj["apiOnly"]?.asBoolean() ?: false
+            if (indexes == tiene && apiOnly == (actual["apiOnly"]?.asBoolean() ?: false)) continue
             val conservados =
                 mapOf(
                     "label" to actual["label"].asString(),
@@ -156,7 +157,7 @@ abstract class CatastroApiTest : WasichaiIntegrationTest() {
                     "description" to actual["description"]?.takeUnless { it.isNull }?.asString(),
                     "enabled" to (actual["enabled"]?.asBoolean() ?: true)
                 )
-            send("PUT", "/api/objects/${obj["name"].asString()}", conservados + ("indexes" to indexes), HttpStatus.OK, admin)
+            send("PUT", "/api/objects/${obj["name"].asString()}", conservados + mapOf("indexes" to indexes, "apiOnly" to apiOnly), HttpStatus.OK, admin)
         }
     }
 

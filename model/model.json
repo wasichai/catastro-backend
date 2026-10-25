@@ -819,6 +819,7 @@
       "label": "Decisión de brecha",
       "pluralLabel": "Decisiones de brecha",
       "description": "La bandeja de decisiones del dashboard de brechas: qué se hace con un predio en un año. Una por codigo_municipal y año, así sobrevive a los cortes nuevos. Sin registro, el estado es PENDIENTE. El historial sale de la auditoría del Core.",
+      "apiOnly": true,
       "indexes": [
         ["anio"],
         ["codigo_municipal"]
