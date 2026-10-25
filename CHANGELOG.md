@@ -1,5 +1,38 @@
 # Changelog
 
+## [1.0.0](https://github.com/wasichai/catastro-backend/compare/v0.1.0...v1.0.0) (2026-10-25)
+
+
+### Features
+
+* **api:** GET /api/catastro/cambios, los cambios del catastro desde un cursor ([#36](https://github.com/wasichai/catastro-backend/issues/36)) ([fe8978e](https://github.com/wasichai/catastro-backend/commit/fe8978e1a589ee9ebbab2c65a9660d4392844c8f))
+* **brechas:** API del dashboard de brechas para catastro-ui ([#53](https://github.com/wasichai/catastro-backend/issues/53)) ([#57](https://github.com/wasichai/catastro-backend/issues/57)) ([279d4ad](https://github.com/wasichai/catastro-backend/commit/279d4ad847fec9a81a79742402ac08861fe963d0))
+* **dev:** GeoServer en el compose para publicar capas WMS ([#54](https://github.com/wasichai/catastro-backend/issues/54)) ([#55](https://github.com/wasichai/catastro-backend/issues/55)) ([d6a849c](https://github.com/wasichai/catastro-backend/commit/d6a849cb5dec37a09fbe96cbe601e3b19f8d095a))
+* entregas del levantamiento (upsert con historia en el audit log) ([#28](https://github.com/wasichai/catastro-backend/issues/28)) ([fcd555d](https://github.com/wasichai/catastro-backend/commit/fcd555d5ba51ff064832cd9dad1634cfa6f53ffe))
+* **gis:** vistas de mapa y capas WMS con estilo para aranceles y brechas ([#60](https://github.com/wasichai/catastro-backend/issues/60)) ([93a6919](https://github.com/wasichai/catastro-backend/commit/93a6919b164aa47060d2792aee0da816ab909241))
+* **model:** el libro de comparación de Ica a una entrega, con titulares y vínculo ([#38](https://github.com/wasichai/catastro-backend/issues/38)) ([8a158c5](https://github.com/wasichai/catastro-backend/commit/8a158c50fb92d12ce3ee775b7a82548fb0436f2d))
+* **modelo:** corte de brecha, sus fichas y la bandeja de decisiones ([#52](https://github.com/wasichai/catastro-backend/issues/52)) ([#56](https://github.com/wasichai/catastro-backend/issues/56)) ([6307cef](https://github.com/wasichai/catastro-backend/commit/6307cefdc8d76852e691b9ecd47c25a5d05b0df3))
+* **modelo:** reporte de fichas sin arancel vigente y corrección por entrega ([#51](https://github.com/wasichai/catastro-backend/issues/51)) ([24165f8](https://github.com/wasichai/catastro-backend/commit/24165f883c9c71e47827f68a3e77b573336720c1))
+* titulares del levantamiento y GET /api/catastro/titulares ([#32](https://github.com/wasichai/catastro-backend/issues/32)) ([dba20d7](https://github.com/wasichai/catastro-backend/commit/dba20d714239ba315968fc1988de3a94b1efe07b))
+* **vias:** asignación LOTES para los códigos de urbanización ([#47](https://github.com/wasichai/catastro-backend/issues/47)) ([#50](https://github.com/wasichai/catastro-backend/issues/50)) ([8921789](https://github.com/wasichai/catastro-backend/commit/8921789269c439ba90a85835a80c13e1b878f9b8))
+* **vias:** tramos de vía con su arancel e import_vias.py ([#42](https://github.com/wasichai/catastro-backend/issues/42)) ([#43](https://github.com/wasichai/catastro-backend/issues/43)) ([90e9f03](https://github.com/wasichai/catastro-backend/commit/90e9f03f41ed52c11dbfac5cebff472cb0134362))
+* vínculo de cada ficha con rentas y los códigos del SNIC ([#31](https://github.com/wasichai/catastro-backend/issues/31)) ([16cee88](https://github.com/wasichai/catastro-backend/commit/16cee88e1fd89b088851eef212c6e4307473e178))
+
+
+### Bug Fixes
+
+* **model:** ajustes de la revisión final del carril A (conversor de Ica y docs) ([#39](https://github.com/wasichai/catastro-backend/issues/39)) ([b1c5179](https://github.com/wasichai/catastro-backend/commit/b1c517918d40ce0d176939ab5e90549d17e43e9f))
+* **modelo:** titulares del libro v3, condición opcional y alias codigo_municipal ([#49](https://github.com/wasichai/catastro-backend/issues/49)) ([f55965c](https://github.com/wasichai/catastro-backend/commit/f55965cf31750c99bee7fded740db4e6d72d9ebd))
+* **model:** parse_date no se cae con un número de serie fuera de rango ([#40](https://github.com/wasichai/catastro-backend/issues/40)) ([ece77bd](https://github.com/wasichai/catastro-backend/commit/ece77bd8947c0da96308172dd266a2ed29b073b5))
+* **valuacion:** un predio rústico sale sin valor con PREDIO_RUSTICO (valuacion-v3) ([#37](https://github.com/wasichai/catastro-backend/issues/37)) ([0216871](https://github.com/wasichai/catastro-backend/commit/0216871af23f07b7897a9902fbfa62955c16b6e7))
+* **vias:** import_vias.py con el gpkg real de Ica ([#45](https://github.com/wasichai/catastro-backend/issues/45)) ([#46](https://github.com/wasichai/catastro-backend/issues/46)) ([0110ad6](https://github.com/wasichai/catastro-backend/commit/0110ad63cccc86601df786c4d281103485bf6e45))
+
+
+### Documentation
+
+* **adr:** ADR-011 y ADR-012, y preparar el release 1.0.0 ([#20](https://github.com/wasichai/catastro-backend/issues/20)) ([ff1fcbd](https://github.com/wasichai/catastro-backend/commit/ff1fcbd5019cf180da1eefa717a23fc64f2a5a63))
+* **adr:** el ADR-013 enmienda al ADR-008 ([#30](https://github.com/wasichai/catastro-backend/issues/30)) ([8f65aba](https://github.com/wasichai/catastro-backend/commit/8f65abaaa24daeb254aa582ba09d3f30c223fc64))
+
 ## 0.1.0 (2026-10-24)
 
 
