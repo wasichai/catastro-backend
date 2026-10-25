@@ -28,6 +28,8 @@ enmienda o la reemplaza, y lo dice en su línea de estado. Las de wasichai, el f
   catastro](0012-los-aranceles-son-de-srtm-y-catastro-guarda-la-copia.md)
 - [ADR-013: El levantamiento llega por entregas, se carga solo por la API y no guarda
   estimaciones](0013-el-levantamiento-llega-por-entregas.md)
+- [ADR-014: srtm sigue los cambios del catastro por un cursor, y catastro los lee del audit log de
+  wasichai](0014-srtm-sigue-los-cambios-por-un-cursor.md)
 
 ## Plantilla
 
