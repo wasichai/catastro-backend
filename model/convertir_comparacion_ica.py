@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
-"""Turns Ica's comparison workbook (libro de comparación v3) into the fichas and pisos csv of
+"""Turns Ica's comparison workbook (libro de comparación v3) into the fichas, pisos and titulares csv of
 `import_fichas.py --entrega`.
 
-Only the catastro side is read (the `*_catastro` sheets); the rentas side is the srtm padrón, never the catastro.
+Only the catastro side is read (the sheets predio_catastro, construccion_catastro and titulares_catastro); the rentas
+side is the srtm padrón, never the catastro. The vínculo with rentas comes from the lotes gpkg exported to csv
+(`ogr2ogr -f CSV vinculos.csv <lotes>.gpkg <capa>`), one row per lote with cod_predio_rentas and vinculo_metodo.
 Rules (wasichai/catastro-backend#10, contexto-comun.md «Ruling (#10)»):
   fichas: a predio without codigo_unidad_catastro (or, given the vínculos, without a vínculo row) is not loaded; a
           repeated cod_predio_rentas keeps its first ficha. sector, manzana and lote are parts 3, 4 and 5 (0-based) of the
@@ -16,8 +18,27 @@ Rules (wasichai/catastro-backend#10, contexto-comun.md «Ruling (#10)»):
           a predio becomes secciones 1..n in sheet order. A year outside 1900-2026, an area of 0 or less and a letter
           outside A-J go empty; material 1/2/3 and estado 1-4 are Ica's codes for the model's options, which also pass
           as they are; anything else goes empty.
+  titulares: only those of a loaded ficha, every value as it comes (a filler document such as 000000000 included:
+          import_fichas.py empties it). Datos personales (Ley 29733): the output goes outside the repository, and
+          nothing a titular brings ever reaches stdout or stderr.
+  vínculos: vinculo_metodo matches the model's enum in any case (with _ or a space) or through --metodo TEXTO=ENUM;
+          any other text exits 2. A row without cod_predio_rentas links nothing; an empty method links the code with
+          an empty vinculo_metodo; a repeated code keeps its first row. Without --vinculos every ficha is loaded and
+          vinculo_metodo goes empty.
 Every rule that drops or empties something is counted, so the operator sees what the delivery lost.
+
+The default columns are the libro's; --map-predio, --map-construccion, --map-titulares and --map-vinculos
+field=column override them (repeatable). Every column is required (exit 2 naming it) except cuc_catastro and
+urbanizacion_catastro; without cuc_catastro, fichas.csv leaves its cuc column out, so an upsert does not clear it.
+
+Writes fichas.csv, pisos.csv and titulares.csv in --salida, which must be outside the repository, and prints only
+`<clave>: <n>` lines. Exit: 0 ok, 2 a missing sheet or column, an unknown vínculo method or a bad flag (nothing is
+written).
+
+Run: python3 -I convertir_comparacion_ica.py --libro comparacion.xlsx --vinculos vinculos.csv --salida ~/ica/entrega
 """
+import argparse
+import csv
 import os
 import re
 import sys
@@ -31,7 +52,11 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from import_fichas import CATEGORIAS  # noqa: E402
-from tabular import clean_text, code_text, column_for, enum_option, parse_decimal, parse_int  # noqa: E402
+from tabular import (INPUT_ERRORS, clean_text, code_text, column_for, enum_option, load_enums,  # noqa: E402
+                     missing_columns, parse_decimal, parse_int, parse_map, read_table)
+
+REPOSITORIO = os.path.dirname(HERE)
+HOJA_PREDIO, HOJA_CONSTRUCCION, HOJA_TITULARES = "predio_catastro", "construccion_catastro", "titulares_catastro"
 
 PREDIO_COLUMNS = {
     "codigo_municipal": "cod_predio_rentas", "unidad_catastral": "codigo_unidad_catastro",
@@ -44,10 +69,19 @@ CONSTRUCCION_COLUMNS = {
     "techos": "techos_catastro", "pisos": "pisos_catastro", "puertas_ventanas": "puertas_catastro",
     "revestimientos": "revestimientos_catastro", "banos": "banos_catastro", "instalaciones": "instalaciones_catastro",
 }
+TITULAR_COLUMNS = {
+    "codigo_municipal": "cod_predio", "tipo_documento": "tipo_documento_catastro",
+    "numero_documento": "numero_documento_catastro", "nombre": "nombre_catastro", "porcentaje": "porcentaje_catastro",
+    "condicion": "condicion_catastro",
+}
+VINCULO_COLUMNS = {"codigo_municipal": "cod_predio_rentas", "metodo": "vinculo_metodo"}
+# the predio columns the libro may lack; every other mapped column is required
+PREDIO_OPCIONALES = {"cuc", "urbanizacion"}
 FICHAS_CSV = ["cod_pre", "cod_sect", "cod_mzn", "cod_lote", "area_terreno", "uso", "id_aranc", "estado_levantamiento",
               "vinculo_metodo", "codigo_referencia_catastral", "cuc"]
 PISOS_CSV = ["cod_pre", "piso", "seccion", "area_construida", "anio_construccion", "material", "estado_conservacion",
              *CATEGORIAS]
+TITULARES_CSV = ["cod_pre", "tipo_documento", "numero_documento", "nombre", "porcentaje", "condicion"]
 
 # Ica's codes (README's reading of the libro); the model's own options pass as they are
 MATERIAL_CODES = {"1": "CONCRETO", "2": "LADRILLO", "3": "ADOBE"}
@@ -64,6 +98,7 @@ CONTEOS_FICHAS = ["predios_sin_vinculo", "fichas", "fichas_repetidas", "fichas_s
 CONTEOS_PISOS = ["pisos", "pisos_de_predios_sin_ficha", "pisos_nivel_71_81", "niveles_sin_numero",
                  "pisos_en_seccion_2_o_mas", "anios_vaciados", "areas_construidas_vaciadas", "letras_vaciadas",
                  "materiales_vaciados", "estados_vaciados"]
+CONTEOS_TITULARES = ["titulares", "titulares_de_predios_sin_ficha"]
 CATEGORIA = re.compile(r"[A-J]")
 DIGITOS = re.compile(r"\d+")
 
@@ -178,3 +213,173 @@ def pisos_de(filas, codigos, mapa, enums, anio_maximo=ANIO_MAXIMO):
         pisos.append(piso_fila)
     n["pisos"] = len(pisos)
     return pisos, n
+
+
+def titulares_de(filas, codigos, mapa):
+    """(titulares, counts) from the titulares_catastro rows of the loaded fichas' `codigos`, every value as it comes:
+    a filler document stays (import_fichas.py empties it and reports it by codigo and row)."""
+    n = Counter(dict.fromkeys(CONTEOS_TITULARES, 0))
+    titulares = []
+    for row in filas:
+        codigo = code_text(column_for(row, mapa, "codigo_municipal"))
+        if codigo not in codigos:
+            n["titulares_de_predios_sin_ficha"] += 1
+            continue
+        titulares.append({
+            "cod_pre": codigo,
+            "tipo_documento": code_text(column_for(row, mapa, "tipo_documento")) or "",
+            "numero_documento": code_text(column_for(row, mapa, "numero_documento")) or "",
+            "nombre": clean_text(column_for(row, mapa, "nombre")) or "",
+            "porcentaje": clean_text(column_for(row, mapa, "porcentaje")) or "",
+            "condicion": clean_text(column_for(row, mapa, "condicion")) or "",
+        })
+    n["titulares"] = len(titulares)
+    return titulares, n
+
+
+def _texto_de_metodo(value):
+    """The method text as it is compared with an alias: collapsed and upper-cased."""
+    return (clean_text(value) or "").upper()
+
+
+def vinculos_de(filas, mapa, alias, opciones):
+    """(code -> vinculo_metodo, problems) from the vínculos csv rows. `alias` maps a method text (as
+    _texto_de_metodo leaves it) to an enum option. Each unknown text is one problem, with its row count."""
+    vinculos, desconocidos = {}, Counter()
+    for row in filas:
+        codigo = code_text(column_for(row, mapa, "codigo_municipal"))
+        texto = clean_text(column_for(row, mapa, "metodo"))
+        if not codigo:
+            continue
+        if texto is None:
+            metodo = ""
+        else:
+            metodo = alias.get(_texto_de_metodo(texto)) or enum_option(texto, opciones)[0]
+            if metodo is None:
+                desconocidos[texto.upper()] += 1
+                continue
+        vinculos.setdefault(codigo, metodo)
+    problems = [f"vinculo_metodo '{texto}' ({veces} rows) is not one of {', '.join(opciones)}: map it with "
+                f"--metodo '{texto}=<option>'" for texto, veces in desconocidos.items()]
+    return vinculos, problems
+
+
+def _alias(pares, opciones):
+    """(alias, problems) from the --metodo TEXTO=ENUM flags."""
+    alias, problems = {}, []
+    for par in pares:
+        texto, _, opcion = par.partition("=")
+        metodo, _ = enum_option(opcion, opciones)
+        if not _texto_de_metodo(texto) or metodo is None:
+            problems.append(f"--metodo {par}: expected TEXTO=<option>, option one of {', '.join(opciones)}")
+            continue
+        alias[_texto_de_metodo(texto)] = metodo
+    return alias, problems
+
+
+def _dentro_del_repositorio(path):
+    real, repo = os.path.realpath(path), os.path.realpath(REPOSITORIO)
+    return os.path.commonpath([real, repo]) == repo
+
+
+def _escribir(path, columnas, filas):
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        writer = csv.DictWriter(f, fieldnames=columnas, extrasaction="ignore")
+        writer.writeheader()
+        writer.writerows(filas)
+
+
+def _parse_args(argv):
+    p = argparse.ArgumentParser(
+        description="Turn Ica's comparison workbook into the csv of import_fichas.py --entrega.")
+    p.add_argument("--libro", required=True, help="the comparison workbook (xlsx)")
+    p.add_argument("--salida", required=True, help="the directory for fichas.csv, pisos.csv and titulares.csv, outside "
+                                                  "the repository (datos personales)")
+    p.add_argument("--vinculos", help="csv exported from the lotes gpkg (ogr2ogr -f CSV), one row per lote with "
+                                      "cod_predio_rentas and vinculo_metodo; without it every ficha is loaded")
+    for name in ("map-predio", "map-construccion", "map-titulares", "map-vinculos"):
+        p.add_argument(f"--{name}", action="append", default=[], metavar="FIELD=COLUMN",
+                       help="column that fills a field")
+    p.add_argument("--metodo", action="append", default=[], metavar="TEXTO=ENUM",
+                   help="a vínculo method text that means an option of the enum vinculo_metodo (repeatable)")
+    p.add_argument("--anio-maximo", type=int, default=ANIO_MAXIMO,
+                   help=f"the last year of construction kept (default {ANIO_MAXIMO})")
+    p.add_argument("--model", default=os.path.join(HERE, "model.json"))
+    return p.parse_args(argv)
+
+
+def _error(problems):
+    for problem in problems:
+        print(f"error: {problem}", file=sys.stderr)
+    return 2
+
+
+def main(argv=None):
+    args = _parse_args(sys.argv[1:] if argv is None else argv)
+    if _dentro_del_repositorio(args.salida):
+        return _error([f"--salida {args.salida} is inside the repository: the output holds datos personales "
+                       "(Ley 29733), write it outside"])
+    try:
+        mapas = {"predio": parse_map(args.map_predio, PREDIO_COLUMNS),
+                 "construccion": parse_map(args.map_construccion, CONSTRUCCION_COLUMNS),
+                 "titulares": parse_map(args.map_titulares, TITULAR_COLUMNS),
+                 "vinculos": parse_map(args.map_vinculos, VINCULO_COLUMNS)}
+        enums = load_enums(args.model)
+    except INPUT_ERRORS as e:
+        return _error([str(e)])
+    alias, problems = _alias(args.metodo, enums["vinculo_metodo"])
+    if problems:
+        return _error(problems)
+    try:
+        predios = read_table(args.libro, HOJA_PREDIO)
+        construcciones = read_table(args.libro, HOJA_CONSTRUCCION)
+        titular_filas = read_table(args.libro, HOJA_TITULARES)
+        vinculo_filas = read_table(args.vinculos) if args.vinculos else None
+    except INPUT_ERRORS as e:
+        return _error([f"input: {e}"])
+
+    requeridas = [f for f in PREDIO_COLUMNS if f not in PREDIO_OPCIONALES]
+    problems = [f"{HOJA_PREDIO}: {p}" for p in missing_columns(predios, mapas["predio"], requeridas)]
+    problems += [f"{HOJA_CONSTRUCCION}: {p}"
+                 for p in missing_columns(construcciones, mapas["construccion"], list(CONSTRUCCION_COLUMNS))]
+    problems += [f"{HOJA_TITULARES}: {p}"
+                 for p in missing_columns(titular_filas, mapas["titulares"], list(TITULAR_COLUMNS))]
+    vinculos = None
+    if vinculo_filas is not None:
+        faltan = missing_columns(vinculo_filas, mapas["vinculos"], list(VINCULO_COLUMNS))
+        problems += [f"--vinculos: {p}" for p in faltan]
+        if not faltan:
+            vinculos, more = vinculos_de(vinculo_filas, mapas["vinculos"], alias, enums["vinculo_metodo"])
+            problems += more
+    if problems:
+        return _error(problems)
+
+    def codigos_de(filas, mapa):
+        return {c for c in (code_text(column_for(r, mapa, "codigo_municipal")) for r in filas) if c}
+
+    fichas, n_fichas = fichas_de(predios, codigos_de(construcciones, mapas["construccion"]),
+                                 codigos_de(titular_filas, mapas["titulares"]), vinculos, mapas["predio"])
+    codigos = {f["cod_pre"] for f in fichas}
+    pisos, n_pisos = pisos_de(construcciones, codigos, mapas["construccion"], enums, args.anio_maximo)
+    titulares, n_titulares = titulares_de(titular_filas, codigos, mapas["titulares"])
+
+    # a column the libro lacks is left out, so the upsert leaves that field as it is (README «Entregas»)
+    con_cuc = bool(predios) and mapas["predio"]["cuc"].lower() in predios[0]
+    try:
+        os.makedirs(args.salida, exist_ok=True)
+        _escribir(os.path.join(args.salida, "fichas.csv"), [c for c in FICHAS_CSV if c != "cuc" or con_cuc], fichas)
+        _escribir(os.path.join(args.salida, "pisos.csv"), PISOS_CSV, pisos)
+        _escribir(os.path.join(args.salida, "titulares.csv"), TITULARES_CSV, titulares)
+    except OSError as e:
+        return _error([f"output: {e}"])
+
+    if vinculos is not None:
+        print(f"vinculos: {len(vinculos)}")
+    for conteos, n in ((CONTEOS_FICHAS, n_fichas), (CONTEOS_PISOS, n_pisos), (CONTEOS_TITULARES, n_titulares)):
+        for clave in conteos:
+            print(f"{clave}: {n[clave]}")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
