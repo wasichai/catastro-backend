@@ -5,8 +5,10 @@ Reads a JSON metadata model (objects, fields, relationships, enums), checks it
 against Core's rules (--validate-only stops there) and creates it in Core via
 the REST API, in file order (so relationship targets already exist), marking
 each required relationship's field required (an optional one is left optional), and last the object-level
-rules model.json declares (indexes, appendOnly). Today that is 7 objects and 4 relationships, none append-only:
-"done: 11 created, 0 updated" on an empty Core, "11 skipped" on a second run.
+rules model.json declares (indexes, appendOnly, apiOnly). Today that is 11 objects and 5 relationships, none
+append-only and one api-only (decision_brecha):
+"done: 16 created, 7 updated" on an empty Core (the updates are the 7 objects with indexes), "16 skipped" on a second
+run.
 
 On a Core that already has the model it syncs instead: it adds the fields and
 the ENUM options model.json has and Core lacks, drops the ENUM options it no
@@ -94,8 +96,8 @@ FIELD_TYPES = frozenset({
 
 # an object's rules model.json declares and apply keeps in sync after the relationships: composite indexes
 # (ADR-036) and append-only (ADR-040). left out of an object, they are none
-RULE_KEYS = ("indexes", "appendOnly")
-RULES_OFF = {"indexes": [], "appendOnly": False}
+RULE_KEYS = ("indexes", "appendOnly", "apiOnly")
+RULES_OFF = {"indexes": [], "appendOnly": False, "apiOnly": False}
 
 # what Core's object PUT overwrites, not leaves alone, when missing (MetadataService.updateObject: description goes
 # null, pluralLabel becomes the label, enabled true). a rule PUT sends them back as Core has them, so it touches only
@@ -134,8 +136,9 @@ def _check_rules(obj, field_types, relation_fields):
     lists, each naming fields of the object (a relation's fieldName counts) once, none a LONG_TEXT or a GEOMETRY."""
     label = f"object {obj.get('name', '')}"
     errors = []
-    if "appendOnly" in obj and not isinstance(obj["appendOnly"], bool):
-        errors.append(f"{label}: appendOnly must be true or false")
+    for key in ("appendOnly", "apiOnly"):
+        if key in obj and not isinstance(obj[key], bool):
+            errors.append(f"{label}: {key} must be true or false")
     indexes = obj.get("indexes", [])
     if not isinstance(indexes, list) or not all(isinstance(i, list) and all(isinstance(f, str) for f in i) for i in indexes):
         return errors + [f"{label}: indexes must be a list of lists of field names"]
@@ -364,8 +367,11 @@ def rule_changes(obj, current):
     want_indexes = [[f.strip().lower() for f in s] for s in obj.get("indexes", [])]
     if want_indexes != (current.get("indexes") or []):
         changes["indexes"] = want_indexes
-    if bool(obj.get("appendOnly")) != bool(current.get("appendOnly")):
-        changes["appendOnly"] = bool(obj.get("appendOnly"))
+    # appendOnly (ADR-040): never changed or deleted; apiOnly (ADR-040): written only in-process, by the app, never
+    # through the generic record api (wasichai-ui shows it read-only). left out, either is false
+    for key in ("appendOnly", "apiOnly"):
+        if bool(obj.get(key)) != bool(current.get(key)):
+            changes[key] = bool(obj.get(key))
     return changes
 
 

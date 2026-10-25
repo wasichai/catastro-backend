@@ -72,10 +72,15 @@ jobs:
         working-directory: model
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-      # the runner's python 3 (>= 3.11, stdlib only): no setup-python to pin
+      # the runner's python 3 (>= 3.11): no setup-python to pin. the scripts are stdlib only but
+      # importar_corte_brecha.py, which reads the corte with duckdb (requirements-corte.txt): a venv for it, and
+      # REQUIERE_DUCKDB makes its tests fail instead of skipping when it is missing
       - run: python3 --version
+      - run: python3 -m venv "$RUNNER_TEMP/venv" && "$RUNNER_TEMP/venv/bin/pip" install -q -r requirements-corte.txt
       - run: python3 apply.py --validate-only
-      - run: python3 -m unittest -v
+      - run: '"$RUNNER_TEMP/venv/bin/python" -m unittest -v'
+        env:
+          REQUIERE_DUCKDB: '1'
 
   format:
     name: Format (prettier)

@@ -182,7 +182,8 @@ class FakeCore:
     def _object(self, name):
         """An object as GET /api/objects lists it: indexes only when some are declared, appendOnly always."""
         rules = self.object_rules.get(name, {})
-        obj = {"name": name, **self.object_meta.get(name, _meta(name)), "appendOnly": bool(rules.get("appendOnly"))}
+        obj = {"name": name, **self.object_meta.get(name, _meta(name)), "appendOnly": bool(rules.get("appendOnly")),
+               "apiOnly": bool(rules.get("apiOnly"))}
         if rules.get("indexes"):
             obj["indexes"] = rules["indexes"]
         return obj
@@ -201,7 +202,7 @@ class FakeCore:
         enabled = body.get("enabled")
         self.object_meta[name] = _meta(body["label"], body.get("pluralLabel"), body.get("description"),
                                        True if enabled is None else enabled)
-        for key in ("indexes", "appendOnly"):
+        for key in ("indexes", "appendOnly", "apiOnly"):
             if body.get(key) is not None:
                 self.object_rules[name][key] = body[key]
         return 200, self._object(name)
@@ -286,7 +287,7 @@ class FakeCore:
             if name in self.existing_objects:
                 return 409, {"message": "exists"}
             self.existing_objects.add(name)
-            self.object_rules[name] = {k: body[k] for k in ("indexes", "appendOnly") if k in body}
+            self.object_rules[name] = {k: body[k] for k in ("indexes", "appendOnly", "apiOnly") if k in body}
             self.object_meta[name] = _meta(body["label"], body.get("pluralLabel"), body.get("description"))
             return 201, {"name": name}
         if OBJECT.match(path) and method == "PUT":

@@ -15,7 +15,10 @@
     "vinculo_metodo": ["CODIGO_RENTAS", "LLAVE_HU_MZ_LOTE", "GEOMETRICO", "MANUAL"],
     "tipo_predio": ["URBANO", "RUSTICO"],
     "lado_tramo": ["AMBOS", "IZQUIERDO", "DERECHO"],
-    "asignacion_tramo": ["NOMBRE_UNICO", "CERCANIA", "LOTES", "SIN_ARANCEL"]
+    "asignacion_tramo": ["NOMBRE_UNICO", "CERCANIA", "LOTES", "SIN_ARANCEL"],
+    "categoria_brecha": ["OMISO", "SIN_CATASTRO", "SIN_VALOR", "SUBVALUADO", "SOBREVALUADO", "COINCIDE", "SIN_LEVANTAR"],
+    "confianza_brecha": ["CONFIABLE", "DUDOSO", "SIN_LEVANTAR"],
+    "estado_decision": ["PENDIENTE", "A_INSPECCIONAR", "INSPECCIONADO", "A_FISCALIZAR", "DESCARTADO"]
   },
   "objects": [
     {
@@ -562,6 +565,323 @@
           "description": "El eje del tramo (UTM 18S). Un LineString se guarda como MultiLineString de una parte."
         }
       ]
+    },
+    {
+      "name": "corte_brecha",
+      "label": "Corte de brecha",
+      "pluralLabel": "Cortes de brecha",
+      "description": "Un corte analítico de la brecha de recaudación de srtm (srtm-backend docs/informes/brecha), cargado por model/importar_corte_brecha.py: la corrida de srtm de la que salió, su manifiesto y sus totales. Sus filas son brecha_ficha. No lleva datos personales.",
+      "indexes": [
+        ["fecha"]
+      ],
+      "fields": [
+        {
+          "name": "clave",
+          "label": "Clave",
+          "type": "TEXT",
+          "required": true,
+          "unique": true,
+          "description": "<org_slug>|<fecha>: un corte por organización y fecha, lo que hace idempotente la carga."
+        },
+        {
+          "name": "org_slug",
+          "label": "Organización",
+          "type": "TEXT",
+          "required": true,
+          "description": "El slug de la organización en srtm, como lo trae el manifiesto (organizacion)."
+        },
+        {
+          "name": "fecha",
+          "label": "Fecha del corte",
+          "type": "DATE",
+          "required": true,
+          "description": "fecha_corte del manifiesto."
+        },
+        {
+          "name": "corrida",
+          "label": "Corrida de srtm",
+          "type": "TEXT",
+          "description": "El id de la brecha_corrida de srtm de la que salieron las filas."
+        },
+        {
+          "name": "anio",
+          "label": "Año",
+          "type": "INTEGER",
+          "required": true,
+          "description": "El año de la corrida: el de las decisiones (decision_brecha.anio)."
+        },
+        {
+          "name": "manifiesto_sha256",
+          "label": "SHA-256 del manifiesto",
+          "type": "TEXT",
+          "description": "Sha256 de los bytes de manifiesto.json: dos cargas del mismo corte lo comparan."
+        },
+        {
+          "name": "version_srtm",
+          "label": "Versión de srtm",
+          "type": "TEXT",
+          "description": "backends.srtm.version del manifiesto."
+        },
+        {
+          "name": "version_catastro",
+          "label": "Versión de catastro",
+          "type": "TEXT",
+          "description": "La version_catastro de la corrida de srtm (la del motor de valuación que usó)."
+        },
+        {
+          "name": "cargado_en",
+          "label": "Cargado en",
+          "type": "DATETIME",
+          "description": "Cuándo lo cargó importar_corte_brecha.py por última vez con cambios."
+        },
+        {
+          "name": "total_fichas",
+          "label": "Fichas",
+          "type": "INTEGER",
+          "description": "Cuántas filas de srtm_brecha_predio trae el corte."
+        },
+        {
+          "name": "declarado",
+          "label": "Impuesto declarado (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "catastro",
+          "label": "Impuesto con catastro (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "delta_impuesto",
+          "label": "Δ impuesto (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "delta_arbitrios",
+          "label": "Δ arbitrios (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "delta_impuesto_confiable",
+          "label": "Δ impuesto confiable (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "delta_impuesto_dudoso",
+          "label": "Δ impuesto dudoso (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "delta_impuesto_sin_levantar",
+          "label": "Δ impuesto sin levantar (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "omisos_estimado",
+          "label": "Δ impuesto de omisos, estimado (S/)",
+          "type": "DECIMAL",
+          "description": "La suma del Δ impuesto de las filas OMISO, como deltaImpuestoOmisosEstimado de srtm."
+        }
+      ]
+    },
+    {
+      "name": "brecha_ficha",
+      "label": "Ficha de brecha",
+      "pluralLabel": "Fichas de brecha",
+      "description": "Una fila de srtm_brecha_predio de un corte: la brecha de un predio o de una ficha catastral, con la ficha que empata por el código normalizado (Brecha.llave de srtm). Sin datos personales.",
+      "indexes": [
+        ["corte", "categoria"],
+        ["corte", "confianza"],
+        ["corte", "sector"],
+        ["codigo_municipal"]
+      ],
+      "fields": [
+        {
+          "name": "clave",
+          "label": "Clave",
+          "type": "TEXT",
+          "required": true,
+          "unique": true,
+          "description": "<id del corte>|<codigo_catastro>; sin codigo_catastro, o repetido en el corte, <id del corte>|id:<id de la fila en srtm>."
+        },
+        {
+          "name": "codigo_catastro",
+          "label": "Código en catastro",
+          "type": "TEXT",
+          "description": "El código de la ficha como lo muestra srtm: su código municipal, su CPU o sector-manzana-lote. Vacío si el predio no tiene ficha (SIN_CATASTRO)."
+        },
+        {
+          "name": "codigo_municipal",
+          "label": "Código municipal",
+          "type": "TEXT",
+          "description": "El predio_catastral.codigo_municipal de la ficha que empata con codigo_catastro por la llave normalizada; vacío si no hay ficha."
+        },
+        {
+          "name": "codigo_predio",
+          "label": "Código del predio en srtm",
+          "type": "TEXT"
+        },
+        {
+          "name": "categoria",
+          "label": "Categoría",
+          "type": "ENUM",
+          "enum": "categoria_brecha",
+          "required": true
+        },
+        {
+          "name": "confianza",
+          "label": "Confianza",
+          "type": "ENUM",
+          "enum": "confianza_brecha",
+          "description": "srtm-backend#204: vacía en un corte anterior a la confianza."
+        },
+        {
+          "name": "confianza_motivo",
+          "label": "Motivo de la confianza",
+          "type": "TEXT"
+        },
+        {
+          "name": "sector",
+          "label": "Sector",
+          "type": "TEXT"
+        },
+        {
+          "name": "manzana",
+          "label": "Manzana",
+          "type": "TEXT"
+        },
+        {
+          "name": "lote",
+          "label": "Lote",
+          "type": "TEXT"
+        },
+        {
+          "name": "uso",
+          "label": "Uso",
+          "type": "TEXT"
+        },
+        {
+          "name": "autoavaluo_declarado",
+          "label": "Autoavalúo declarado (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "autoavaluo_catastro",
+          "label": "Autoavalúo con catastro (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "delta_autoavaluo",
+          "label": "Δ autoavalúo (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "impuesto_declarado",
+          "label": "Impuesto declarado (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "impuesto_catastro",
+          "label": "Impuesto con catastro (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "delta_impuesto",
+          "label": "Δ impuesto (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "delta_arbitrios",
+          "label": "Δ arbitrios (S/)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "estimado",
+          "label": "Estimado",
+          "type": "BOOLEAN",
+          "description": "Si srtm estimó el impuesto (un omiso)."
+        },
+        {
+          "name": "motivo",
+          "label": "Motivo",
+          "type": "TEXT",
+          "description": "Por qué srtm no pudo calcular un valor, cuando no pudo."
+        },
+        {
+          "name": "supera_5_uit",
+          "label": "Supera 5 UIT",
+          "type": "BOOLEAN",
+          "description": "|Δ autoavalúo| > 5 UIT del año, con la UIT del corte (srtm_parametro) o --uit. Vacío sin UIT o sin Δ autoavalúo."
+        }
+      ]
+    },
+    {
+      "name": "decision_brecha",
+      "label": "Decisión de brecha",
+      "pluralLabel": "Decisiones de brecha",
+      "description": "La bandeja de decisiones del dashboard de brechas: qué se hace con un predio en un año. Una por codigo_municipal y año, así sobrevive a los cortes nuevos. Sin registro, el estado es PENDIENTE. El historial sale de la auditoría del Core.",
+      "apiOnly": true,
+      "indexes": [
+        ["anio"],
+        ["codigo_municipal"]
+      ],
+      "fields": [
+        {
+          "name": "clave",
+          "label": "Clave",
+          "type": "TEXT",
+          "required": true,
+          "unique": true,
+          "description": "<codigo_municipal>|<anio>: wasichai no tiene únicos compuestos, esta clave los garantiza."
+        },
+        {
+          "name": "codigo_municipal",
+          "label": "Código municipal",
+          "type": "TEXT",
+          "required": true
+        },
+        {
+          "name": "anio",
+          "label": "Año",
+          "type": "INTEGER",
+          "required": true
+        },
+        {
+          "name": "estado",
+          "label": "Estado",
+          "type": "ENUM",
+          "enum": "estado_decision",
+          "required": true
+        },
+        {
+          "name": "responsable",
+          "label": "Responsable",
+          "type": "EMAIL",
+          "description": "Quién decidió: lo pone el servidor."
+        },
+        {
+          "name": "nota",
+          "label": "Nota",
+          "type": "TEXT"
+        },
+        {
+          "name": "motivo_descarte",
+          "label": "Motivo del descarte",
+          "type": "TEXT",
+          "description": "Obligatorio para DESCARTADO."
+        },
+        {
+          "name": "decidido_en",
+          "label": "Decidido en",
+          "type": "DATETIME",
+          "description": "Lo pone el servidor."
+        },
+        {
+          "name": "corte_origen",
+          "label": "Corte de origen",
+          "type": "TEXT",
+          "description": "La clave del corte más reciente cuando se decidió."
+        }
+      ]
     }
   ],
   "relationships": [
@@ -599,6 +919,15 @@
       "source": "titular_catastral",
       "target": "predio_catastral",
       "fieldName": "predio",
+      "required": true
+    },
+    {
+      "name": "brecha_ficha_corte",
+      "label": "Corte",
+      "inverseLabel": "Fichas",
+      "source": "brecha_ficha",
+      "target": "corte_brecha",
+      "fieldName": "corte",
       "required": true
     }
   ]
