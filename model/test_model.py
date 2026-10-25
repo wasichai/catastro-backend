@@ -161,7 +161,7 @@ class ModelTests(unittest.TestCase):
         self.assertEqual((f["geom"]["type"], f["geom"]["geometryType"], f["geom"]["srid"]),
                          ("GEOMETRY", "MULTILINESTRING", 32718))
         self.assertEqual(self.model["enums"]["lado_tramo"], ["AMBOS", "IZQUIERDO", "DERECHO"])
-        self.assertEqual(self.model["enums"]["asignacion_tramo"], ["NOMBRE_UNICO", "CERCANIA", "SIN_ARANCEL"])
+        self.assertEqual(self.model["enums"]["asignacion_tramo"], ["NOMBRE_UNICO", "CERCANIA", "LOTES", "SIN_ARANCEL"])
         self.assertEqual((f["lado"]["type"], f["lado"]["enum"]), ("ENUM", "lado_tramo"))
         self.assertEqual((f["asignacion"]["type"], f["asignacion"]["enum"]), ("ENUM", "asignacion_tramo"))
         self.assertEqual((f["fid_eje"]["type"], f["id_aranc"]["type"]), ("INTEGER", "TEXT"))
