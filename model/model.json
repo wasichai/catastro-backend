@@ -11,7 +11,8 @@
       "CLINICAS HOSPITALES CINES INDUSTRIAS COLEGIOS TALLERES"
     ],
     "estado_levantamiento": ["SIN_LEVANTAR", "PARCIAL", "COMPLETO"],
-    "fuente_entrega": ["BARRIDO", "INSPECCION", "LICENCIA", "GIS", "OTRA"]
+    "fuente_entrega": ["BARRIDO", "INSPECCION", "LICENCIA", "GIS", "OTRA"],
+    "vinculo_metodo": ["CODIGO_RENTAS", "LLAVE_HU_MZ_LOTE", "GEOMETRICO", "MANUAL"]
   },
   "objects": [
     {
@@ -21,7 +22,9 @@
       "description": "Un predio del levantamiento catastral de Perené, con lo que hace falta para valorizarlo. Se cruza con el padrón de srtm por el código municipal.",
       "indexes": [
         ["sector", "manzana", "lote"],
-        ["codigo_cpu"]
+        ["codigo_cpu"],
+        ["cuc"],
+        ["codigo_referencia_catastral"]
       ],
       "fields": [
         {
@@ -120,6 +123,31 @@
           "type": "ENUM",
           "enum": "estado_levantamiento",
           "description": "SIN_LEVANTAR, PARCIAL o COMPLETO, según lo que la entrega trajo de esta ficha."
+        },
+        {
+          "name": "vinculo_metodo",
+          "label": "Método del vínculo con rentas",
+          "type": "ENUM",
+          "enum": "vinculo_metodo",
+          "description": "Cómo se vinculó esta ficha con su predio de rentas: CODIGO_RENTAS, LLAVE_HU_MZ_LOTE, GEOMETRICO o MANUAL."
+        },
+        {
+          "name": "vinculo_revisado",
+          "label": "Vínculo revisado",
+          "type": "BOOLEAN",
+          "description": "Si una persona ya revisó este vínculo. Quién y cuándo sale del audit log."
+        },
+        {
+          "name": "cuc",
+          "label": "CUC",
+          "type": "TEXT",
+          "description": "El Código Único Catastral del Sistema Nacional Integrado de Catastro (Ley 28294)."
+        },
+        {
+          "name": "codigo_referencia_catastral",
+          "label": "Código de referencia catastral",
+          "type": "TEXT",
+          "description": "Ubigeo-sector-manzana-lote-edifica-entrada-piso-unidad, del Sistema Nacional Integrado de Catastro (Ley 28294)."
         }
       ]
     },

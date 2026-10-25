@@ -21,7 +21,7 @@ OBJETOS = {
     "predio_catastral": (
         ["codigo_municipal", "codigo_cpu", "sector", "manzana", "lote", "id_aranc", "cod_via", "cuadra", "lado", "uso",
          "area_terreno", "longitud_frente", "anio_levantamiento", "es_edificio", "lote_geom", "fecha_levantamiento",
-         "estado_levantamiento"],
+         "estado_levantamiento", "vinculo_metodo", "vinculo_revisado", "cuc", "codigo_referencia_catastral"],
         {"codigo_municipal"}, {"codigo_municipal"}),
     "construccion": (["piso", "area_construida", "anio_construccion", "material", "estado_conservacion", *CATEGORIAS,
                       "techo_incluido", "clasificacion", "seccion"], set(), set()),
@@ -128,6 +128,12 @@ class ModelTests(unittest.TestCase):
 
     def test_arancel_pair_is_indexed(self):
         self.assertEqual(self.objects["arancel"]["indexes"], [["id_aranc", "anio"]])
+
+    def test_the_vinculo_and_its_codes(self):
+        self.assertEqual(self.model["enums"]["vinculo_metodo"],
+                         ["CODIGO_RENTAS", "LLAVE_HU_MZ_LOTE", "GEOMETRICO", "MANUAL"])
+        self.assertEqual(self.objects["predio_catastral"]["indexes"],
+                         [["sector", "manzana", "lote"], ["codigo_cpu"], ["cuc"], ["codigo_referencia_catastral"]])
 
 
 if __name__ == "__main__":

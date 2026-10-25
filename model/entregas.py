@@ -105,8 +105,6 @@ def show(value, ftype):
     value = _normal(value, ftype)
     if value is None:
         return EMPTY
-    if isinstance(value, bool):
-        return "sí" if value else "no"
     if isinstance(value, Decimal):
         return format(value.normalize(), "f")
     return str(value)

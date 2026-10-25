@@ -199,6 +199,11 @@ class PlanTests(unittest.TestCase):
                        piso_fields={"piso", "area_construida"})
         self.assertEqual(plan.writes, 0)
 
+    def test_a_changed_vinculo_is_a_cambio(self):
+        core = state(predios=[rec("A", vinculo_revisado=False)])
+        plan = plan_of(core, fichas=[ficha("A", vinculo_revisado=True)], present={"vinculo_revisado"})
+        self.assertIn("cambio A: vinculo_revisado False → True", plan.lines)
+
     def test_the_summary_line(self):
         core = state(predios=[rec("B", uso="010101"), rec("C", uso="010101"), rec("Z")])
         plan = plan_of(core, fichas=[ficha("A", 2), ficha("B", 3, uso="020100"), ficha("C", 4, uso="010101")],
