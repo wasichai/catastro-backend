@@ -38,7 +38,14 @@ data class PredioCatastral(
     // DATE as ISO text ("2026-09-30"); empty when the ficha has not been surveyed yet
     val fechaLevantamiento: String? = null,
     // SIN_LEVANTAR, PARCIAL or COMPLETO; what Valorizacion.calcular reads as Insumos.levantamiento
-    val estadoLevantamiento: String? = null
+    val estadoLevantamiento: String? = null,
+    // CODIGO_RENTAS, LLAVE_HU_MZ_LOTE, GEOMETRICO or MANUAL: how this ficha was matched to its predio de rentas
+    val vinculoMetodo: String? = null,
+    // whether a person already reviewed the vínculo; who and when live in the audit log, not here
+    val vinculoRevisado: Boolean? = null,
+    // Sistema Nacional Integrado de Catastro (Ley 28294) codes, optional
+    val cuc: String? = null,
+    val codigoReferenciaCatastral: String? = null
 )
 
 // material and estado_conservacion come in the model's enum spelling (CONCRETO, MUY BUENO …), which is what

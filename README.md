@@ -350,7 +350,11 @@ Authorization: Bearer <token de POST /api/auth/token>
       "loteGeom": { "type": "Polygon", "coordinates": [[[-75.22, -10.95], [-75.2195, -10.95], [-75.2195, -10.9495], [-75.22, -10.9495], [-75.22, -10.95]]] },
       "estadoLevantamiento": null,
       "fechaLevantamiento": null,
-      "entrega": null
+      "entrega": null,
+      "vinculoMetodo": null,
+      "vinculoRevisado": null,
+      "cuc": null,
+      "codigoReferenciaCatastral": null
     }
   ]
 }
@@ -363,8 +367,13 @@ pisos (0 sin pisos). `loteGeom` es el polígono del lote como geometría GeoJSON
 aritmética del motor; `region` es la de la organización, la de los cuadros con que se valorizó la página.
 `estadoLevantamiento` (`SIN_LEVANTAR`, `PARCIAL` o `COMPLETO`) y `fechaLevantamiento` son los de la ficha misma;
 `entrega` es el código de la `entrega_catastral` que trajo el último cambio de la ficha (o de uno de sus hijos), no
-el id de la relación. Las tres son `null` sin dato, nunca ausentes. Una ficha `SIN_LEVANTAR` no se valoriza: su
-`llave` y su `motivo` son `SIN_LEVANTAMIENTO` (ver Motivos), y no hace falta pedirle área, arancel ni construcciones.
+el id de la relación. `vinculoMetodo` (`CODIGO_RENTAS`, `LLAVE_HU_MZ_LOTE`, `GEOMETRICO` o `MANUAL`) y
+`vinculoRevisado` dicen cómo se vinculó la ficha con su predio de rentas y si una persona ya la revisó (quién y
+cuándo, en el audit log); `cuc` y `codigoReferenciaCatastral` son los códigos del Sistema Nacional Integrado de
+Catastro (Ley 28294). Las siete son `null` sin dato, nunca ausentes. Estas cuatro últimas son llaves nuevas: el
+cambio es aditivo ([ADR-007](docs/adr/0007-srtm-lee-con-una-cuenta-de-servicio.md)). Una ficha `SIN_LEVANTAR` no se
+valoriza: su `llave` y su `motivo` son `SIN_LEVANTAMIENTO` (ver Motivos), y no hace falta pedirle área, arancel ni
+construcciones.
 
 **Motivos** (`llave` de un predio sin valor; `motivo` es la misma frase para una persona, o el mismo código cuando el
 motivo no es una frase fija). Varios llevan un sufijo dinámico (`:dato`) que no está en esta tabla:
