@@ -202,6 +202,14 @@ class ParseTests(unittest.TestCase):
         for bad in ("2026-W01-2", "2026-13-45", "30/09/2026"):
             self.assertIsNotNone(imf.parse_date(bad)[1], bad)
 
+    def test_parse_date_a_serial_out_of_range_is_a_problem_not_an_overflowerror(self):
+        # "20260930" reads as a serial (all digits, no dashes): both it and a huge serial overflow
+        # datetime.date's range; parse_date must report a problem, never raise
+        for bad in ("20260930", "2958466", str(10 ** 9)):
+            value, error = imf.parse_date(bad)
+            self.assertIsNone(value, bad)
+            self.assertIsNotNone(error, bad)
+
     def test_vinculo_columns(self):
         rows = read_table(write_csv(self, "cod_pre,vinculo_metodo,vinculo_revisado,cuc,codigo_referencia_catastral\n"
                                           "A,llave_hu_mz_lote,si,0001,110101-01-001-001\n"
