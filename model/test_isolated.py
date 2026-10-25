@@ -10,8 +10,8 @@ import tempfile
 import unittest
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-COMMANDS = ["apply.py", "apply_roles.py", "configurar_region.py", "convertir_comparacion_ica.py",
-            "crear_cuenta_srtm.py", "import_aranceles.py", "import_fichas.py", "import_lotes.py", "import_vias.py"]
+COMMANDS = ["aranceles_no_vigentes.py", "apply.py", "apply_roles.py", "configurar_region.py",
+            "convertir_comparacion_ica.py", "crear_cuenta_srtm.py", "import_aranceles.py", "import_fichas.py", "import_lotes.py", "import_vias.py"]
 
 
 class IsolatedTests(unittest.TestCase):
