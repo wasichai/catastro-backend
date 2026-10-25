@@ -89,4 +89,10 @@ class PedidoValuacionTest {
     fun `las letras son una sola de la A a la J`() {
         assertTrue(invalido("""{"anio": 2026, "construcciones": [{"piso": "1", "muros": "K"}]}""").message!!.contains("A a la J"))
     }
+
+    @Test
+    fun `tipoPredio llega al motor y uno desconocido es un 422`() {
+        assertEquals("RUSTICO", PedidoValuacion.leer("""{"anio":2026,"tipoPredio":"RUSTICO"}""").insumos.tipoPredio)
+        assertEquals("tipoPredio", invalido("""{"anio":2026,"tipoPredio":"AGRICOLA"}""").violations.single().field)
+    }
 }

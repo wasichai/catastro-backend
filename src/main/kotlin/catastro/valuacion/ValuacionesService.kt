@@ -87,7 +87,8 @@ class ValuacionesService(
                         )
                     },
                 obras = obras.map { Obra(it.codigoVu, it.cantidad, it.anioConstruccion, it.material, it.estadoConservacion) },
-                levantamiento = p.estadoLevantamiento
+                levantamiento = p.estadoLevantamiento,
+                tipoPredio = p.tipoPredio
             )
         val v = Valorizacion.valorizar(insumos, tablas)
         val valor = v as? Valuacion.Valorizada
@@ -213,8 +214,9 @@ class ValuacionesService(
 
         // the engine's version: srtm stores it with each corrida, so a change in the arithmetic is visible there.
         // v1: the RNT tabla of the predio's uso, unrounded VU. v2: the tabla of each construction's clasificación, and the
-        // costa's VU to the céntimo (Region.redondeaValorUnitario). a selva predio without clasificaciones keeps v1's figure
-        const val VERSION = "valuacion-v2"
+        // costa's VU to the céntimo (Region.redondeaValorUnitario). a selva predio without clasificaciones keeps v1's figure.
+        // v3: a predio RUSTICO (tipo_predio / tipoPredio) sale sin valor con PREDIO_RUSTICO; los urbanos no cambian
+        const val VERSION = "valuacion-v3"
 
         const val TAMANO = 200
         const val TAMANO_MAXIMO = 500

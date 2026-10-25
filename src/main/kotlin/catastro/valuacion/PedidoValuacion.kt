@@ -20,8 +20,21 @@ class PedidoValuacion private constructor(
 
         private val ANIOS = 1900..2100
         private val LETRAS = 'A'..'J'
+
+        // model's enum tipo_predio; a text outside it is a 422 like every other field, never a motivo
+        private val TIPOS_PREDIO = setOf("URBANO", "RUSTICO")
         private val CAMPOS =
-            setOf("anio", "areaTerreno", "arancelM2", "uso", "esEdificio", "construcciones", "obras", "codigoMunicipal")
+            setOf(
+                "anio",
+                "areaTerreno",
+                "arancelM2",
+                "uso",
+                "esEdificio",
+                "construcciones",
+                "obras",
+                "codigoMunicipal",
+                "tipoPredio"
+            )
         private val CAMPOS_CONSTRUCCION =
             setOf(
                 "piso",
@@ -52,6 +65,8 @@ class PedidoValuacion private constructor(
             val r = Lector(raiz, "", CAMPOS)
             val anio = r.entero("anio") ?: throw CampoInvalido("anio", "es obligatorio")
             if (anio !in ANIOS) throw CampoInvalido("anio", "debe ser un entero entre ${ANIOS.first} y ${ANIOS.last}")
+            val tipoPredio =
+                r.texto("tipoPredio")?.also { if (it !in TIPOS_PREDIO) throw CampoInvalido("tipoPredio", "debe ser URBANO o RUSTICO") }
             val insumos =
                 Insumos(
                     anio = anio,
@@ -60,7 +75,8 @@ class PedidoValuacion private constructor(
                     uso = r.texto("uso"),
                     esEdificio = r.logico("esEdificio") ?: false,
                     construcciones = r.lista("construcciones", CAMPOS_CONSTRUCCION).map(::construccion),
-                    obras = r.lista("obras", CAMPOS_OBRA).map(::obra)
+                    obras = r.lista("obras", CAMPOS_OBRA).map(::obra),
+                    tipoPredio = tipoPredio
                 )
             return PedidoValuacion(insumos, r.texto("codigoMunicipal"))
         }

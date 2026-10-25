@@ -119,6 +119,10 @@ object Valorizacion {
     // predio_catastral.estado_levantamiento = SIN_LEVANTAR: a ficha not yet surveyed has no insumos worth asking for
     const val SIN_LEVANTAMIENTO = "SIN_LEVANTAMIENTO"
 
+    // predio_catastral.tipo_predio / Insumos.tipoPredio = RUSTICO: no rústico tables yet (ADR-004, ADR-005). checked
+    // right after SIN_LEVANTAMIENTO: a rústico ficha sin levantar shows the survey motivo, not this one
+    const val PREDIO_RUSTICO = "PREDIO_RUSTICO"
+
     private const val ESCALA = 2
     private const val MUROS_SIN_TECHOS = 'A'
     private const val MUROS_DRYWALL = 'D'
@@ -151,6 +155,8 @@ object Valorizacion {
     ): Valuacion.Valorizada {
         // checked first: an unsurveyed ficha has nothing worth asking for, not even its área
         if (i.levantamiento == "SIN_LEVANTAR") falta(SIN_LEVANTAMIENTO, SIN_LEVANTAMIENTO)
+        // checked second: a rústico predio has no value until there are rústico tables
+        if (i.tipoPredio == "RUSTICO") falta(PREDIO_RUSTICO, PREDIO_RUSTICO)
         val area = i.areaTerreno?.takeIf { it.signum() > 0 } ?: falta("AREA_TERRENO_FALTANTE", "El predio no tiene área de terreno")
         val arancel =
             i.arancelM2?.takeIf { it.signum() > 0 }
