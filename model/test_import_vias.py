@@ -263,8 +263,9 @@ class AssignTests(unittest.TestCase):
 
     def test_the_counts(self):
         self.assertEqual(self.stats, {
-            "ejes": 8, "por_asignacion": {"NOMBRE_UNICO": 3, "CERCANIA": 3, "SIN_ARANCEL": 3}, "partidos": 1, "multiparte": 0, "invertidas": 0,
-            "de_un_lote": 4,
+            "ejes": 8, "por_asignacion": {"NOMBRE_UNICO": 3, "CERCANIA": 3, "LOTES": 0, "SIN_ARANCEL": 3},
+            "partidos": 1, "multiparte": 0, "invertidas": 0,
+            "de_un_lote": 4, "urbanizacion": 1, "codigos_lotes": 0, "de_un_lote_lotes": 0,
             "sin_tramo": 2, "sin_lotes": 2, "lejanos": 1, "nombres_sin_eje": 1})
         # LL1a and LL1b by cod_predio_padron, the other four by padron_predial
         self.assertEqual(self.vinculos, {"cod_predio_padron": 2, "padron_predial": 4, "total": 6})
@@ -397,6 +398,128 @@ class LinkTests(unittest.TestCase):
         self.assertIn("no link between lotes and predios", problems[0])
 
 
+class LotesTests(unittest.TestCase):
+    """The LOTES pass: an urbanización's SAT code (its name is no eje's) takes the tramos its lotes sit on, among those
+    the name left SIN_ARANCEL. North of an eastward tramo is its left."""
+
+    URB, POSADA, ROSAS = "SOL DE ICA XXII ETAPA", "POSADA DEL SOL VI ETAPA", "CA. LAS ROSAS"
+
+    def assign(self, streets, codes, **kwargs):
+        """streets: [(fid, nom_via, k)], each tramo 100 m east from x_of(k, 0); codes: {code: (name, [(k, dx, dy)])},
+        one lote (and one predio) per point, dy metres north of the tramo."""
+        ejes = [{**eje(fid, nom, f"{fid:03}", None), "parts": [east(k)]} for fid, nom, k in streets]
+        by_name, predios, centroids, lote_of = {}, {}, {}, {}
+        for code, (name, points) in codes.items():
+            by_name.setdefault(iv.normalize(name), set()).add(code)
+            for n, (k, dx, dy) in enumerate(points):
+                lote, predio = f"L{code}{n}", f"P{code}{n}"
+                centroids[lote] = (x_of(k, dx), 8445000.0 + dy)
+                lote_of[predio] = {lote}
+                predios.setdefault(code, set()).add(predio)
+        rows, stats = iv.assign(ejes, by_name, predios, centroids, lote_of, **kwargs)
+        return {a["clave"]: (a["id_aranc"], a["asignacion"]) for a, _ in rows}, stats
+
+    def test_an_urbanizacion_code_takes_its_internal_streets_by_its_lotes(self):
+        got, stats = self.assign([(1, "1", 0), (2, "B", 1), (3, "SIN NOMBRE 021", 2)],
+                                 {"U": (self.URB, [(0, 30, 12), (0, 70, -12), (1, 50, 10), (1, 60, 10)])})
+        self.assertEqual(got, {"110101|1|AMBOS": ("U", "LOTES"), "110101|2|AMBOS": ("U", "LOTES"),
+                               "110101|3|AMBOS": (None, "SIN_ARANCEL")})
+        self.assertEqual((stats["por_asignacion"]["LOTES"], stats["codigos_lotes"], stats["urbanizacion"]), (2, 1, 1))
+        # tramo 1: one lote on each side
+        self.assertEqual(stats["de_un_lote_lotes"], 2)
+
+    def test_a_code_whose_name_is_an_ejes_never_votes(self):
+        # LAS ROSAS is an eje's name: its three lotes on B do not count there, U's one does
+        got, _ = self.assign([(1, "B", 0), (2, "CA. LAS ROSAS", 1)],
+                             {"U": (self.URB, [(0, 50, 10)]),
+                              "R": (self.ROSAS, [(0, 20, -10), (0, 50, -10), (0, 80, -10)])})
+        self.assertEqual(got, {"110101|1|AMBOS": ("U", "LOTES"), "110101|2|AMBOS": ("R", "NOMBRE_UNICO")})
+
+    def test_a_frente_assigned_by_name_is_never_overridden(self):
+        got, _ = self.assign([(1, "CA. LAS ROSAS", 0)],
+                             {"R": (self.ROSAS, []), "U": (self.URB, [(0, 20, 10), (0, 50, 10), (0, 80, -10)])})
+        self.assertEqual(got, {"110101|1|AMBOS": ("R", "NOMBRE_UNICO")})
+
+    def test_two_codes_split_the_tramo_by_side(self):
+        got, stats = self.assign([(1, "C", 0)], {"U": (self.URB, [(0, 30, 12), (0, 60, 12)]),
+                                                 "V": (self.POSADA, [(0, 50, -12)])})
+        self.assertEqual(got, {"110101|1|IZQUIERDO": ("U", "LOTES"), "110101|1|DERECHO": ("V", "LOTES")})
+        self.assertEqual((stats["codigos_lotes"], stats["de_un_lote_lotes"], stats["partidos"]), (2, 1, 1))
+
+    def test_a_tie_goes_to_the_nearest_lote_and_more_lotes_beat_a_nearer_one(self):
+        got, _ = self.assign([(1, "D", 0), (2, "E", 1)],
+                             {"U": (self.URB, [(0, 50, 20), (1, 20, 20), (1, 80, 20)]),
+                              "V": (self.POSADA, [(0, 50, 10), (1, 50, 5)])})
+        self.assertEqual(got, {"110101|1|AMBOS": ("V", "LOTES"), "110101|2|AMBOS": ("U", "LOTES")})
+
+    def test_a_lote_votes_only_for_its_nearest_tramo_within_the_distance(self):
+        # tramo 2 runs 20 m north of tramo 1: U's lote is 8 m from 1 and 12 m from 2; V's is 40 m from both
+        ejes = [(1, "F", 0), (2, "G", 0)]
+        codes = {"U": (self.URB, [(0, 50, 8)]), "V": (self.POSADA, [(0, 50, -40)])}
+        streets = [{**eje(fid, nom, None, None), "parts": [east(k)]} for fid, nom, k in ejes]
+        streets[1]["parts"] = [[(x, y + 20) for x, y in east(0)]]
+        by_name = {iv.normalize(n): {c} for c, (n, _) in codes.items()}
+        centroids = {f"L{c}": (x_of(k, dx), 8445000.0 + dy) for c, (_, [(k, dx, dy)]) in codes.items()}
+        lote_of = {f"P{c}": {f"L{c}"} for c in codes}
+        predios = {c: {f"P{c}"} for c in codes}
+        rows, _ = iv.assign(streets, by_name, predios, centroids, lote_of)
+        self.assertEqual({a["clave"]: a["id_aranc"] for a, _ in rows}, {"110101|1|AMBOS": "U", "110101|2|AMBOS": None})
+
+    def test_sin_lotes_turns_the_pass_off(self):
+        got, stats = self.assign([(1, "1", 0)], {"U": (self.URB, [(0, 50, 10)])}, por_lotes=False)
+        self.assertEqual(got, {"110101|1|AMBOS": (None, "SIN_ARANCEL")})
+        self.assertEqual((stats["por_asignacion"]["LOTES"], stats["codigos_lotes"]), (0, 0))
+
+
+class LotesCliTests(unittest.TestCase):
+    EJES = [eje(1, "1", "001", gp(wkb_line(east(0)))), eje(2, "CA. LAS ROSAS", "002", gp(wkb_line(east(1))))]
+    LOTES = {"U1": (x_of(0, 30), 8445012.0), "U2": (x_of(0, 70), 8445012.0), "R1": (x_of(1, 50), 8445012.0)}
+    PADRON = [["PU1", "U", "SOL DE ICA XXII ETAPA", "1"], ["PU2", "U", "SOL DE ICA XXII ETAPA", "1"],
+              ["PR1", "R", "CA. LAS ROSAS", "1"]]
+
+    def setUp(self):
+        self.core = FakeCore()
+        self.addCleanup(self.core.stop)
+        self.gpkg = write_gpkg(self, ejes=self.EJES, lotes=self.LOTES, padron_predial=None,
+                               lote_predios={"U1": "PU1", "U2": "PU2", "R1": "PR1"})
+        self.padron = write_padron(self, rows=self.PADRON, header=PADRON_HEADER[:4])
+
+    def cli(self, *extra):
+        return run(iv.main, ["--gpkg", self.gpkg, "--padron-xlsx", self.padron, "--core", self.core.base_url, *extra])
+
+    def tramos(self):
+        records = self.core.records.get("tramo_via", [])
+        return {r["attributes"]["clave"]: r["attributes"].get("asignacion") for r in records}
+
+    def writes(self):
+        return [r for r in self.core.requests if r[0] in ("POST", "PUT", "PATCH", "DELETE") and "records" in r[1]]
+
+    def test_the_report_a_dry_run_and_a_second_run(self):
+        code, out, err = self.cli("--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("tramos: 2 (NOMBRE_UNICO 1, CERCANIA 0, LOTES 1, SIN_ARANCEL 0)", out)
+        self.assertIn("codigos de urbanizacion: 1\ncodigos asignados por LOTES: 1\n"
+                      "lados decididos por un solo lote en LOTES: 0", out)
+        self.assertIn("2 to create", out)
+        self.assertEqual(self.writes(), [])
+        code, out, err = self.cli()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.tramos(), {"110101|1|AMBOS": "LOTES", "110101|2|AMBOS": "NOMBRE_UNICO"})
+        before = len(self.writes())
+        code, out, _ = self.cli()
+        self.assertIn("done: 0 created, 0 updated, 0 deleted, 2 unchanged", out)
+        self.assertEqual(len(self.writes()), before)
+
+    def test_sin_lotes_leaves_the_tramo_sin_arancel_and_a_run_with_lotes_patches_it(self):
+        code, out, err = self.cli("--sin-lotes")
+        self.assertEqual(code, 0, err)
+        self.assertIn("LOTES 0, SIN_ARANCEL 1", out)
+        self.assertEqual(self.tramos()["110101|1|AMBOS"], "SIN_ARANCEL")
+        code, out, err = self.cli()
+        self.assertIn("done: 0 created, 1 updated, 0 deleted, 1 unchanged", out)
+        self.assertEqual(self.tramos()["110101|1|AMBOS"], "LOTES")
+
+
 class CliTests(unittest.TestCase):
     def setUp(self):
         self.core = FakeCore()
@@ -416,7 +539,7 @@ class CliTests(unittest.TestCase):
     def test_creates_then_a_second_run_changes_nothing(self):
         code, out, err = self.cli()
         self.assertEqual(code, 0, err)
-        self.assertIn("tramos: 9 (NOMBRE_UNICO 3, CERCANIA 3, SIN_ARANCEL 3)", out)
+        self.assertIn("tramos: 9 (NOMBRE_UNICO 3, CERCANIA 3, LOTES 0, SIN_ARANCEL 3)", out)
         self.assertIn("codigos con lotes lejanos: 1\nnombres del padron sin eje: 1", out)
         self.assertIn("lotes vinculados a predios: 6 (cf_lotes_pol.cod_predio_padron 2,"
                       " padron_predial.id_lote_p_vinculado 4)", out)

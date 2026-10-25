@@ -15,7 +15,7 @@
     "vinculo_metodo": ["CODIGO_RENTAS", "LLAVE_HU_MZ_LOTE", "GEOMETRICO", "MANUAL"],
     "tipo_predio": ["URBANO", "RUSTICO"],
     "lado_tramo": ["AMBOS", "IZQUIERDO", "DERECHO"],
-    "asignacion_tramo": ["NOMBRE_UNICO", "CERCANIA", "SIN_ARANCEL"]
+    "asignacion_tramo": ["NOMBRE_UNICO", "CERCANIA", "LOTES", "SIN_ARANCEL"]
   },
   "objects": [
     {
@@ -551,7 +551,7 @@
           "type": "ENUM",
           "enum": "asignacion_tramo",
           "required": true,
-          "description": "Cómo se le asignó el código: NOMBRE_UNICO (su nombre es de un solo código), CERCANIA (los lotes de ese código están de ese lado, a 30 m o menos) o SIN_ARANCEL."
+          "description": "Cómo se le asignó el código: NOMBRE_UNICO (su nombre es de un solo código), CERCANIA (los lotes de ese código están de ese lado, a 30 m o menos), LOTES (un código de urbanización, cuyo nombre no es de ningún eje, por los votos de sus lotes; menos confiable, se revisa en el mapa) o SIN_ARANCEL."
         },
         {
           "name": "geom",

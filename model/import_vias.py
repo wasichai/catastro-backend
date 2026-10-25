@@ -23,7 +23,13 @@ Each tramo of the eje gets its code like this (the plano predial values a vía b
      segment; a lote beyond either end of the tramo does not count). Each side takes the code with the most lote
      centroids within --distancia metres (30), the nearest one breaking a tie: CERCANIA. Both sides the same code,
      or only one side with lotes: one row AMBOS; two codes: two rows, IZQUIERDO and DERECHO;
-  3. no lote near, a «SIN NOMBRE» or a name with no code: SIN_ARANCEL, one row AMBOS without id_aranc.
+  3. then, over the tramos 1 and 2 left without a code, the LOTES pass (off with --sin-lotes): an urbanización's code
+     (an urban code none of whose names is an eje's; in Ica the SAT gives one code, named after the habilitación, to
+     its internal streets, which the eje calls «1», «B» or «SIN NOMBRE 021») gets the tramos its lotes sit on. Each
+     lote centroid of such a code votes for its single nearest tramo within --distancia, on its side; each side takes
+     the code with the most votes, the nearest lote breaking a tie, and the rows go as in CERCANIA: LOTES. A tramo
+     the name assigned is never overridden. A grid of the segments keeps it off an O(lotes x ejes) scan;
+  4. no lote near, a «SIN NOMBRE» or a name with no code: SIN_ARANCEL, one row AMBOS without id_aranc.
 cuadra stays empty: the eje has no such column. The geometry goes to Core as GeoJSON in EPSG:4326 (wasichai-gis
 transforms it back to the column's 32718), as a MultiLineString; utm_to_wgs84 is the inverse transverse Mercator of
 UTM 18S, so no proj is needed.
@@ -38,7 +44,8 @@ sin eje» are the padrón's urban names no tramo has: how much of the padrón th
 unless the account of --email belongs to that organization (its id). --dry-run reads Core and says what it would write, writing nothing.
 
 Run: python3 -I import_vias.py --gpkg ica.gpkg --padron-xlsx PADRON.xlsx [--revision /tmp/revision.csv]
-             [--org <organization id>] [--borrar-ausentes] [--distancia 30] [--dry-run] [--workers 4]
+             [--org <organization id>] [--borrar-ausentes] [--distancia 30] [--sin-lotes] [--dry-run]
+             [--workers 4]
 Exit: 0 ok, 1 Core refused something, 2 the files do not fit (every problem is listed, nothing is sent), --org is
       another organization, or --revision points into the repository.
 """
@@ -73,8 +80,8 @@ PADRON_COLUMNS = ["codigo_predio", "codigo_de_via", "nombre_de_la_via", "tipo_pr
 PADRON_SHEET = "padron"
 URBANO = "1"
 AMBOS, IZQUIERDO, DERECHO = "AMBOS", "IZQUIERDO", "DERECHO"
-NOMBRE_UNICO, CERCANIA, SIN_ARANCEL = "NOMBRE_UNICO", "CERCANIA", "SIN_ARANCEL"
-ASIGNACIONES = [NOMBRE_UNICO, CERCANIA, SIN_ARANCEL]
+NOMBRE_UNICO, CERCANIA, POR_LOTES, SIN_ARANCEL = "NOMBRE_UNICO", "CERCANIA", "LOTES", "SIN_ARANCEL"
+ASIGNACIONES = [NOMBRE_UNICO, CERCANIA, POR_LOTES, SIN_ARANCEL]
 DISTANCIA = 30.0
 # a geometry Core answers in 4326 after storing it in 32718 never comes back equal: within this it is the same
 TOLERANCE = 1e-6
@@ -459,6 +466,23 @@ def _bbox(parts, margin):
     return min(xs) - margin, min(ys) - margin, max(xs) + margin, max(ys) + margin
 
 
+def _vote(score, side, code, d):
+    entry = score.setdefault((side, code), [0, d])
+    entry[0] += 1
+    entry[1] = min(entry[1], d)
+
+
+def _winners(score):
+    """{side: (code, lotes)} of a score {(side, code): [lotes, nearest]}: on each side, the code with the most lotes;
+    a tie goes to the code with the nearest lote, then to the smaller code."""
+    best = {}
+    for (side, code), (count, nearest) in score.items():
+        key = (-count, nearest, code)
+        if side not in best or key < best[side][0]:
+            best[side] = (key, code, count)
+    return {side: (code, count) for side, (_, code, count) in best.items()}
+
+
 def nearest_by_side(parts, candidates, lotes_of_code, distancia):
     """{side: (code, lotes)}: on each side, the code with the most lotes within `distancia` (one mislinked lote does not
     beat a block of them); a tie goes to the code with the nearest lote, then to the smaller code."""
@@ -471,20 +495,49 @@ def nearest_by_side(parts, candidates, lotes_of_code, distancia):
             found = side_and_distance(parts, point)
             if found is None or found[0] > distancia:
                 continue
-            d, side = found
-            entry = score.setdefault((side, code), [0, d])
-            entry[0] += 1
-            entry[1] = min(entry[1], d)
-    best = {}
-    for (side, code), (count, nearest) in score.items():
-        key = (-count, nearest, code)
-        if side not in best or key < best[side][0]:
-            best[side] = (key, code, count)
-    return {side: (code, count) for side, (_, code, count) in best.items()}
+            _vote(score, found[1], code, found[0])
+    return _winners(score)
 
 
-def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA):
-    """(rows, stats). A row is (attributes, parts) of one frente; stats carries the counts the run prints."""
+def by_lotes(ejes, codes, lotes_of_code, distancia):
+    """{eje index: {side: (code, lotes)}}: each lote of `codes` votes for its single nearest tramo within `distancia`
+    (by side_and_distance: a tramo whose nearest point to the lote is one of its ends does not count), and each side
+    of a tramo takes the code with the most votes, the nearest lote breaking a tie. The tramos are found through a
+    grid of `distancia`-sized cells holding each segment's box widened by `distancia`, so a lote looks only at the
+    tramos of its own cell."""
+    cell = max(distancia, 1.0)
+    grid = {}
+    for i, eje in enumerate(ejes):
+        for part in eje["parts"]:
+            for (ax, ay), (bx, by) in zip(part, part[1:]):
+                for cx in range(math.floor((min(ax, bx) - distancia) / cell),
+                                math.floor((max(ax, bx) + distancia) / cell) + 1):
+                    for cy in range(math.floor((min(ay, by) - distancia) / cell),
+                                    math.floor((max(ay, by) + distancia) / cell) + 1):
+                        grid.setdefault((cx, cy), set()).add(i)
+    scores = {}  # eje index -> {(side, code): [count, nearest]}
+    for code in sorted(codes):
+        for point in lotes_of_code.get(code, ()):
+            best = None
+            for i in sorted(grid.get((math.floor(point[0] / cell), math.floor(point[1] / cell)), ())):
+                found = side_and_distance(ejes[i]["parts"], point)
+                if found is not None and found[0] <= distancia and (best is None or found[0] < best[0]):
+                    best = (found[0], i, found[1])
+            if best is not None:
+                _vote(scores.setdefault(best[1], {}), best[2], code, best[0])
+    return {i: _winners(score) for i, score in scores.items()}
+
+
+def _sides(found):
+    """The rows of a tramo by the codes found on each side: two codes, IZQUIERDO and DERECHO; one, AMBOS; none, {}."""
+    if len(set(found.values())) == 2:
+        return found
+    return {AMBOS: next(iter(found.values()))} if found else {}
+
+
+def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA, por_lotes=True):
+    """(rows, stats). A row is (attributes, parts) of one frente; stats carries the counts the run prints. por_lotes
+    False leaves out the LOTES pass."""
     lotes_of_code = {}
     for code, codes_predios in predios.items():
         points = {centroids[lote] for p in codes_predios for lote in lote_of.get(p, ()) if lote in centroids}
@@ -497,7 +550,7 @@ def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA):
             eje["parts"], n = orient(eje["parts"])
             flipped += n
     names = [normalize(e["nom_via"]) for e in ejes]
-    rows, near, tried, split = [], set(), set(), 0
+    decided, near, tried, split = [], set(), set(), 0
     for eje, name in zip(ejes, names):
         candidates = by_name.get(name, set()) if name else set()
         sides = {}
@@ -510,17 +563,28 @@ def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA):
             found = {side: code for side, (code, _) in scored.items()}
             near |= set(found.values())
             how = CERCANIA
-            if len(set(found.values())) == 2:
-                sides = found
-                split += 1
-            elif found:
-                sides = {AMBOS: next(iter(found.values()))}
-        if not sides:
-            sides, how = {AMBOS: None}, SIN_ARANCEL
-        for lado, code in sides.items():
-            rows.append((_attributes(eje, lado, code, how), eje["parts"]))
-    assigned = {a["id_aranc"] for a, _ in rows if a["id_aranc"]}
+            sides = _sides(found)
+            split += len(sides) == 2
+        decided.append((sides, how) if sides else ({AMBOS: None}, SIN_ARANCEL))
     codes = {c for cs in by_name.values() for c in cs} | set(predios)
+    # an urbanización's code: the SAT gives one to the internal streets of a habilitación, named after it, and the eje
+    # names those streets «1», «B» or «SIN NOMBRE 021», so no name of the code is an eje's
+    eje_names = set(filter(None, names))
+    has_eje_name = {c for name, cs in by_name.items() if name in eje_names for c in cs}
+    urbanizacion = codes - has_eje_name
+    by_lotes_codes, single_lotes = set(), 0
+    if por_lotes:
+        for i, scored in by_lotes(ejes, urbanizacion, lotes_of_code, distancia).items():
+            if decided[i][1] != SIN_ARANCEL:
+                continue
+            sides = _sides({side: code for side, (code, _) in scored.items()})
+            decided[i] = (sides, POR_LOTES)
+            split += len(sides) == 2
+            single_lotes += sum(1 for _, count in scored.values() if count == 1)
+            by_lotes_codes |= {code for code, _ in scored.values()}
+    rows = [(_attributes(eje, lado, code, how), eje["parts"])
+            for eje, (sides, how) in zip(ejes, decided) for lado, code in sides.items()]
+    assigned = {a["id_aranc"] for a, _ in rows if a["id_aranc"]}
     stats = {
         "ejes": len(ejes),
         "por_asignacion": {how: sum(1 for a, _ in rows if a["asignacion"] == how) for how in ASIGNACIONES},
@@ -528,6 +592,9 @@ def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA):
         "multiparte": multipart,
         "invertidas": flipped,
         "de_un_lote": single,
+        "urbanizacion": len(urbanizacion),
+        "codigos_lotes": len(by_lotes_codes),
+        "de_un_lote_lotes": single_lotes,
         "sin_tramo": len(codes - assigned),
         "sin_lotes": len(codes - set(lotes_of_code)),
         "lejanos": len((tried & set(lotes_of_code)) - near - assigned),
@@ -673,6 +740,8 @@ def _parse_args(argv):
     p.add_argument("--borrar-ausentes", action="store_true",
                    help="delete the rows of an ubigeo in the file whose eje (fid) the file does not have: a re-exported eje")
     p.add_argument("--distancia", type=float, default=DISTANCIA, help="metres from a lote to its tramo (default 30)")
+    p.add_argument("--sin-lotes", action="store_true",
+                   help="leave out the LOTES pass (an urbanizacion's code by the votes of its lotes)")
     p.add_argument("--core", default=os.environ.get("WASICHAI_CORE", "http://localhost:8091"))
     p.add_argument("--email", default=os.environ.get("WASICHAI_EMAIL", "admin@wasichai.local"))
     p.add_argument("--password", default=os.environ.get("WASICHAI_PASSWORD", "admin"))
@@ -693,6 +762,9 @@ def _report(stats, vinculos):
     print(f"ejes multiparte: {stats['multiparte']}")
     print(f"partes invertidas: {stats['invertidas']}")
     print(f"lados decididos por un solo lote: {stats['de_un_lote']}")
+    print(f"codigos de urbanizacion: {stats['urbanizacion']}")
+    print(f"codigos asignados por LOTES: {stats['codigos_lotes']}")
+    print(f"lados decididos por un solo lote en LOTES: {stats['de_un_lote_lotes']}")
     print(f"codigos sin tramo: {stats['sin_tramo']}")
     print(f"codigos sin lotes: {stats['sin_lotes']}")
     print(f"codigos con lotes lejanos: {stats['lejanos']}")
@@ -722,7 +794,7 @@ def main(argv=None):
     if problems:
         report_problems(problems)
         return 2
-    rows, stats = assign(ejes, by_name, predios, centroids, lote_of, args.distancia)
+    rows, stats = assign(ejes, by_name, predios, centroids, lote_of, args.distancia, por_lotes=not args.sin_lotes)
     _report(stats, vinculos)
     if args.revision:
         write_revision(args.revision, rows)

@@ -184,8 +184,21 @@ de vía (notas 2 y 3), así que cada tramo se asigna así:
    menos (30), y un empate lo decide el lote más cercano: `CERCANIA`. Así un solo predio mal vinculado no le gana a
    una cuadra entera. Si los dos lados dan el mismo código, o solo un lado tiene lotes, queda
    una fila `AMBOS`; si dan dos códigos, dos filas, `IZQUIERDO` y `DERECHO` (según el sentido de la línea);
-3. si nada se cumple (varios códigos y ningún lote cerca, un nombre sin código o un tramo «SIN NOMBRE»):
+3. después, sobre los tramos que el nombre dejó sin código, la pasada por lotes (`--sin-lotes` la apaga): un **código
+   de urbanización**, un código urbano ninguno de cuyos nombres normalizados es el de un eje, toma los tramos donde
+   están sus lotes. Cada centroide de lote de esos códigos vota por su tramo más cercano a `--distancia` metros o
+   menos (uno solo), del lado que da el producto cruz; cada lado toma el código con más votos, el lote más cercano
+   desempata, y las filas salen como en `CERCANIA` (un código, o un solo lado con votos, `AMBOS`; dos, `IZQUIERDO` y
+   `DERECHO`): `LOTES`. Un tramo que el nombre asignó nunca se cambia. Los tramos se buscan en una grilla de los
+   segmentos, no recorriendo todos los ejes por cada lote;
+4. si nada se cumple (varios códigos y ningún lote cerca, un nombre sin código o un tramo «SIN NOMBRE»):
    `SIN_ARANCEL`, una fila `AMBOS` sin `id_aranc`.
+
+**Por qué `LOTES`.** En Ica muchos `codigo_de_via` del SAT tienen por «nombre de la vía» el de una urbanización («SOL
+DE ICA XXII ETAPA»): el SAT le da un código a las vías internas de una habilitación, y en el eje esas calles se llaman
+«1», «B» o «SIN NOMBRE 021». Por el nombre nunca se encuentran, pero sus lotes sí están sobre esas calles. **`LOTES` es
+menos confiable** que las otras dos: depende del vínculo lote → predio y de la cercanía, y un lote de esquina puede
+votar por la calle de al lado. Sus tramos se revisan en el mapa (el reporte cuenta los lados que decidió un solo lote).
 
 **Por qué una línea con lado.** El arancel urbano se fija por frente de vía (cuadra y lado), no por sector: así lo
 aprueba la RM 514-2025-EF/15 en el plano predial, cuyas notas 2 y 3 dicen que el valor al centro de la calle rige
@@ -207,7 +220,8 @@ ya no trae solo se cuentan; `--borrar-ausentes` las borra (el `--dry-run` dice c
 editado (sus fid cambian) se carga con `--borrar-ausentes`**, primero en dry-run; si no, sus tramos viejos siguen en el
 mapa. Las filas de otro ubigeo nunca se tocan. Solo imprime conteos: lotes vinculados a predios (en total y por
 cada fuente, o «sin la columna»), tramos por asignación, ejes partidos por lado, ejes multiparte, partes invertidas,
-lados decididos por un solo lote, códigos sin tramo, sin lotes y con lotes lejanos, y nombres del padrón sin eje (un
+lados decididos por un solo lote, códigos de urbanización, códigos asignados por `LOTES`, lados decididos por un
+solo lote en `LOTES`, códigos sin tramo, sin lotes y con lotes lejanos, y nombres del padrón sin eje (un
 nombre urbano que ningún tramo tiene: mide la cobertura del eje, o un nombre escrito de otra forma).
 `--revision` escribe un csv con `cod_via_eje`, `fid_eje`, `lado`, `id_aranc` y `asignacion`, sin datos personales, y
 se niega a escribirlo dentro del repositorio. `--org` espera el **id** (UUID) de la organización, no su slug: se niega
