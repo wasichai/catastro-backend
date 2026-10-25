@@ -198,6 +198,16 @@ class ParseTests(unittest.TestCase):
         for bad in ("2026-W01-2", "2026-13-45", "30/09/2026"):
             self.assertIsNotNone(imf.parse_date(bad)[1], bad)
 
+    def test_vinculo_columns(self):
+        rows = read_table(write_csv(self, "cod_pre,vinculo_metodo,vinculo_revisado,cuc,codigo_referencia_catastral\n"
+                                          "A,llave_hu_mz_lote,si,0001,110101-01-001-001\n"
+                                          "B,VECINO,quizas,,\n"))
+        fichas, problems = imf.fichas_from(rows, parse_map([], imf.FICHA_COLUMNS), ENUMS)
+        self.assertEqual([fichas[0][1][k] for k in ("vinculo_metodo", "vinculo_revisado", "cuc")],
+                         ["LLAVE_HU_MZ_LOTE", True, "0001"])
+        self.assertEqual(fichas[0][1]["codigo_referencia_catastral"], "110101-01-001-001")
+        self.assertEqual(len(problems), 2, problems)
+
     def test_present_fields_reads_the_header(self):
         rows = read_table(write_csv(self, "cod_pre,uso\nA,\n"))
         self.assertEqual(imf.present_fields(rows, parse_map([], imf.FICHA_COLUMNS), ["uso", "lote"]), {"uso"})
