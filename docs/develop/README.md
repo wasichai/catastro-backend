@@ -122,13 +122,18 @@ cd model && python3 apply.py --validate-only && python3 -m unittest -v
 yarn format:check                            # prettier: yaml y json, model.json incluido (yarn format lo arregla)
 ```
 
-**Qué son los tests de integración.** Las clases que heredan de `WasichaiIntegrationTest` (hoy `CatastroSmokeTest` y
-`ValuacionesApiTest`), con el tag `integration`: `build` las excluye y `integrationTest` las corre. Cada una levanta la
-app entera (`CatastroApplication`, en un puerto aleatorio) contra un PostgreSQL con PostGIS (`postgis/postgis:18-3.6`,
-la propiedad `wasichai.test.db.image` de `build.gradle.kts`) y la llama por HTTP, como lo hace srtm-backend.
+**Qué son los tests de integración.** Las clases que heredan de `WasichaiIntegrationTest` (hoy `CatastroSmokeTest` y,
+a través de `CatastroApiTest`, `ValuacionesApiTest`), con el tag `integration`: `build` las excluye y `integrationTest`
+las corre. Cada una levanta la app entera (`CatastroApplication`, en un puerto aleatorio) contra un PostgreSQL con
+PostGIS (`postgis/postgis:18-3.6`, la propiedad `wasichai.test.db.image` de `build.gradle.kts`) y la llama por HTTP,
+como lo hace srtm-backend.
 
-- **`ValuacionesApiTest`** aplica el modelo real (`model/model.json`, como `apply.py`) y el rol real
-  (`model/roles.json`), crea una cuenta de servicio y pide las valuaciones con su token.
+- **`CatastroApiTest`** (`catastro`) es la base abstracta compartida de las pruebas de la API: aplica el modelo real
+  (`model/model.json`, como `apply.py`) y el rol real (`model/roles.json`), deja la región en `SELVA` y da los
+  ayudantes de HTTP y de registros (`registro`, `cuentaDeServicio`, `send`, `exchange`, `arbol`, `region`...) que
+  cualquier prueba de la API de catastro necesita.
+- **`ValuacionesApiTest`** hereda de `CatastroApiTest`; crea una cuenta de servicio y pide las valuaciones con su
+  token, con sus propios ayudantes de fichas (`predio`, `piso`, `leerTodo`).
 - **La base se comparte** entre todas las clases de una corrida y se conserva entre corridas: cada test crea sus
   propios registros, con códigos únicos, y no supone que la base está vacía.
 - **El motor y las tablas** se prueban sin base (`ValorizacionTest`, `ValorizacionCostaTest`, `TablasTest`...), con la
@@ -156,6 +161,19 @@ funcione. Entonces:
 
    `--rerun` evita que la caché de Gradle devuelva un resultado verde viejo. Detalles en
    `wasichai/docs/development/getting-started.md#integration-tests`.
+3. O, cuando ni siquiera hay Docker local disponible, un script de ayuda que corre gradle dentro de un contenedor de
+   ese servidor, en la red de una base de pruebas ya levantada ahí, y copia el repo (sin `build/`, `.git/` ni
+   `node_modules/`) hacia ese contenedor antes de cada corrida:
+
+   ```bash
+   export DOCKER_HOST=unix:///ruta/al/socket/docker.sock
+   <script> <directorio-del-repo> <entorno-de-base> integrationTest --tests 'catastro.valuacion.ValuacionesApiTest'
+   <script> <directorio-del-repo> <entorno-de-base> build   # build completo
+   ```
+
+   El script recibe el directorio del repo, el nombre de un entorno de base de pruebas (un archivo con las
+   `WASICHAI_TEST_DB_*` de ese entorno) y los argumentos de `gradle`; no vive en este repo, cada quien lo mantiene
+   junto con sus archivos de entorno.
 
 ## 7. Con srtm-backend (`../srtm-backend`)
 
