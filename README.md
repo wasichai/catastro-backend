@@ -965,6 +965,82 @@ Authorization: Bearer <token>
 }
 ```
 
+## API para catastro-ui: brechas
+
+El dashboard «Brechas» de catastro-ui muestra la brecha de recaudación de los cortes que cargó
+`importar_corte_brecha.py` ([Corte de brecha](#corte-de-brecha)) y lleva la bandeja de decisiones. Todo va bajo
+`/api/catastro/brechas`.
+
+- **Permisos.** Sin token, **401**. Cada ruta exige `READ` sobre `brecha_ficha` (si no, **403**) y lee como quien
+  llama, así que también necesita `READ` sobre `corte_brecha`, `decision_brecha` y `predio_catastral`. El rol
+  `CATASTRO_LECTOR` alcanza para leer. `POST /decisiones` exige además `UPDATE` sobre `decision_brecha` (si no,
+  **403**), y crear una decisión, `CREATE`: los da `CATASTRO_ANALISTA`.
+- **El corte.** `corte` es la clave del corte (`<org>|<fecha>`). Sin él, se usa el más reciente por fecha. Si no hay
+  ningún corte, `/panel`, `/fichas`, `/lotes` y `/fichas.csv` responden **404**
+  `{"message": "No hay cortes de brecha cargados"}`. Una clave que no existe también da 404, con su propio mensaje.
+- **Parámetros.** Uno que la ruta no conoce, o que no se puede leer, es un **400** que lo nombra
+  (`errors[0].field`), como en `/vias/aranceles`.
+
+**Rutas:**
+- `GET /cortes`: `[{clave, fecha, anio, corrida, total_fichas, delta_impuesto, cargado_en}]`, el más reciente
+  primero.
+- `GET /panel?corte=`:
+  - `corte`: `{clave, fecha, anio, corrida}`;
+  - `kpis`: `{fichas, delta_impuesto, delta_impuesto_confiable, omisos_estimado, supera_5_uit, pendientes,
+    con_geometria}`;
+  - `por_categoria`, `por_confianza`: `[{clave, fichas, delta_impuesto}]`, una entrada por cada opción del modelo,
+    incluso las que no tienen fichas. Las fichas sin confianza (un corte anterior a srtm-backend#204) van con
+    `clave: null`;
+  - `por_estado`: `[{clave, fichas}]`;
+  - `top_sectores`: `[{sector, fichas, delta_impuesto}]`, los 10 sectores de mayor Δ impuesto.
+
+  Todo se cuenta sobre todas las fichas del corte, sin filtros.
+- `GET /fichas?corte&categoria&confianza&sector&estado&supera_5_uit&min_delta&orden&page&size`: una página
+  `{content, page, size, totalElements, totalPages}`.
+  - `categoria`, `confianza` y `estado` aceptan varias opciones separadas por comas. `estado` es el efectivo: una
+    ficha sin decisión está `PENDIENTE`.
+  - `min_delta` compara contra |Δ impuesto|, así que una ficha sin Δ no pasa.
+  - `orden`: `delta_desc` (por omisión), `delta_asc` o `codigo`. Lo vacío va al final y el desempate es por código.
+  - `size` va de 1 a 500 (50 por omisión).
+  - Cada fila es `{id, codigo_catastro, codigo_municipal, codigo_predio, categoria, confianza, confianza_motivo,
+    sector, manzana, lote, uso, autoavaluo_declarado, autoavaluo_catastro, delta_autoavaluo, impuesto_declarado,
+    impuesto_catastro, delta_impuesto, delta_arbitrios, estimado, motivo, supera_5_uit, estado, responsable, nota,
+    decidido_en, con_geometria}`. La decisión es la del año del corte.
+- `GET /lotes?…`: los mismos filtros, sin `page` ni `size` (`orden` se acepta, pero no cambia nada). Responde un
+  `FeatureCollection` en EPSG:4326 con un `Feature` por `codigo_municipal` (`id`):
+  - el `lote_geom` de su ficha;
+  - en `properties`: `codigo_municipal`, `codigo_catastro`, `categoria`, `confianza`, `delta_impuesto`, `estado` y
+    `supera_5_uit`.
+
+  Solo entran las fichas empatadas que tienen lote. Las geometrías se leen en lotes de 200 códigos
+  (`Registros.conCampoEn`).
+- `GET /fichas.csv?…`: los mismos filtros y `orden`. Devuelve `text/csv` en UTF-8 con BOM, con las columnas de la fila
+  en el mismo orden y en `Content-Disposition` `attachment; filename="brechas-<corte>.csv"`. No lleva datos
+  personales: no lee `titular_catastral`.
+- `POST /decisiones` con `{codigos: [codigo_municipal…], anio, estado, nota?, motivo_descarte?}` decide en lote, de 1
+  a 500 códigos. Por cada código crea o actualiza su `decision_brecha` (clave `<codigo>|<anio>`).
+  - Lo fija el servidor: `responsable` (el email de quien llama), `decidido_en` (ahora) y `corte_origen` (el corte
+    más reciente).
+  - `DESCARTADO` sin `motivo_descarte` es un 400 con `field: motivo_descarte`; otro estado borra el motivo.
+  - Sin `nota`, se conserva la que había.
+  - Un código que no es de ninguna ficha, o que el Core rechaza, va a `errores` y el resto se escribe igual.
+  - Responde `{actualizadas, creadas, errores: [{codigo, error}]}`.
+
+**Cómo se lee un corte.** Un corte de Ica tiene unas 25 000 fichas, y los filtros (varias opciones, |Δ|, el estado de
+otra tabla) no se pueden expresar con los filtros de igualdad del Core. Por eso el corte se lee una sola vez y entero:
+
+1. sus fichas, en una pasada keyset (`Registros.todas`, por `clave`);
+2. las decisiones de su año, en otra pasada;
+3. qué fichas tienen lote, en lotes de 200 códigos.
+
+Con eso se arma una vista en memoria que `/panel` (en una sola pasada), `/fichas`, `/lotes` y `/fichas.csv` filtran y
+ordenan.
+
+La vista se guarda **2 minutos** en una caché propia de la instancia. La llave es la organización, los roles de quien
+llama (así un campo que un rol no puede leer nunca le llega a otro), el id del corte y su `cargado_en` (un corte que se
+vuelve a cargar se lee de nuevo). Una decisión borra las vistas de su organización, así que su estado se ve al momento.
+Una decisión tomada en otra instancia aparece aquí en 2 minutos como mucho.
+
 ## Decisiones normativas
 
 Las decisiones D1 a D12 (uso a tabla de depreciación, material, estado, suma de partidas, casillas `.....`, % de

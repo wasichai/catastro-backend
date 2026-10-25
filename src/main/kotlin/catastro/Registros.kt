@@ -35,7 +35,8 @@ class Registros(
         campo: String,
         valores: Collection<Any>,
         filters: Map<String, String> = emptyMap(),
-        sort: String? = null
+        sort: String? = null,
+        criteria: List<RecordCriterion> = emptyList()
     ): List<T> =
         valores.distinct().chunked(PageRequest.MAX_SIZE).flatMap { grupo ->
             val enGrupo =
@@ -45,7 +46,7 @@ class Registros(
                 }
             todas(
                 objectName,
-                RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), sort = sort, filters = filters, criteria = listOf(enGrupo), count = false)
+                RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), sort = sort, filters = filters, criteria = criteria + enGrupo, count = false)
             ).map { read(type, it) }
         }
 
@@ -66,7 +67,18 @@ class Registros(
         objectName: String,
         type: Class<T>,
         sort: String
-    ): List<T> = todas(objectName, RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), sort = sort, count = false)).map { read(type, it) }
+    ): List<T> = todas(objectName, type, sort, emptyMap())
+
+    // the same pass, over the records that meet `filters` (equality, as core's list reads them): a corte's fichas, the
+    // decisions of a year
+    suspend fun <T : Any> todas(
+        objectName: String,
+        type: Class<T>,
+        sort: String,
+        filters: Map<String, String>
+    ): List<T> =
+        todas(objectName, RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), sort = sort, filters = filters, count = false))
+            .map { read(type, it) }
 
     private suspend fun todas(
         objectName: String,
