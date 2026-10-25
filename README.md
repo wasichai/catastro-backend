@@ -666,7 +666,8 @@ Cada ítem trae siempre sus seis llaves:
 - `codigoMunicipal` es el del predio. Una construcción u obra lleva el de su predio, que se lee del audit log, así que
   sale aunque el predio ya se haya borrado. Es `null` si no se puede resolver, y srtm tiene que aceptarlo.
 - `campos` son los nombres de lo que cambió, nunca sus valores: en un alta, los campos que se llenaron; en un cambio,
-  los que cambiaron de valor; en una baja, ninguno.
+  los que cambiaron de valor; en una baja, ninguno. Un `UPDATE` de `predio_catastral` con `campos` vacío es un cambio
+  solo de geometría (`import_lotes.py --actualizar-geometria`); sin `--entrega`, ese cambio trae `entrega: null`.
 - `en` es el instante del cambio.
 - `entrega` es el código de la `entrega_catastral` que lo cargó (el `X-Change-Reason` del cargador). Es `null` si el
   cambio se hizo a mano o si su motivo no es una entrega.
