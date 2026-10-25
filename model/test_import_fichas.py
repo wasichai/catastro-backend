@@ -471,6 +471,20 @@ class LoadTests(unittest.TestCase):
         for secreto in ("ANA", "PEREZ", "QUISPE", "00412345", "LUIS", "ROJAS"):
             self.assertNotIn(secreto, out + err)
 
+    def test_a_core_refusal_writing_a_titular_never_prints_its_body(self):
+        # Core's own validation error can echo back a submitted value (Ley 29733): the body is never printed for a
+        # titular_catastral write, even on a refusal.
+        core = FakeCore(fail_on_record="titular_catastral",
+                        fail_on_record_body={"detail": "Invalid option",
+                                             "errors": [{"field": "numero_documento", "message": "SECRETO-00412345-ANA"}]})
+        self.addCleanup(core.stop)
+        titulares = write_csv(self, TITULARES)
+        code, out, err = run(imf.main, ["--fichas", self.fichas, "--pisos", self.pisos, "--titulares", titulares,
+                                        "--core", core.base_url])
+        self.assertEqual(code, 1)
+        self.assertIn("cuerpo omitido", err)
+        self.assertNotIn("SECRETO", out + err)
+
 
 class EntregaLoadTests(unittest.TestCase):
     """--entrega: an upsert through the API, every write with the entrega's code as X-Change-Reason (ADR-013)."""

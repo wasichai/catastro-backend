@@ -71,9 +71,9 @@ if HERE not in sys.path:
     sys.path.insert(0, HERE)
 
 from core_client import Client, CoreError  # noqa: E402
-from entregas import (EntregaError, Present, apply_plan, check_codigo, check_same_files, ensure_entrega,  # noqa: E402
-                      field_types, find_entrega, obra_key, piso_key, plan_entrega, read_core, relation_id, sha256_of,
-                      titular_key)
+from entregas import (TITULAR, EntregaError, Present, apply_plan, check_codigo, check_same_files,  # noqa: E402
+                      ensure_entrega, field_types, find_entrega, obra_key, piso_key, plan_entrega, read_core,
+                      relation_id, sha256_of, titular_key)
 from tabular import (INPUT_ERRORS, LoadError, clean_text, code_text, column_for, enum_option, load_enums,  # noqa: E402
                      missing_columns, parse_decimal, parse_int, parse_map, post_all, read_table, report_problems)
 
@@ -564,7 +564,9 @@ def main(argv=None):
         print(f"error: {e}", file=sys.stderr)
         return 2
     except LoadError as e:
-        print(f"error /api/objects/{e.object_name}/records (fila {e.fila}) -> {e.error.status}\n{e.error.body}", file=sys.stderr)
+        # a titular write's body can echo back a submitted document or name (Ley 29733): never printed
+        body = "cuerpo omitido: datos personales" if e.object_name == TITULAR else e.error.body
+        print(f"error /api/objects/{e.object_name}/records (fila {e.fila}) -> {e.error.status}\n{body}", file=sys.stderr)
         return 1
     except CoreError as e:
         print(f"error -> {e.status}\n{e.body}", file=sys.stderr)
