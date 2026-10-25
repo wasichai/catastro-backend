@@ -44,7 +44,7 @@ yarn install && yarn format:check
 El modelo (`model/model.json`) y los cargadores son Python solo con la biblioteca estándar, con la forma de los de
 srtm-backend. Siete objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
 `construccion`, `obra_complementaria` y `titular_catastral` (cuelgan de un predio; este último, datos personales de
-Ley 29733, ver [Fichas](#modelo-y-carga)), `arancel`, `configuracion_catastro` (la región de la organización, ver
+Ley 29733, ver [Modelo y carga](#modelo-y-carga)), `arancel`, `configuracion_catastro` (la región de la organización, ver
 abajo) y `entrega_catastral` (cada entrega del levantamiento, ver [Entregas](#entregas)). wasichai
 no tiene únicos compuestos, así que `arancel.clave` (`id_aranc|anio`) garantiza el par único. `codigo_vu` de una obra
 es `TIPO DE OBRA|número`, como `obra_categoria` de srtm (`model/data/obras_complementarias.csv`).
