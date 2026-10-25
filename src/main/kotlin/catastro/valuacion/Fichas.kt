@@ -11,6 +11,7 @@ const val OBRA_COMPLEMENTARIA = "obra_complementaria"
 const val ARANCEL = "arancel"
 const val CONFIGURACION_CATASTRO = "configuracion_catastro"
 const val ENTREGA_CATASTRAL = "entrega_catastral"
+const val TITULAR_CATASTRAL = "titular_catastral"
 
 // the relation field construccion and obra_complementaria hang from
 const val PREDIO = "predio"

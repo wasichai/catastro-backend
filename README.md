@@ -512,6 +512,48 @@ Content-Type: application/json
 `construccion`, `obras`, `autoavaluo` y `detalle` son `null`. `GET /valuaciones` no trae `detalle`: su contrato no
 cambia.
 
+**Titulares.** `GET /valuaciones` no trae los titulares de un predio (para que la respuesta siga liviana): srtm los
+lee de un endpoint aparte, en vez de la API genérica de registros, porque esta solo da el uuid del predio y srtm
+necesita su `codigoMunicipal`:
+
+```
+GET /api/catastro/titulares?page=0&size=200
+Authorization: Bearer <token de POST /api/auth/token>
+```
+
+- `page` desde 0 (por defecto 0); `size` de 1 a 500 (por defecto 200). Un parámetro que falta, sobra o se sale de
+  rango es un **422** que lo nombra (`errors[0].field`).
+- Sin token, **401**. Lee como quien llama: sin `READ` sobre `titular_catastral`, **403** de core (SRTM_LECTOR lo
+  tiene).
+- Los titulares van ordenados por `codigo_municipal` y luego por su id (el único orden propio del objeto que core
+  pagina sin repetir ni saltar filas). `total` es la cantidad de titulares que el llamador puede leer.
+
+**Son datos personales (Ley 29733): SRTM_LECTOR es el único lector de `titular_catastral`**, y los reportes de carga
+de `import_fichas.py --titulares` nunca imprimen documentos ni nombres (solo el código del predio y el número de
+fila). Los valores de este ejemplo son sintéticos:
+
+```json
+{
+  "page": 0,
+  "size": 200,
+  "total": 1,
+  "items": [
+    {
+      "codigoMunicipal": "0101001",
+      "tipoDocumento": "DNI",
+      "numeroDocumento": "10000001",
+      "nombre": "Titular Sintético Uno",
+      "porcentaje": 100.0,
+      "condicion": "PROPIETARIO"
+    }
+  ]
+}
+```
+
+Cada ítem trae siempre sus seis llaves, `null` sin dato. `tipoDocumento` y `condicion` son texto libre, tal como los
+escribe el padrón de origen (el vocabulario varía entre municipalidades); un documento de relleno (por ejemplo
+`000000000`) se carga vacío (`numeroDocumento: null`) y se reporta por código de predio y fila, nunca por su valor.
+
 **Puesta en marcha** (contra el Core del catastro, como admin):
 
 ```sh
