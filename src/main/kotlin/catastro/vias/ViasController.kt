@@ -1,5 +1,6 @@
 package catastro.vias
 
+import catastro.copias.CopiasHechas
 import org.springframework.web.bind.annotation.GetMapping
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestMapping
@@ -23,12 +24,17 @@ class ViasController(
         @RequestParam params: Map<String, String>
     ): FeatureCollection = vias.aranceles(anio(params))
 
-    // recomputes tramo_via.valor_m2 and anio_valor of every tramo for `anio` (the current year in Lima without it): the
-    // first fill, and the rollover each 1 January (README, «Vías»). only the organization's admin: 403 otherwise
+    // runs the map's copies now (tramo_via.valor_m2 and anio_valor of the current year, brecha_ficha.estado) instead of
+    // waiting for the periodic run, and answers what it wrote: {anio, tramos, fichas}. the periodic run turns the year
+    // over by itself; this is for an operator who wants the copies at once (README, «Vías»). only the organization's
+    // admin, 403 otherwise. it takes no parameter: one is a 400 that names it
     @PostMapping("/vias/valores")
     suspend fun valores(
         @RequestParam params: Map<String, String>
-    ): ValoresRecalculados = vias.recalcular(anio(params))
+    ): CopiasHechas {
+        params.keys.firstOrNull()?.let { throw invalido(it, "no existe en este endpoint") }
+        return vias.recalcular()
+    }
 
     private fun anio(params: Map<String, String>): Int {
         params.keys.firstOrNull { it != "anio" }?.let { throw invalido(it, "no existe en este endpoint") }

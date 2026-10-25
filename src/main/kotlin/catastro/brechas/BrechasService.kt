@@ -58,8 +58,7 @@ class BrechasService(
     private val registros: Registros,
     private val records: RecordService,
     private val metadata: MetadataService,
-    private val currentUser: CurrentUser,
-    private val estados: EstadoDeFichas
+    private val currentUser: CurrentUser
 ) {
     private val bases = ConcurrentHashMap<LlaveBase, EnVuelo<Base>>()
     private val decisiones = ConcurrentHashMap<LlaveDecisiones, EnVuelo<Map<String?, DecisionBrecha>>>()
@@ -137,8 +136,7 @@ class BrechasService(
     // codigo|anio, DECISIONES_A_LA_VEZ at a time. responsable, decidido_en and corte_origen (the most recent corte of that year) are
     // the server's. a code that is no ficha, or one core refuses, is reported in errores and the others are still
     // written; a 403 of core stops the batch (what was written stays written). the writes carry EscrituraDeBrechas:
-    // DecisionesSoloPorLaApi refuses any other write of decision_brecha. the codes written get the estado on their
-    // fichas of that corte too (EstadoDeFichas), for the map view
+    // DecisionesSoloPorLaApi refuses any other write of decision_brecha
     suspend fun decidir(pedido: PedidoDecision): ResultadoDecisiones {
         val usuario = exigir(DECISION_BRECHA, Actions.UPDATE)
         exigir(BRECHA_FICHA, Actions.READ, usuario)
@@ -159,8 +157,6 @@ class BrechasService(
                 .toSet()
         // a role with UPDATE but not CREATE is refused before anything is written, not half way
         if (codigos.any { it in fichas && claves.getValue(it) !in existentes }) exigir(DECISION_BRECHA, Actions.CREATE, usuario)
-        // the most recent corte of the decision's year (there is one: checked above)
-        val corteOrigen = cortes.first { it.anio == pedido.anio }
         val atributos =
             buildMap<String, Any?> {
                 put("estado", pedido.estado)
@@ -168,9 +164,9 @@ class BrechasService(
                 if (pedido.nota != null) put("nota", pedido.nota.valor)
                 put("responsable", usuario.email.takeIf { '@' in it })
                 put("decidido_en", Instant.now().truncatedTo(ChronoUnit.SECONDS).toString())
-                put("corte_origen", corteOrigen.clave)
+                // the most recent corte of the decision's year (there is one: checked above)
+                put("corte_origen", cortes.first { it.anio == pedido.anio }.clave)
             }
-        val escritos = ConcurrentLinkedQueue<String>()
         val creadas = AtomicInteger()
         val actualizadas = AtomicInteger()
         val errores = ConcurrentLinkedQueue<ErrorDeDecision>()
@@ -196,7 +192,6 @@ class BrechasService(
                                         records.patch(DECISION_BRECHA, UUID.fromString(existente.id), RecordRequest(atributos), RAZON)
                                         actualizadas.incrementAndGet()
                                     }
-                                    escritos += codigo
                                 } catch (e: WasichaiException) {
                                     if (e.status.value() == 403) throw e
                                     errores += ErrorDeDecision(codigo, e.message ?: "rechazado")
@@ -206,7 +201,6 @@ class BrechasService(
                     }.awaitAll()
             }
         } finally {
-            estados.copiar(usuario.organizationId, UUID.fromString(corteOrigen.id), pedido.estado, escritos.toList())
             // the decisions of every year of the organization are read anew; the Bases stay
             generaciones.computeIfAbsent(usuario.organizationId) { AtomicLong() }.incrementAndGet()
             decisiones.keys.removeIf { it.organizacion == usuario.organizationId }
@@ -300,11 +294,7 @@ class BrechasService(
 
     // by fecha, the most recent first; two cortes of a day by clave. a corte without cargado_en is one
     // importar_corte_brecha.py is still loading (or left half done): never shown
-    private suspend fun cortesCompletos(): List<CorteBrecha> =
-        registros
-            .todas(CORTE_BRECHA, CorteBrecha::class.java, sort = "clave")
-            .filter { !it.cargadoEn.isNullOrBlank() }
-            .sortedWith(compareByDescending<CorteBrecha, String?>(nullsFirst()) { it.fecha }.thenByDescending { it.clave })
+    private suspend fun cortesCompletos(): List<CorteBrecha> = completos(registros.todas(CORTE_BRECHA, CorteBrecha::class.java, sort = "clave"))
 
     // the caller, once it holds `accion` on `objeto` (403 otherwise)
     private suspend fun exigir(

@@ -19,6 +19,14 @@ const val DESCARTADO = "DESCARTADO"
 const val OMISO = "OMISO"
 const val CONFIABLE = "CONFIABLE"
 
+// the cortes whose load finished (a corte without cargado_en is one importar_corte_brecha.py is still loading, or left
+// half done: never shown), the most recent first: by fecha, two cortes of a day by clave. the dashboard and the map's
+// copies (catastro.copias) read "the most recent corte" from here
+fun completos(cortes: List<CorteBrecha>): List<CorteBrecha> =
+    cortes
+        .filter { !it.cargadoEn.isNullOrBlank() }
+        .sortedWith(compareByDescending<CorteBrecha, String?>(nullsFirst()) { it.fecha }.thenByDescending { it.clave })
+
 // the records as core returns them (fields by their model names); a DATE or DATETIME is read as its ISO text
 
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)

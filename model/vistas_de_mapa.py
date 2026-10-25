@@ -7,8 +7,9 @@ Views (GET/POST /api/gis/objects/{object}/map-views, PUT .../map-views/{name}; M
   aranceles_asignacion  tramo_via.geom          by asignacion, categories
   brechas_categoria     brecha_ficha.lote_geom  by categoria, categories (catastro-ui's COLOR_CATEGORIA)
   brechas_estado        brecha_ficha.lote_geom  by estado, categories (catastro-ui's COLOR_ESTADO)
-  brechas_delta         brecha_ficha.lote_geom  by delta_impuesto, 5 quantiles
 A view Core lacks is created (POST), one whose label, geometry or style differ is updated (PUT), an equal one is left.
+There is no view of the Δ impuesto: it is signed, gis's quantiles cannot centre a scale on 0, and catastro-ui keeps its
+own diverging scale; a brechas_delta left by an earlier version is deleted.
 
 Layers (POST /api/gis/layers/{object}/{geometry} with {"style"}): tramo_via.geom with the style of aranceles_valor and
 brecha_ficha.lote_geom with that of brechas_categoria. Every run publishes both again, even when nothing else changed:
@@ -17,12 +18,20 @@ is how the style is refreshed (the style is replaced, the layer kept). So run it
 importar_corte_brecha.py and after every POST /api/catastro/vias/valores (README, «Vistas de mapa»). --sin-capas
 leaves the layers alone (GeoServer off).
 
-Run: python3 -I vistas_de_mapa.py [--org <organization id>] [--sin-capas] [--dry-run] [--core URL]
+A republish does not rebuild GeoServer's feature type: its attribute columns are those of the first publish (wasichai
+1.5.0), so a layer published before its object had the style's field (tramo_via.geom before valor_m2) would colour by
+a property it lacks. So when GET /api/gis/layers says a layer is published, its WFS DescribeFeatureType is read: a layer
+without the style's field is unpublished (DELETE) and published again, which rebuilds it. --recrear-capas does that
+for both layers whatever the WFS says (when it cannot be reached from here, say).
+
+Run: python3 -I vistas_de_mapa.py [--org <organization id>] [--sin-capas | --recrear-capas] [--dry-run] [--core URL]
 Exit: 0 ok, 1 Core refused something (status and body), 2 --org is another organization.
 """
 import argparse
 import os
 import sys
+import urllib.request
+import xml.etree.ElementTree as ET
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 if HERE not in sys.path:
@@ -50,9 +59,10 @@ VISTAS = [
      "style": {"by": "categoria", "type": "categories", "palette": "categoria_brecha"}},
     {"name": "brechas_estado", "label": "Brechas: estado de la decisión", "object": "brecha_ficha",
      "geometryName": "lote_geom", "style": {"by": "estado", "type": "categories", "palette": "estado_decision"}},
-    {"name": "brechas_delta", "label": "Brechas: Δ impuesto (catastro − declarado)", "object": "brecha_ficha",
-     "geometryName": "lote_geom", "style": {"by": "delta_impuesto", "type": "quantiles", "classes": 5}},
 ]
+# views an earlier version created, deleted when found: (object, name)
+RETIRADAS = [("brecha_ficha", "brechas_delta")]
+XSD = "{http://www.w3.org/2001/XMLSchema}element"
 COLORES = {"asignacion_tramo": COLOR_ASIGNACION, "categoria_brecha": COLOR_CATEGORIA, "estado_decision": COLOR_ESTADO}
 # object, geometry, the view whose style the layer takes
 CAPAS = [("tramo_via", "geom", "aranceles_valor"), ("brecha_ficha", "lote_geom", "brechas_categoria")]
@@ -83,10 +93,26 @@ def difiere(vista, guardada):
             or _estilo(guardada.get("style")) != _estilo(vista["style"]))
 
 
+def atributos_de(wfs):
+    """The attribute names of a published layer, from its WFS DescribeFeatureType (`wfs` is the GetFeature URL
+    GET /api/gis/layers gives), or None when it cannot be read."""
+    if not wfs or "request=GetFeature" not in wfs:
+        return None
+    try:
+        with urllib.request.urlopen(wfs.replace("request=GetFeature", "request=DescribeFeatureType"), timeout=15) as r:
+            raiz = ET.fromstring(r.read())
+    except (OSError, ET.ParseError, ValueError):
+        return None
+    return {e.get("name") for e in raiz.iter(XSD) if e.get("name")}
+
+
 def _parse_args(argv):
     p = argparse.ArgumentParser(description="Create the map views of aranceles and brechas and publish their layers.")
     p.add_argument("--org", help="the organization id the account must belong to, or nothing is written")
-    p.add_argument("--sin-capas", action="store_true", help="do not publish the GeoServer layers")
+    capas = p.add_mutually_exclusive_group()
+    capas.add_argument("--sin-capas", action="store_true", help="do not publish the GeoServer layers")
+    capas.add_argument("--recrear-capas", action="store_true",
+                       help="unpublish and publish both layers again, which rebuilds their attribute columns")
     p.add_argument("--core", default=os.environ.get("WASICHAI_CORE", "http://localhost:8091"))
     p.add_argument("--email", default=os.environ.get("WASICHAI_EMAIL", "admin@wasichai.local"))
     p.add_argument("--password", default=os.environ.get("WASICHAI_PASSWORD", "admin"))
@@ -123,11 +149,35 @@ def main(argv=None):
             else:
                 accion = "unchanged"
             print(f"vista {vista['name']}: {verbo if accion != 'unchanged' else ''}{accion}")
+        for objeto, nombre in RETIRADAS:
+            if client.get(f"/api/gis/objects/{objeto}/map-views/{nombre}") is not None:
+                if not args.dry_run:
+                    client.delete(f"/api/gis/objects/{objeto}/map-views/{nombre}")
+                print(f"vista {nombre}: {verbo}delete (retirada)")
         if args.sin_capas:
             print("capas: --sin-capas, not published")
         else:
             estilos = {v["name"]: v["style"] for v in todas}
+            estados = {(c.get("objectName"), c.get("geometryName")): c for c in (client.get("/api/gis/layers") or [])}
             for objeto, geometria, vista in CAPAS:
+                campo = estilos[vista]["by"]
+                estado = estados.get((objeto, geometria)) or {}
+                recrear = False
+                if estado.get("published"):
+                    if args.recrear_capas:
+                        recrear = True
+                    else:
+                        atributos = atributos_de(estado.get("wfs"))
+                        if atributos is None:
+                            print(f"capa {objeto}.{geometria}: warning: its WFS could not be read; if it was published"
+                                  f" before {campo} existed, run again with --recrear-capas")
+                        elif campo not in atributos:
+                            recrear = True
+                            print(f"capa {objeto}.{geometria}: published without {campo}")
+                if recrear:
+                    if not args.dry_run:
+                        client.delete(f"/api/gis/layers/{objeto}/{geometria}")
+                    print(f"capa {objeto}.{geometria}: {verbo}unpublish, to rebuild its columns")
                 if not args.dry_run:
                     client.post(f"/api/gis/layers/{objeto}/{geometria}", {"style": estilos[vista]})
                 print(f"capa {objeto}.{geometria}: {verbo}publish with the style of {vista}")

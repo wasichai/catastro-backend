@@ -521,6 +521,45 @@ class ImportarCorteTests(unittest.TestCase):
         self.assertEqual(set(por_corte[self.corte_id(FECHA)].values()), {None})
         self.assertEqual(sum(1 for g in por_corte[self.corte_id("2026-11-25")].values() if g), 2)
 
+    def test_con_geometria_anterior_un_corte_anterior_conserva_sus_lotes(self):
+        self.con_lotes()
+        self.assertEqual(self.cli(armar_corte(self))[0], 0)
+        self.assertEqual(self.cli(armar_corte(self, fecha="2026-11-25"), "--con-geometria-anterior")[0], 0)
+        # reloading the older corte, now not the latest, with --con-geometria-anterior: its lotes stay as they are
+        self.core.requests.clear()
+        code, out, err = self.cli(armar_corte(self), "--con-geometria-anterior")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sum(1 for g in self.lotes_por_corte()[self.corte_id(FECHA)].values() if g), 2)
+        self.assertEqual(self.escrituras(), [])
+
+    def test_un_corte_mas_nuevo_a_medio_cargar_no_le_quita_los_lotes_al_ultimo(self):
+        self.con_lotes()
+        self.assertEqual(self.cli(armar_corte(self))[0], 0)
+        # a newer corte whose load crashed: no cargado_en, the API does not show it
+        self.core.add_record("corte_brecha", {"clave": "ica-prueba|2026-12-01", "org_slug": ORG, "fecha": "2026-12-01",
+                                              "anio": 2026})
+        code, out, err = self.cli(armar_corte(self))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sum(1 for g in self.lotes_por_corte()[self.corte_id(FECHA)].values() if g), 2)
+
+    def test_los_lotes_anteriores_se_buscan_con_un_bbox_en_el_servidor(self):
+        self.con_lotes()
+        self.assertEqual(self.cli(armar_corte(self))[0], 0)
+        self.assertEqual(self.cli(armar_corte(self, fecha="2026-11-25"))[0], 0)
+        [(objeto, caja, geometria)] = [q for q in self.core.bbox_queries]
+        self.assertEqual((objeto, geometria), ("brecha_ficha", "lote_geom"))
+        x0, y0, x1, y1 = (float(v) for v in caja.split(","))
+        self.assertTrue(x0 < -75.73 < x1 and y0 < -14.07 < y1, caja)
+
+    def test_un_codigo_de_dos_predios_no_toma_lote(self):
+        self.con_lotes()
+        self.core.add_record("predio_catastral", {"codigo_municipal": "01-02-0005"},
+                             geometries={"lote_geom": lote("01-02-0005", dx=0.01)})
+        code, out, err = self.cli(armar_corte(self))
+        self.assertEqual(code, 0, err)
+        self.assertIsNone(self.lotes_por_corte()[self.corte_id(FECHA)]["PR-5"])
+        self.assertIn("lotes: 1 fichas del corte con lote, 1 códigos de dos o más predios sin lote", out)
+
 
 def lote(codigo, dx=0.0):
     """A small fictitious square in Ica (EPSG:4326), a different one per code."""

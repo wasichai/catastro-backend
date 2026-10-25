@@ -293,14 +293,29 @@ def empatar(codigo_catastro, capas):
 
 
 def lotes_de(predios):
-    """codigo_municipal -> the lote (a GeoJSON Polygon in 4326) of every predio that has both."""
-    lotes = {}
+    """(codigo_municipal -> the lote, a GeoJSON Polygon in 4326, of every predio that has both; how many codes two or
+    more predios share). A shared code takes no lote: which predio's would be arbitrary."""
+    lotes, vistos = {}, Counter()
     for predio in predios:
         codigo = (predio.get("attributes") or {}).get("codigo_municipal")
+        if codigo is None:
+            continue
+        vistos[codigo] += 1
         lote = (predio.get("geometries") or {}).get(LOTE)
-        if codigo is not None and lote:
+        if lote:
             lotes[codigo] = lote
-    return lotes
+    repetidos = {c for c, n in vistos.items() if n > 1}
+    return {c: g for c, g in lotes.items() if c not in repetidos}, len(repetidos)
+
+
+def caja(lotes, margen=0.5):
+    """minX,minY,maxX,maxY (EPSG:4326) around every lote, `margen` degrees wider, or None without lotes: the fichas of
+    older cortes carry lotes copied from these predios, so a bbox filter on the server finds them all."""
+    puntos = [(x, y) for g in lotes.values() for anillo in g.get("coordinates") or [] for x, y, *_ in anillo]
+    if not puntos:
+        return None
+    xs, ys = [p[0] for p in puntos], [p[1] for p in puntos]
+    return f"{min(xs) - margen},{min(ys) - margen},{max(xs) + margen},{max(ys) + margen}"
 
 
 def estados_de(decisiones):
@@ -324,10 +339,11 @@ def mismo_lote(a, b, tolerancia=TOLERANCIA):
 
 
 def es_el_mas_reciente(corte, cortes):
-    """Whether no other stored corte is more recent than `corte` by (fecha, clave), the API's order."""
+    """Whether no other stored corte is more recent than `corte` by (fecha, clave), the API's order. A corte whose load
+    did not finish (no cargado_en) does not count: the API does not show it either."""
     propio = (str(corte["fecha"]), corte["clave"])
     otros = ((str(a.get("fecha")), a.get("clave")) for a in ((c.get("attributes") or {}) for c in cortes)
-             if a.get("clave") != corte["clave"])
+             if a.get("clave") != corte["clave"] and a.get("cargado_en"))
     return all(otro < propio for otro in otros)
 
 
@@ -421,7 +437,8 @@ def cambios(nuevo, guardado):
 def plan_fichas(filas, existentes, reemplazar, lotes=None):
     """create [(n, attributes, geometries)], update [(id, n, changed attributes, geometries or None)], unchanged,
     absent (stored fichas the corte no longer has), the deletes (absent ones with --reemplazar). `lotes`: the lote of
-    each of `filas`, in their order (None: none); a stored lote that differs is replaced, or cleared."""
+    each of `filas`, in their order, and a stored lote that differs is replaced, or cleared; None leaves every
+    geometry as it is."""
     por_clave = {(r.get("attributes") or {}).get("clave"): r for r in existentes}
     crear, actualizar, iguales = [], [], 0
     for n, atributos in enumerate(filas, start=1):
@@ -431,7 +448,8 @@ def plan_fichas(filas, existentes, reemplazar, lotes=None):
             crear.append((n, atributos, {LOTE: lote}))
             continue
         diferencia = cambios(atributos, record.get("attributes") or {})
-        geometrias = None if mismo_lote(lote, (record.get("geometries") or {}).get(LOTE)) else {LOTE: lote}
+        guardado = (record.get("geometries") or {}).get(LOTE)
+        geometrias = None if lotes is None or mismo_lote(lote, guardado) else {LOTE: lote}
         if diferencia or geometrias:
             actualizar.append((record["id"], n, diferencia, geometrias))
         else:
@@ -513,13 +531,19 @@ def cargar(args, carpeta):
     existentes = client.list_all(FICHA, corte=guardado["id"]) if guardado else []
     # the lotes go only on the most recent corte: the map view and the WMS layer draw one corte
     reciente = es_el_mas_reciente(corte, cortes)
-    lotes = lotes_de(predios) if reciente else {}
+    todos_los_lotes, repetidos = lotes_de(predios)
+    lotes = todos_los_lotes if reciente else {}
     con_lote = [lotes.get(f["codigo_municipal"]) for f in nuevas]
-    todo = plan_fichas(nuevas, existentes, args.reemplazar, con_lote)
-    # the fichas of the other cortes that still carry a lote
-    anteriores = ([r for c in cortes if c["id"] != corte_id for r in client.list_all(FICHA, corte=c["id"])
-                   if (r.get("geometries") or {}).get(LOTE)]
-                  if reciente and args.sin_geometria_anterior else [])
+    # an older corte loaded after: its own lotes go too, unless --con-geometria-anterior keeps them as they are
+    todo = plan_fichas(nuevas, existentes, args.reemplazar,
+                       con_lote if reciente or args.sin_geometria_anterior else None)
+    # the fichas of the other cortes that still carry a lote: only those the server finds in the box of the lotes
+    # (bbox, wasichai-gis), not every ficha of the history
+    anteriores = []
+    if reciente and args.sin_geometria_anterior:
+        filtro = {"bbox": caja(todos_los_lotes), "geometry": LOTE} if caja(todos_los_lotes) else {}
+        anteriores = [r for c in cortes if c["id"] != corte_id for r in client.list_all(FICHA, corte=c["id"], **filtro)
+                      if (r.get("geometries") or {}).get(LOTE)]
     cambio_corte = cambios(corte, guardado.get("attributes") or {}) if guardado else corte
     # a corte without cargado_en is one a load left half done: it is finished even if nothing else changed
     a_medias = guardado is not None and not (guardado.get("attributes") or {}).get("cargado_en")
@@ -537,6 +561,7 @@ def cargar(args, carpeta):
                          " borra; nothing was written")
     lotes_resumen = (f"lotes: {sum(1 for g in con_lote if g)} fichas del corte con lote"
                      + ("" if reciente else " (hay un corte más reciente: este no lleva lotes)")
+                     + (f", {repetidos} códigos de dos o más predios sin lote" if repetidos else "")
                      + f"; {len(anteriores)} fichas de cortes anteriores con lote {{clear}}")
     if args.dry_run:
         print(resumen.format(create="to create", update="to update", delete="to delete"))

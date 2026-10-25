@@ -15,16 +15,6 @@ val LIMA: ZoneId = ZoneId.of("America/Lima")
 
 fun anioEnCurso(): Int = LocalDate.now(LIMA).year
 
-// what POST /api/catastro/vias/valores answers: the year computed, the organization's tramos, how many have a value
-// that year, and how many this call changed
-@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
-data class ValoresRecalculados(
-    val anio: Int,
-    val tramos: Long,
-    val conValor: Long,
-    val actualizados: Long
-)
-
 // a tramo_via as core returns it (fields by their model names); geom is wasichai-gis's GeoJSON in EPSG:4326
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
 data class TramoVia(

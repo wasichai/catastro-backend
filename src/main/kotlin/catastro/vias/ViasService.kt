@@ -1,6 +1,8 @@
 package catastro.vias
 
 import catastro.Registros
+import catastro.copias.CopiasDelMapa
+import catastro.copias.CopiasHechas
 import catastro.valuacion.arancelesDelAnio
 import org.springframework.stereotype.Service
 import wasichai.core.common.ForbiddenException
@@ -12,7 +14,7 @@ import wasichai.gis.FeatureCollection
 @Service
 class ViasService(
     private val registros: Registros,
-    private val valores: ValoresDeTramos,
+    private val copias: CopiasDelMapa,
     private val currentUser: CurrentUser
 ) {
     suspend fun aranceles(anio: Int): FeatureCollection {
@@ -22,12 +24,11 @@ class ViasService(
         return FeatureCollection(tramos.mapNotNull { feature(it, anio, it.idAranc?.let { id -> aranceles[id]?.valorM2 }) })
     }
 
-    // every tramo's copy of the arancel of `anio`, for the organization's admin only (a service account never is one)
-    suspend fun recalcular(anio: Int): ValoresRecalculados {
+    // a run of the map's copies for the caller's organization, awaited (CopiasDelMapa writes them, as the platform, in
+    // its own scope): for the organization's admin only (a service account never is one)
+    suspend fun recalcular(): CopiasHechas {
         val usuario = currentUser.require()
-        if (!usuario.isAdmin) throw ForbiddenException("Solo el administrador de la organización recalcula los valores de los tramos")
-        val actualizados = valores.recalcular(usuario.organizationId, anio)
-        val (tramos, conValor) = valores.conteo(usuario.organizationId)
-        return ValoresRecalculados(anio, tramos, conValor, actualizados)
+        if (!usuario.isAdmin) throw ForbiddenException("Solo el administrador de la organización recalcula las copias del mapa")
+        return copias.ahora(usuario.organizationId)
     }
 }

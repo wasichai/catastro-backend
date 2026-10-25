@@ -153,13 +153,13 @@ class CambiosApiTest : CatastroApiTest() {
             )
         val (_, c0) = leer(srtm, desde = null, size = 500)
 
-        // srtm syncs an arancel of the year: ValoresDeTramos copies it onto the tramo; the admin recomputes them all
+        // srtm syncs an arancel of the year: CopiasDelMapa copies it onto the tramo, as the platform; the admin runs them
         registro(ARANCEL, mapOf("clave" to "A-$u|$anio", "id_aranc" to "A-$u", "anio" to anio, "valor_m2" to 10), token = srtm)
         send("POST", "/api/catastro/vias/valores", emptyMap<String, Any>(), HttpStatus.OK, org)
         val copia = arbol(send("GET", "/api/objects/$TRAMO_VIA/records/$tramo", null, HttpStatus.OK, org))["attributes"]
         assertEquals(10, copia["valor_m2"].asInt())
-        // a corte and its ficha with the lote and the estado, as importar_corte_brecha.py writes them; a decision
-        // copies its estado onto the ficha
+        // a corte and its ficha with the lote and the estado, as importar_corte_brecha.py writes them; a decision's
+        // estado reaches the ficha
         val corte =
             registro(
                 CORTE_BRECHA,
@@ -180,8 +180,11 @@ class CambiosApiTest : CatastroApiTest() {
             HttpStatus.OK,
             analista
         )
-        val decidida = arbol(send("GET", "/api/objects/$BRECHA_FICHA/records/$ficha", null, HttpStatus.OK, org))["attributes"]
-        assertEquals("A_FISCALIZAR", decidida["estado"].asString())
+        hasta("el estado de la decisión en la ficha") {
+            arbol(send("GET", "/api/objects/$BRECHA_FICHA/records/$ficha", null, HttpStatus.OK, org))["attributes"]["estado"].asString() == "A_FISCALIZAR"
+        }
+        // and the copies run once more, by hand, before the feed is read
+        send("POST", "/api/catastro/vias/valores", emptyMap<String, Any>(), HttpStatus.OK, org)
         assertEquals(listOf<JsonNode>(), leer(srtm, desde = c0, size = 500).first)
 
         // the feed still moves: a predio's change is there, alone

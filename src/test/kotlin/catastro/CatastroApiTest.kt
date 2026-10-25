@@ -225,6 +225,20 @@ abstract class CatastroApiTest : WasichaiIntegrationTest() {
         return HttpStatus.valueOf(result.status.value()) to (result.responseBody ?: "")
     }
 
+    // waits until `condicion` holds, for work that happens after the request (the map's copies, CopiasDelMapa): fails
+    // with `que` after `segundos`
+    protected fun hasta(
+        que: String,
+        segundos: Long = 30,
+        condicion: () -> Boolean
+    ) {
+        val limite = System.nanoTime() + segundos * 1_000_000_000
+        while (!condicion()) {
+            if (System.nanoTime() > limite) throw AssertionError("no pasó en ${segundos}s: $que")
+            Thread.sleep(200)
+        }
+    }
+
     protected fun arbol(texto: String): JsonNode = json.readValue(texto, JsonNode::class.java)
 
     protected fun arbol(archivo: File): JsonNode = json.readValue(archivo, JsonNode::class.java)

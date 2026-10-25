@@ -568,7 +568,7 @@
           "name": "valor_m2",
           "label": "Valor por m2 del año (S/)",
           "type": "DECIMAL",
-          "description": "El valor_m2 del arancel de su id_aranc en anio_valor: una copia para la vista de mapa y la capa WMS. La mantiene el servidor al escribirse un arancel del año en curso; POST /api/catastro/vias/valores la recalcula. Vacío sin arancel ese año o sin id_aranc."
+          "description": "El valor_m2 del arancel de su id_aranc en anio_valor: una copia para la vista de mapa y la capa WMS. La mantiene el servidor (CopiasDelMapa, como la plataforma): segundos después de escribirse un arancel del año y en cada corrida periódica, que también cambia el año. Vacío sin arancel ese año o sin id_aranc."
         },
         {
           "name": "anio_valor",
@@ -829,7 +829,7 @@
           "label": "Estado de la decisión",
           "type": "ENUM",
           "enum": "estado_decision",
-          "description": "Copia del estado de decision_brecha (codigo_municipal|anio del corte), PENDIENTE sin decisión: para la vista de mapa y la capa WMS. La escriben importar_corte_brecha.py y POST /api/catastro/brechas/decisiones (en el corte más reciente del año)."
+          "description": "Copia del estado de decision_brecha (codigo_municipal|anio del corte), PENDIENTE sin decisión: para la vista de mapa y la capa WMS. La escribe importar_corte_brecha.py y la mantiene el servidor (CopiasDelMapa, como la plataforma) en el corte más reciente, segundos después de cada decisión."
         },
         {
           "name": "lote_geom",

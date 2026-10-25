@@ -36,7 +36,8 @@ UTM 18S, so no proj is needed.
 
 Each row also carries valor_m2 and anio_valor, the valor_m2 of its id_aranc's arancel of the current year (America/Lima;
 empty without one): the copy the map view aranceles_valor and the WMS layer colour by. catastro-backend keeps it
-current afterwards (every write of an arancel of that year, and POST /api/catastro/vias/valores on 1 January).
+current afterwards (CopiasDelMapa: after every write of an arancel of that year, and on its periodic run, which also
+turns the year over on 1 January).
 
 Idempotent upsert by tramo_via.clave = "<ubigeo>|<fid>|<lado>": a row Core lacks is created, one whose attributes or
 geometry (beyond 1e-6 degrees, ~10 cm) differ is updated (PATCH), and a row of an eje in the file whose lado is no
@@ -62,7 +63,8 @@ import struct
 import sys
 import unicodedata
 import urllib.request
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
+from zoneinfo import ZoneInfo
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -102,8 +104,8 @@ SIN_NOMBRE = {"SIN NOMBRE", "S N", "SN", "SIN NOMBRE S N"}
 JOIN = 1e-3
 REVISION_COLUMNS = ["cod_via_eje", "fid_eje", "lado", "id_aranc", "asignacion"]
 ARANCEL = "arancel"
-# Peru keeps UTC-5 all year: no tz database needed for "the current year in America/Lima"
-LIMA = timezone(timedelta(hours=-5))
+# "the current year" is Lima's, as catastro-backend's (catastro.vias.LIMA)
+LIMA = ZoneInfo("America/Lima")
 
 
 class GpkgError(ValueError):

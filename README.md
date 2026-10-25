@@ -201,29 +201,40 @@ de vía (notas 2 y 3), así que cada tramo se asigna así:
 Cada fila lleva también `valor_m2` y `anio_valor`: el `valor_m2` del arancel de su `id_aranc` del año en curso
 (America/Lima), vacíos los dos sin arancel ese año o sin `id_aranc`. Es una **copia** para la vista de mapa
 `aranceles_valor` y la capa WMS (ver [Vistas de mapa](#vistas-de-mapa)); el mapa de catastro-ui sigue leyendo el valor
-de cualquier año de `GET /api/catastro/vias/aranceles`. Después de la carga la mantiene el servidor:
+de cualquier año de `GET /api/catastro/vias/aranceles`. Después de la carga la mantiene el servidor, con
+**`CopiasDelMapa`** (`catastro.copias`), que también mantiene `brecha_ficha.estado` (ver «Corte de brecha»):
 
-- **cada escritura de un `arancel` del año en curso** (alta, cambio o baja, por la API genérica o por la sincronización
-  de srtm) recalcula los tramos de su `id_aranc`, y la baja los deja vacíos. Un arancel de otro año no cambia nada.
-  Lo hace `ValoresDeTramos`, un `RecordChangeListener` de wasichai (el hook de después de escribir, ADR-025 de
-  wasichai), que también recalcula un tramo cada vez que se escribe (un `id_aranc` que cambia toma su valor al
-  momento). La copia se escribe con un `UPDATE` sobre la tabla física (`catastro.Copias`): ni `SRTM_LECTOR` ni el
-  personal tienen `UPDATE` sobre `tramo_via`, y la copia no es un cambio del catastro (no deja fila de auditoría, no
-  sale en `GET /api/catastro/cambios` y no cambia la versión del registro);
-- **`POST /api/catastro/vias/valores?anio=2026`** (solo el admin de la organización; sin `anio`, el año en curso)
-  recalcula todos los tramos y responde `{"anio", "tramos", "con_valor", "actualizados"}`. Es para la primera carga
-  (los tramos que ya estaban) y para el **cambio de año**.
+- es trabajo de fondo como lo soporta wasichai (ADR-039): escribe con `RecordService` **como la plataforma**
+  (`asPlatform`, fuente de auditoría `copia:mapa`, razón «Copia para el mapa»), así que cada copia queda en la
+  auditoría, mueve la versión del registro (ADR-051: un `If-Match` leído antes ya no vale) y la ven los listeners.
+  Nadie necesita `UPDATE` sobre `tramo_via` ni `brecha_ficha`; `GET /api/catastro/cambios` no la lista, porque solo
+  sigue predios, construcciones, obras y titulares;
+- corre **cada `catastro.copias.periodo`** (`PT5M` por defecto) sobre todas las organizaciones, bajo un
+  `ClusterLock` (una réplica a la vez): cura cualquier copia perdida y hace sola el **cambio de año** el 1 de enero
+  (America/Lima) en la primera corrida del año;
+- y **`catastro.copias.espera`** (`PT2S`) después de un aviso, solo sobre las organizaciones avisadas. Avisa
+  `AvisosDeCopias`, un `RecordChangeListener` de wasichai (el hook de después de escribir) que solo encola: un
+  arancel del año en curso (alta, cambio o baja, también la sincronización de srtm), un tramo nuevo o con otro
+  `id_aranc`, una decisión, un corte que se muestra o se borra, una ficha nueva o con otro `estado`. No escribe, no
+  espera y no lanza, así que nunca falla ni retrasa la escritura que lo dispara; corre el último;
+- lee solo las filas cuya copia difiere (un `RecordCriterion`), así que una corrida sin nada que hacer cuesta unas
+  pocas lecturas por organización.
 
-**Paso anual (1 de enero, America/Lima).** El 1 de enero los tramos todavía tienen el valor del año que terminó
-(`anio_valor` lo dice). Cuando srtm ya sincronizó los aranceles del año nuevo:
+**`POST /api/catastro/vias/valores`** (solo el admin de la organización, 403 a cualquier otro rol) pide una corrida para
+su organización y la espera: responde `{"anio", "tramos", "fichas"}`, lo que escribió. No lleva parámetros (siempre el
+año en curso: un `anio`, o cualquier otro, es un 400 que lo nombra). Sirve para no esperar la corrida periódica.
+
+**Paso anual (1 de enero).** No hace falta nada para las copias: la primera corrida periódica del año pone el valor
+del año nuevo (vacío hasta que srtm sincronice sus aranceles, que entran por el aviso). Sí hay que volver a publicar
+las capas, porque el SLD guarda las clases de su publicación:
 
 ```sh
-curl -X POST "localhost:8091/api/catastro/vias/valores" -H "Authorization: Bearer $TOKEN"   # el año en curso
-python3 -I vistas_de_mapa.py --org <id>    # republica las capas: el SLD guarda las clases de su publicación
+curl -X POST "localhost:8091/api/catastro/vias/valores" -H "Authorization: Bearer $TOKEN"   # opcional: la corrida ya
+python3 -I vistas_de_mapa.py --org <id>    # republica las capas con las clases del año nuevo
 ```
 
-Un arancel del año nuevo que llegue después ya entra solo por el listener; hay que volver a correr `vistas_de_mapa.py`
-cuando cambien muchos valores, porque las clases de la capa WMS son las de su última publicación.
+Una escritura de un tramo responde con lo que se mandó: si mandó un `valor_m2` distinto, la copia lo corrige segundos
+después. Son campos del servidor: el cargador los manda solo para que la primera carga ya los traiga.
 
 **Por qué `LOTES`.** En Ica muchos `codigo_de_via` del SAT tienen por «nombre de la vía» el de una urbanización («SOL
 DE ICA XXII ETAPA»): el SAT le da un código a las vías internas de una habilitación, y en el eje esas calles se llaman
@@ -492,8 +503,14 @@ arma sobre **todas** las fichas: una llave que comparten dos fichas, o que tiene
 (por `fecha` y luego `clave`, el orden de la API), `lote_geom`, el lote de su `predio_catastral` empatado (POLYGON, en
 el srid de `predio_catastral.lote_geom`). Después **quita `lote_geom` de las fichas de los demás cortes**
 (`--sin-geometria-anterior`, el comportamiento por defecto; `--con-geometria-anterior` las deja), así la vista de mapa y
-la capa WMS de `brecha_ficha` muestran solo el último corte. Un corte cargado después de otro más reciente no lleva
-lotes. Un lote que vuelve del Core dentro de 1e-6 grados es el mismo y no se reescribe. El resumen dice cuántas fichas
+la capa WMS de `brecha_ficha` muestran solo el último corte; las fichas con lote se buscan con un `bbox` alrededor de
+los lotes (wasichai-gis), no leyendo toda la historia. Un corte cargado después de otro más reciente no lleva lotes (y
+pierde los suyos, salvo con `--con-geometria-anterior`, que los deja como están). Un corte más nuevo que quedó a medio
+cargar (sin `cargado_en`) no cuenta: la API tampoco lo muestra. Un `codigo_municipal` de dos o más predios no toma
+lote (cuál sería arbitrario) y el resumen los cuenta. **Si se borra el corte más reciente**, el mapa queda sin lotes
+hasta que se vuelve a cargar el anterior (`importar_corte_brecha.py` con su carpeta), que pasa a ser el más reciente.
+El `estado` lo mantiene después `CopiasDelMapa` (ver «Vías»): una decisión tomada mientras corría la carga se corrige
+sola. Un lote que vuelve del Core dentro de 1e-6 grados es el mismo y no se reescribe. El resumen dice cuántas fichas
 llevan lote y cuántas de cortes anteriores lo perdieron. Ninguna de estas escrituras sale en
 `GET /api/catastro/cambios`, que solo lista predios, construcciones, obras y titulares.
 
@@ -539,7 +556,9 @@ se crea, una cuya etiqueta, geometría o estilo difieren se actualiza (`PUT`), u
 | `aranceles_asignacion` | `tramo_via.geom` | `asignacion`, categorías |
 | `brechas_categoria` | `brecha_ficha.lote_geom` | `categoria`, categorías con `COLOR_CATEGORIA` de catastro-ui |
 | `brechas_estado` | `brecha_ficha.lote_geom` | `estado`, categorías con `COLOR_ESTADO` de catastro-ui |
-| `brechas_delta` | `brecha_ficha.lote_geom` | `delta_impuesto`, 5 cuantiles |
+
+No hay vista del Δ impuesto: es un valor con signo, los cuantiles de wasichai-gis no centran una escala en 0, y
+catastro-ui conserva su propia escala divergente. Una `brechas_delta` de una versión anterior se borra.
 
 Capas: `tramo_via.geom` con el estilo de `aranceles_valor` y `brecha_ficha.lote_geom` con el de `brechas_categoria`.
 
@@ -548,7 +567,19 @@ filas de la organización). Por eso cada corrida vuelve a publicar las dos capas
 1.5.0 republicar es lo que reemplaza el estilo), y **se corre de nuevo cada vez que cambian los datos**:
 
 1. después de cada `importar_corte_brecha.py`;
-2. después de cada `POST /api/catastro/vias/valores` (el paso anual) o de un `import_vias.py`.
+2. después del cambio de año (la primera corrida de `CopiasDelMapa` del 1 de enero) o de un `import_vias.py`.
+
+**Una capa publicada antes de tener el campo de su estilo.** Republicar en wasichai 1.5.0 solo cambia el SLD: las
+columnas de la capa en GeoServer son las de su primera publicación. Por eso, si `GET /api/gis/layers` dice que una capa
+está publicada, el script lee su `DescribeFeatureType` del WFS, y si le falta el campo del estilo la retira
+(`DELETE /api/gis/layers/...`) y la vuelve a publicar, lo que la rehace. `--recrear-capas` lo hace con las dos sin
+mirar el WFS (cuando no se alcanza desde donde corre el script, avisa y sugiere ese flag).
+
+**Paso único de esta versión.** `tramo_via.geom` ya estaba publicada en dev y en los VPS, sin `valor_m2`:
+
+```sh
+python3 -I apply.py && python3 -I vistas_de_mapa.py --org <id> --recrear-capas
+```
 
 ```sh
 python3 -I vistas_de_mapa.py --org <id de la organización> --dry-run
@@ -556,8 +587,6 @@ python3 -I vistas_de_mapa.py --org <id de la organización> [--sin-capas]   # --
 ```
 
 Sale con 0, con 1 si el Core rechaza algo (GeoServer caído, por ejemplo) y con 2 si `--org` es otra organización.
-Los cuantiles de `brechas_delta` se calculan sobre las fichas de todos los cortes, no solo las del último: wasichai no
-filtra las filas de un estilo.
 
 ## Región de la organización
 
