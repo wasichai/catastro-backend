@@ -33,6 +33,34 @@
           "READ"
         ]
       }
+    },
+    {
+      "name": "CATASTRO_LECTOR",
+      "label": "Lector de catastro",
+      "description": "El rol del personal municipal que consulta catastro-ui sin editar: lee las fichas (predios, construcciones y obras complementarias), las entregas del levantamiento, la región de la organización, los aranceles y los tramos de vía, lo que pide la página «Aranceles por vía» (GET /api/catastro/vias/aranceles lee tramo_via y arancel). Solo lectura: no crea, no cambia ni borra nada. No lee titular_catastral, que son datos personales (Ley 29733) y solo lee SRTM_LECTOR.",
+      "permisos": {
+        "predio_catastral": [
+          "READ"
+        ],
+        "construccion": [
+          "READ"
+        ],
+        "obra_complementaria": [
+          "READ"
+        ],
+        "arancel": [
+          "READ"
+        ],
+        "configuracion_catastro": [
+          "READ"
+        ],
+        "entrega_catastral": [
+          "READ"
+        ],
+        "tramo_via": [
+          "READ"
+        ]
+      }
     }
   ]
 }

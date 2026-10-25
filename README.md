@@ -181,6 +181,17 @@ de vía (notas 2 y 3), así que cada tramo se asigna así:
    una fila `AMBOS`; si dan dos códigos, dos filas, `IZQUIERDO` y `DERECHO` (según el sentido de la línea);
 3. si nada se cumple, o el tramo es «SIN NOMBRE»: `SIN_ARANCEL`, una fila `AMBOS` sin `id_aranc`.
 
+**Por qué una línea con lado.** El arancel urbano se fija por frente de vía (cuadra y lado), no por sector: así lo
+aprueba la RM 514-2025-EF/15 en el plano predial, cuyas notas 2 y 3 dicen que el valor al centro de la calle rige
+para los dos frentes y el que está dentro de la manzana solo para ese frente. Por eso la geometría de `tramo_via` es
+una línea con su lado, y el código SAT del padrón (`0010000401-01`, `-02`) es uno por frente.
+
+**Regla para varios códigos de vía.** Una ficha vinculada a varios `codigo_de_via` (uno por frente; la entrega que
+reapunta el `id_aranc` de las fichas la aplica):
+
+- si todos esos códigos tienen el mismo valor de arancel en el año, toma el código más frecuente;
+- si sus valores difieren, la ficha queda sin cambio y se reporta para revisión.
+
 `cuadra` queda vacía: el eje no la trae. La geometría va al Core en GeoJSON EPSG:4326, como `MultiLineString`
 (wasichai-gis la guarda en la 32718 de la columna); la conversión desde UTM 18S es la serie de Krüger en Python, sin
 proj. El comando es idempotente por `tramo_via.clave` = `<ubigeo>|<fid>|<lado>`: crea lo que falta, actualiza
@@ -736,7 +747,7 @@ que lee todas las valuaciones sin mirar el feed.
 ```sh
 cd model
 python3 apply.py                 # el modelo, con configuracion_catastro
-python3 apply_roles.py           # crea o sincroniza SRTM_LECTOR (model/roles.json): READ sobre los ocho objetos y la escritura de arancel
+python3 apply_roles.py           # crea o sincroniza SRTM_LECTOR (READ sobre los ocho objetos y la escritura de arancel) y CATASTRO_LECTOR
 python3 configurar_region.py --region SELVA   # la región de la organización (Perené); COSTA para Ica
 python3 crear_cuenta_srtm.py --clave perene   # la cuenta `srtm` con SRTM_LECTOR; imprime clientId y clientSecret
 ```
@@ -786,7 +797,11 @@ Authorization: Bearer <token>
   un **400** que lo nombra (`errors[0].field`): ese es el contrato con catastro-ui.
 - Sin token, **401**. Lee como quien llama: sin `READ` sobre `tramo_via`, **403** de core. También lee `arancel`
   para el valor: sin `READ` sobre `arancel`, también **403**, así que quien use el mapa necesita `READ` sobre los
-  dos. `SRTM_LECTOR` los tiene; no hay un rol de personas para esto, que hoy usa el admin.
+  dos. Para el personal municipal está el rol **`CATASTRO_LECTOR`** («Lector de catastro», `model/roles.json`): solo
+  `READ` sobre las fichas (predios, construcciones, obras), las entregas, la región, los aranceles y los tramos de vía;
+  no crea, no cambia ni borra nada, y no lee `titular_catastral` (datos personales, solo `SRTM_LECTOR`). **La página
+  «Aranceles por vía» de catastro-ui necesita ese rol, o el admin.** `apply_roles.py` lo crea; se asigna a cada
+  usuario en el admin de wasichai.
 - Responde un `FeatureCollection` GeoJSON en EPSG:4326, un `Feature` por fila de `tramo_via` (las que no tienen
   geometría no se dibujan y no salen), ordenados por `clave`. `id` es el id del registro. Un `MultiLineString` de una
   parte sale como su `LineString`.

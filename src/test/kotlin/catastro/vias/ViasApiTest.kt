@@ -129,6 +129,20 @@ class ViasApiTest : CatastroApiTest() {
         assertEquals(HttpStatus.FORBIDDEN, exchange("GET", "/api/catastro/vias/aranceles?anio=2026", null, sinRol).first)
     }
 
+    @Test
+    fun `el lector de catastro ve el mapa con el valor del año`() {
+        val lector = cuentaDeServicio(listOf("CATASTRO_LECTOR"))
+        val marca = uniqueName("tvl").uppercase()
+        arancel("$marca-01", 2026, 120)
+        val id = tramo(marca, "AMBOS", "$marca-01", "NOMBRE_UNICO", listOf(EJE))
+        val coleccion = arbol(send("GET", "/api/catastro/vias/aranceles?anio=2026", null, HttpStatus.OK, lector))
+        numero("120", deLaMarca(coleccion, marca).getValue(id)["properties"]["valor_m2"])
+        // read only: it cannot write a tramo
+        val (status, cuerpo) =
+            exchange("POST", "/api/objects/$TRAMO_VIA/records", mapOf("attributes" to mapOf("clave" to "$marca|x")), lector)
+        assertEquals(HttpStatus.FORBIDDEN, status, cuerpo)
+    }
+
     // the features of this run's tramos, by id
     private fun deLaMarca(
         coleccion: JsonNode,
