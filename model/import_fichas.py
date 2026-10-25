@@ -163,7 +163,10 @@ def parse_date(value):
             return None, f"'{text}' is not a date (YYYY-MM-DD or an xlsx serial)"
     if SERIAL_DAYS.fullmatch(text):
         serial = int(text.split(".")[0])
-        return (XLSX_EPOCH + datetime.timedelta(days=serial)).isoformat(), None
+        try:
+            return (XLSX_EPOCH + datetime.timedelta(days=serial)).isoformat(), None
+        except OverflowError:
+            return None, f"'{text}' is not a date (YYYY-MM-DD or an xlsx serial)"
     return None, f"'{text}' is not a date (YYYY-MM-DD or an xlsx serial)"
 
 
