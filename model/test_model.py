@@ -33,6 +33,9 @@ OBJETOS = {
         ["codigo", "fecha_corte", "fuente", "archivo_sha256", "descripcion", "altas", "cambios", "sin_cambio",
          "ausentes"],
         {"codigo", "fecha_corte"}, {"codigo"}),
+    "titular_catastral": (
+        ["codigo_municipal", "tipo_documento", "numero_documento", "nombre", "porcentaje", "condicion"],
+        {"codigo_municipal"}, set()),
 }
 
 
@@ -91,7 +94,7 @@ class ModelTests(unittest.TestCase):
 
     def test_children_hang_from_a_required_predio(self):
         relations = {r["name"]: r for r in self.model["relationships"]}
-        for name in ("construccion_predio", "obra_complementaria_predio"):
+        for name in ("construccion_predio", "obra_complementaria_predio", "titular_catastral_predio"):
             relation = relations[name]
             self.assertEqual((relation["target"], relation["fieldName"], relation["required"]),
                              ("predio_catastral", "predio", True))
@@ -134,6 +137,10 @@ class ModelTests(unittest.TestCase):
                          ["CODIGO_RENTAS", "LLAVE_HU_MZ_LOTE", "GEOMETRICO", "MANUAL"])
         self.assertEqual(self.objects["predio_catastral"]["indexes"],
                          [["sector", "manzana", "lote"], ["codigo_cpu"], ["cuc"], ["codigo_referencia_catastral"]])
+
+    def test_titulares_page_by_codigo_municipal(self):
+        # contract 2 pages /titulares by codigo_municipal then id: Core orders by one field of the object itself
+        self.assertEqual(self.objects["titular_catastral"]["indexes"], [["codigo_municipal"]])
 
 
 if __name__ == "__main__":

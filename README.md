@@ -42,9 +42,10 @@ yarn install && yarn format:check
 ## Modelo y carga
 
 El modelo (`model/model.json`) y los cargadores son Python solo con la biblioteca estándar, con la forma de los de
-srtm-backend. Seis objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
-`construccion` y `obra_complementaria` (cuelgan de un predio), `arancel`, `configuracion_catastro` (la región de la
-organización, ver abajo) y `entrega_catastral` (cada entrega del levantamiento, ver [Entregas](#entregas)). wasichai
+srtm-backend. Siete objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
+`construccion`, `obra_complementaria` y `titular_catastral` (cuelgan de un predio; este último, datos personales de
+Ley 29733, ver [Fichas](#modelo-y-carga)), `arancel`, `configuracion_catastro` (la región de la organización, ver
+abajo) y `entrega_catastral` (cada entrega del levantamiento, ver [Entregas](#entregas)). wasichai
 no tiene únicos compuestos, así que `arancel.clave` (`id_aranc|anio`) garantiza el par único. `codigo_vu` de una obra
 es `TIPO DE OBRA|número`, como `obra_categoria` de srtm (`model/data/obras_complementarias.csv`).
 
@@ -63,9 +64,10 @@ Se corren con `python3 -I`, porque leen archivos de afuera: así ni el directori
 `sys.path`, y cada comando vuelve a poner solo su propio directorio (`model/`), así que corre desde cualquier lado.
 
 **Fichas** (`import_fichas.py`): `--fichas` (un predio por fila), `--pisos` (un piso por fila, ligado por
-`codigo_municipal`) y `--obras` (opcional), en csv o xlsx. Las columnas por defecto salen del contrato de carga masiva
-del MEF (`cod_pre`, `cod_cpu`, `cod_sect`, `cod_mzn`, `cod_lote`, `id_aranc`, `area_terreno`, `longitud_frente`...);
-`--map`, `--map-pisos` y `--map-obras` `campo=columna` las cambian. Cuatro columnas opcionales más, las cuatro vacías
+`codigo_municipal`), `--obras` y `--titulares` (opcionales, mismo vínculo), en csv o xlsx. Las columnas por defecto
+salen del contrato de carga masiva del MEF (`cod_pre`, `cod_cpu`, `cod_sect`, `cod_mzn`, `cod_lote`, `id_aranc`,
+`area_terreno`, `longitud_frente`...); `--map`, `--map-pisos`, `--map-obras` y `--map-titulares` `campo=columna` las
+cambian. Cuatro columnas opcionales más, las cuatro vacías
 no se envían: `vinculo_metodo` (una opción del enum `vinculo_metodo`, sin distinguir mayúsculas: `CODIGO_RENTAS`,
 `LLAVE_HU_MZ_LOTE`, `GEOMETRICO` o `MANUAL`) dice cómo se vinculó la ficha con su predio de rentas; `vinculo_revisado`
 (`SI`/`NO`, igual que `techo_incluido`) si una persona ya revisó ese vínculo; `cuc` y `codigo_referencia_catastral`
@@ -83,16 +85,42 @@ vacías no se envían:
 - `seccion`: un entero desde 1 (vacía vale 1), para las partes de un mismo piso con características distintas. El piso
   sigue siendo solo su número (`5`, no `5-2`), así que el +5 % de edificio alcanza a cada sección.
 
-Sin `--entrega`, el comando solo crea. Un predio que el Core ya tiene se salta; los pisos (llave predio, piso y sección; un piso sin sección, como los que se
-cargaron antes, es la sección 1) y las obras (llave predio, `codigo_vu` y año de construcción) se crean solo si
-faltan, así que una carga que falló a medias se completa volviendo a correrla. Un piso que el Core ya tiene no se
-actualiza: para cambiarle `techo_incluido` o `clasificacion` (por ejemplo, clasificar después los pisos de Perené) hay
-que editarlo en el Core o cargarlo como una entrega ([Entregas](#entregas)); volver a correr la carga sin `--entrega` no
-los toca. Una llave repetida en el archivo es un error, y también un `clasificacion` que no se lee: el `0` de Ica (sin
-tabla) va vacío.
+`--titulares` trae `tipo_documento`, `numero_documento` (tal cual viene), `nombre`, `porcentaje` y `condicion` de cada
+titular de un predio (`titular_catastral`). **Son datos personales (Ley 29733): ningún reporte de carga imprime un
+documento ni un nombre**, en ningún modo ni con `--dry-run`; solo `codigo_municipal` y el número de fila. Un documento
+de relleno (`000000000`, solo ceros) se carga vacío y se reporta por fila:
+
+```text
+titulares <codigo> fila <n>: documento de relleno, queda vacío
+```
+
+La llave de un titular es (predio, `numero_documento` tal cual viene o vacío, `nombre` con los espacios colapsados y en
+mayúsculas): dos homónimos sin documento colapsan en uno. Una llave repetida en el archivo se carga una sola vez y es
+una advertencia, no un error (sale con 0):
+
+```text
+titulares <codigo> fila <n>: repetido, se carga una vez
+```
+
+Por cada predio, si al menos uno de sus titulares trae `porcentaje`, la suma de los porcentajes tal como vienen en el
+archivo (antes de colapsar una llave repetida) se compara con 100 %; una diferencia de más de 0.01 se reporta (también
+advertencia, también sale con 0; un predio cuyos titulares no traen `porcentaje` ninguno no se revisa):
+
+```text
+titulares <codigo>: suman <s> %
+```
+
+Sin `--entrega`, el comando solo crea. Un predio que el Core ya tiene se salta; los pisos (llave predio, piso y
+sección; un piso sin sección, como los que se cargaron antes, es la sección 1), las obras (llave predio, `codigo_vu`
+y año de construcción) y los titulares (su llave de arriba) se crean solo si faltan, así que una carga que falló a
+medias se completa volviendo a correrla. Un piso o un titular que el Core ya tiene no se actualiza: para cambiarle
+`techo_incluido`/`clasificacion` a un piso o `tipo_documento`/`porcentaje`/`condicion` a un titular hay que editarlo en
+el Core o cargarlo como una entrega ([Entregas](#entregas)); volver a correr la carga sin `--entrega` no los toca. Una
+llave repetida en el archivo es un error para pisos y obras (para titulares es la advertencia de arriba), y también un
+`clasificacion` que no se lee: el `0` de Ica (sin tabla) va vacío. Un titular nunca se borra, con o sin `--entrega`.
 
 ```sh
-python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.csv --dry-run
+python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.csv --titulares titulares.csv --dry-run
 ```
 
 **Aranceles** (`import_aranceles.py`): dos csv sacados de la geodatabase (solo lectura) y unidos por `ID_ARANC`.
@@ -141,27 +169,32 @@ ficha: qué entrega cambió qué campo y cuándo.
 - `--fecha-corte AAAA-MM-DD` (obligatoria): la fecha a la que corresponde la información.
 - `--fuente` (obligatoria): `BARRIDO`, `INSPECCION`, `LICENCIA`, `GIS` u `OTRA` (enum `fuente_entrega`).
 - `--descripcion TEXTO` (opcional).
-- `--pisos` y `--obras` son opcionales: una entrega del GIS o una inspección puede traer solo fichas, y entonces los pisos
-  y las obras no se comparan.
+- `--pisos`, `--obras` y `--titulares` son opcionales: una entrega del GIS o una inspección puede traer solo fichas, y
+  entonces los pisos, las obras y los titulares no se comparan.
 - `--reemplazar-pisos` / `--reemplazar-obras`: borran los pisos (u obras) que el Core tiene y el archivo ya no trae,
   **solo en las fichas que la entrega trae**. Sin la bandera, se listan como ausentes y se quedan. Piden `--entrega` y
   su archivo (`--pisos` / `--obras`); si no, sale con 2. Una ficha que viene sin filas de pisos pierde todos sus pisos
   con `--reemplazar-pisos`: una demolición se carga con la bandera a propósito. Una obra con el año corregido tiene otra
-  llave: sin `--reemplazar-obras` quedaría la vieja y se valoraría dos veces.
+  llave: sin `--reemplazar-obras` quedaría la vieja y se valoraría dos veces. No hay `--reemplazar-titulares`: un
+  titular **nunca se borra**, con o sin `--entrega`.
 
 Qué se compara:
 
-- Las fichas por `codigo_municipal`, los pisos por (predio, piso, sección) y las obras por (predio, `codigo_vu`, año de
-  construcción). Una ficha nueva es un alta, con sus pisos y obras.
+- Las fichas por `codigo_municipal`, los pisos por (predio, piso, sección), las obras por (predio, `codigo_vu`, año de
+  construcción) y los titulares por (predio, `numero_documento` o vacío, `nombre` colapsado y en mayúsculas). Una
+  ficha nueva es un alta, con sus pisos, obras y titulares.
 - Solo las columnas que el archivo trae: una columna que falta no se toca, y una celda vacía en una columna presente
   borra el campo. La entrega es la verdad de lo que trae (así una entrega quita las estimaciones que hubiera, ADR-013); el
   `--dry-run` lo muestra antes. La columna única `categorias` cuenta como las siete letras.
 - Los valores, por su tipo del modelo: el Core responde `180.5` donde el archivo dice `180.50`, y es lo mismo.
 - **Ausente** es una ficha que el Core tiene y la entrega no: se lista y **nunca se borra**. Borrarla es una decisión a
-  mano; una entrega parcial (un sector, una inspección) no puede vaciar el catastro.
+  mano; una entrega parcial (un sector, una inspección) no puede vaciar el catastro. Un titular que el Core tiene y el
+  archivo ya no trae se queda y **no se lista** (sería imprimir su llave, dato personal, Ley 29733).
 
 El reporte sale igual en el `--dry-run` y en la carga, una línea por hecho, en este orden (cada ficha seguida de las
-líneas de sus pisos y obras, luego las ausentes y al final el resumen); `vacío` es un campo sin valor:
+líneas de sus pisos, obras y titulares, luego las ausentes y al final el resumen); `vacío` es un campo sin valor. Las
+líneas de un titular **nunca llevan un documento o un nombre**, solo el número de fila y, al cambiar, el nombre del
+campo (Ley 29733 y Review Focus de c3):
 
 ```text
 alta <cod>
@@ -170,6 +203,8 @@ cambio <cod> piso <p>/<s>: <campo> <antes> → <después>
 cambio <cod> piso <p>/<s>: alta
 cambio <cod> piso <p>/<s>: baja                         (solo con --reemplazar-pisos)
 cambio <cod> obra <codigo_vu>/<año>: …                  (igual que los pisos: campo, alta o baja)
+cambio <cod> titular fila <n>: alta
+cambio <cod> titular fila <n>: <campos separados por coma>   (tipo_documento, porcentaje o condicion; nunca el valor)
 sin cambio <cod>
 ausente <cod> piso <p>/<s>                              (sin --reemplazar-pisos)
 ausente <cod> obra <codigo_vu>/<año>                    (sin --reemplazar-obras)
@@ -178,11 +213,11 @@ entrega <codigo>: <a> altas, <c> cambios, <s> sin cambio, <z> ausentes
 ```
 
 La carga termina con `done: entrega <codigo>: …`, el mismo resumen. Una ficha cuenta como cambio cuando cambió ella o
-alguno de sus pisos u obras.
+alguno de sus pisos, obras o titulares.
 
 La entrega queda en `entrega_catastral`: código, fecha de corte, fuente, descripción, el sha256 de los bytes de los
-archivos de entrada (fichas, pisos, obras, en ese orden) y el resumen. La crea la primera corrida que escribe algo, con
-su resumen, y **no se actualiza nunca**. De ahí la regla de idempotencia:
+archivos de entrada (fichas, pisos, obras y titulares, en ese orden) y el resumen. La crea la primera corrida que
+escribe algo, con su resumen, y **no se actualiza nunca**. De ahí la regla de idempotencia:
 
 - Cargar dos veces la misma entrega no cambia nada: la segunda corrida no encuentra nada que escribir y no escribe nada.
 - Una carga que falló a medias (un rechazo del Core sale con 1) se completa volviendo a correrla con los mismos archivos:
@@ -476,6 +511,48 @@ Content-Type: application/json
 (`valorUnitario` + `incremento`) × (1 − `porcentajeDepreciacion` / 100), al céntimo en la costa. Sin valor, `terreno`,
 `construccion`, `obras`, `autoavaluo` y `detalle` son `null`. `GET /valuaciones` no trae `detalle`: su contrato no
 cambia.
+
+**Titulares.** `GET /valuaciones` no trae los titulares de un predio (para que la respuesta siga liviana): srtm los
+lee de un endpoint aparte, en vez de la API genérica de registros, porque esta solo da el uuid del predio y srtm
+necesita su `codigoMunicipal`:
+
+```
+GET /api/catastro/titulares?page=0&size=200
+Authorization: Bearer <token de POST /api/auth/token>
+```
+
+- `page` desde 0 (por defecto 0); `size` de 1 a 500 (por defecto 200). Un parámetro que falta, sobra o se sale de
+  rango es un **422** que lo nombra (`errors[0].field`).
+- Sin token, **401**. Lee como quien llama: sin `READ` sobre `titular_catastral`, **403** de core (SRTM_LECTOR lo
+  tiene).
+- Los titulares van ordenados por `codigo_municipal` y luego por su id (el único orden propio del objeto que core
+  pagina sin repetir ni saltar filas). `total` es la cantidad de titulares que el llamador puede leer.
+
+**Son datos personales (Ley 29733): SRTM_LECTOR es el único lector de `titular_catastral`**, y los reportes de carga
+de `import_fichas.py --titulares` nunca imprimen documentos ni nombres (solo el código del predio y el número de
+fila). Los valores de este ejemplo son sintéticos:
+
+```json
+{
+  "page": 0,
+  "size": 200,
+  "total": 1,
+  "items": [
+    {
+      "codigoMunicipal": "0101001",
+      "tipoDocumento": "DNI",
+      "numeroDocumento": "10000001",
+      "nombre": "Titular Sintético Uno",
+      "porcentaje": 100.0,
+      "condicion": "PROPIETARIO"
+    }
+  ]
+}
+```
+
+Cada ítem trae siempre sus seis llaves, `null` sin dato. `tipoDocumento` y `condicion` son texto libre, tal como los
+escribe el padrón de origen (el vocabulario varía entre municipalidades); un documento de relleno (por ejemplo
+`000000000`) se carga vacío (`numeroDocumento: null`) y se reporta por código de predio y fila, nunca por su valor.
 
 **Puesta en marcha** (contra el Core del catastro, como admin):
 

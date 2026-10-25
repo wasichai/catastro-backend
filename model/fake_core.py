@@ -68,7 +68,7 @@ class FakeCore:
     def __init__(self, existing_objects=(), existing_relationships=(), fail_on_post_object=None,
                  fail_put=False, fail_put_status=500, login_response=None, fail_on_record=None, existing_fields=None,
                  fail_on_update=None, fail_on_delete=None, object_rules=None, fail_object_put=None, object_meta=None, fail_record_after=None,
-                 fail_on_role=None, fail_on_service_account=None):
+                 fail_on_role=None, fail_on_service_account=None, fail_on_record_body=None):
         self.existing_objects = set(existing_objects)
         # object name -> its object-level rules ({"indexes", "appendOnly"}), as Core stores them; none by default
         self.object_rules = {n: dict((object_rules or {}).get(n, {})) for n in self.existing_objects}
@@ -83,6 +83,7 @@ class FakeCore:
         self.login_response = login_response  # override the default {"token": "t"}
         self.fail_record_after = fail_record_after or {}  # object name -> record POSTs that succeed before the rest 400
         self.fail_on_record = fail_on_record  # object name -> its record POSTs answer 400
+        self.fail_on_record_body = fail_on_record_body  # overrides the 400 body of fail_on_record (default boom-record)
         self.fail_on_update = fail_on_update  # object name -> its record PUTs and PATCHes answer 400
         self.fail_on_delete = fail_on_delete  # object name -> its record DELETEs answer 409
         self.records = {}  # object name -> list of {"id", "attributes"}
@@ -117,7 +118,8 @@ class FakeCore:
         name = RECORDS.match(path).group(1)
         if method == "POST":
             if self.fail_on_record == name:
-                return 400, {"detail": "Invalid option", "errors": [{"field": "uso", "message": "boom-record"}]}
+                return 400, self.fail_on_record_body or {"detail": "Invalid option",
+                                                         "errors": [{"field": "uso", "message": "boom-record"}]}
             if name in self.fail_record_after and len(self.records.get(name, [])) >= self.fail_record_after[name]:
                 return 400, {"detail": "Invalid option", "errors": [{"field": "piso", "message": "boom-after"}]}
             return 201, self.add_record(name, body["attributes"], body.get("geometries"))

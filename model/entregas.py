@@ -25,8 +25,10 @@ from tabular import write_all
 # the code travels as X-Change-Reason, a header: ASCII only
 CODIGO = re.compile(r"[A-Za-z0-9._:-]{1,64}")
 
-PREDIO, PISO, OBRA = "predio_catastral", "construccion", "obra_complementaria"
+PREDIO, PISO, OBRA, TITULAR = "predio_catastral", "construccion", "obra_complementaria", "titular_catastral"
 ENTREGA = "entrega_catastral"
+# the fields that make a titular's identity, never compared or shown (Ley 29733): a repeated key loads once
+TITULAR_IDENTITY = {"codigo_municipal", "numero_documento", "nombre"}
 SUMMARY = ("altas", "cambios", "sin_cambio", "ausentes")
 TRUE = {"true", "t", "1", "si", "sí"}
 FALSE = {"false", "f", "0", "no"}
@@ -72,6 +74,13 @@ def piso_key(predio_id, a):
 
 def obra_key(predio_id, a):
     return predio_id, str(a["codigo_vu"]), str(a.get("anio_construccion"))
+
+
+def titular_key(predio_id, a):
+    """(predio, numero_documento or "", nombre collapsed and upper-cased): two homonyms without a document collapse
+    into one, and a key repeated in the file loads once (contexto-comun.md). Never logged (Ley 29733)."""
+    nombre = " ".join((a.get("nombre") or "").split()).upper()
+    return predio_id, a.get("numero_documento") or "", nombre
 
 
 def _normal(value, ftype):
@@ -126,8 +135,10 @@ class CoreState:
 
 
 def read_core(client, titulares=False):
-    """Every predio, construccion and obra in Core. Titulares are not read yet (titular_catastral comes later)."""
-    return CoreState(client.list_all(PREDIO), client.list_all(PISO), client.list_all(OBRA), [])
+    """Every predio, construccion and obra in Core; titulares too when `titulares` (only the plan compares them,
+    and only field names ever reach a report line, never a document or a name, Ley 29733)."""
+    return CoreState(client.list_all(PREDIO), client.list_all(PISO), client.list_all(OBRA),
+                     client.list_all(TITULAR) if titulares else [])
 
 
 @dataclass
@@ -167,6 +178,7 @@ class _Children:
     present: set
     reemplazar: bool
     keys: set          # the natural key's fields: equal by the key, never compared
+    personal: bool = False  # titulares (Ley 29733): the line names fila and fields only, never a value; never deleted
 
 
 def _piso_label(a):
@@ -177,7 +189,7 @@ def _obra_label(a):
     return f"obra {a['codigo_vu']}/{show(a.get('anio_construccion'), 'INTEGER')}"
 
 
-def _children(object_name, key, label, keys, rows, records, present, reemplazar, codigo_of):
+def _children(object_name, key, label, keys, rows, records, present, reemplazar, codigo_of, personal=False):
     in_file, in_core = {}, {}
     for fila, codigo, a in rows:
         in_file.setdefault(codigo, []).append((fila, a))
@@ -185,7 +197,7 @@ def _children(object_name, key, label, keys, rows, records, present, reemplazar,
         codigo = codigo_of.get(relation_id(record["attributes"].get("predio")))
         if codigo is not None:
             in_core.setdefault(codigo, []).append(record)
-    return _Children(object_name, key, label, in_file, in_core, present, reemplazar, keys)
+    return _Children(object_name, key, label, in_file, in_core, present, reemplazar, keys, personal)
 
 
 def _change_lines(prefix, changes, types):
@@ -194,7 +206,8 @@ def _change_lines(prefix, changes, types):
 
 
 def _compare_children(group, codigo, ficha_fila, types):
-    """(lines, ops) of one existing ficha's children of one kind."""
+    """(lines, ops) of one existing ficha's children of one kind. A personal group (titulares, Ley 29733) never
+    deletes and names the row and the changed fields only, never a value or the ausente ones."""
     lines, ops, used = [], [], set()
     have = {}
     for record in group.in_core.get(codigo, []):
@@ -203,7 +216,7 @@ def _compare_children(group, codigo, ficha_fila, types):
     for fila, a in group.in_file.get(codigo, []):
         key = group.key(codigo, a)
         record = have.get(key)
-        prefix = f"cambio {codigo} {group.label(a)}"
+        prefix = f"cambio {codigo} titular fila {fila}" if group.personal else f"cambio {codigo} {group.label(a)}"
         if record is None:
             ops.append((key, fila, "POST", group.object_name, None, {k: v for k, v in a.items() if v is not None}))
             lines.append(f"{prefix}: alta")
@@ -212,7 +225,12 @@ def _compare_children(group, codigo, ficha_fila, types):
         changes = diff(record["attributes"], a, compared, types)
         if changes:
             ops.append((key, fila, "PATCH", group.object_name, record["id"], {f: d for f, (_, d) in changes.items()}))
-            lines.extend(_change_lines(prefix, changes, types))
+            if group.personal:
+                lines.append(f"{prefix}: {', '.join(changes)}")
+            else:
+                lines.extend(_change_lines(prefix, changes, types))
+    if group.personal:
+        return lines, ops
     for record in group.in_core.get(codigo, []):
         if record["id"] in used:
             continue
@@ -226,10 +244,11 @@ def _compare_children(group, codigo, ficha_fila, types):
 
 
 def plan_entrega(core, fichas, pisos, obras, present, types, *, codigo, with_pisos, reemplazar_pisos=False,
-                 reemplazar_obras=False):
+                 reemplazar_obras=False, titulares=None):
     """The Plan of an entrega named `codigo`. Pisos are compared when `with_pisos` (a pisos file was given); obras
-    when the obras file brought columns or `reemplazar_obras` asks to replace them. Lines go in the fichas' file
-    order, each ficha's children right after it, then the ausentes, then the summary."""
+    when the obras file brought columns or `reemplazar_obras` asks to replace them; titulares when a `titulares`
+    list was given (a --titulares file), never deleted (Ley 29733: the lines never carry a name or a document).
+    Lines go in the fichas' file order, each ficha's children right after it, then the ausentes, then the summary."""
     predios = {r["attributes"]["codigo_municipal"]: r for r in core.predios}
     plan = Plan([], dict.fromkeys(SUMMARY, 0), [], [], set(), predios)
     codigo_of = {str(r["id"]): c for c, r in predios.items()}
@@ -240,6 +259,9 @@ def plan_entrega(core, fichas, pisos, obras, present, types, *, codigo, with_pis
     if present.obras or reemplazar_obras:
         groups.append(_children(OBRA, obra_key, _obra_label, {"codigo_vu", "anio_construccion"}, obras, core.obras,
                                 present.obras, reemplazar_obras, codigo_of))
+    if titulares is not None:
+        groups.append(_children(TITULAR, titular_key, None, TITULAR_IDENTITY, titulares, core.titulares,
+                                present.titulares, False, codigo_of, personal=True))
     in_file = set()
     for fila, a in fichas:
         cod = a["codigo_municipal"]

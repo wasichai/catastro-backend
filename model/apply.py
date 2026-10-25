@@ -5,8 +5,8 @@ Reads a JSON metadata model (objects, fields, relationships, enums), checks it
 against Core's rules (--validate-only stops there) and creates it in Core via
 the REST API, in file order (so relationship targets already exist), marking
 each required relationship's field required (an optional one is left optional), and last the object-level
-rules model.json declares (indexes, appendOnly). Today that is 6 objects and 3 relationships, none append-only:
-"done: 9 created, 0 updated" on an empty Core, "9 skipped" on a second run.
+rules model.json declares (indexes, appendOnly). Today that is 7 objects and 4 relationships, none append-only:
+"done: 11 created, 0 updated" on an empty Core, "11 skipped" on a second run.
 
 On a Core that already has the model it syncs instead: it adds the fields and
 the ENUM options model.json has and Core lacks, drops the ENUM options it no
