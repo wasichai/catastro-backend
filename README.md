@@ -105,11 +105,22 @@ python3 -I import_aranceles.py --frentes frentes.csv --valores valores.csv --ani
 
 **Lotes** (`import_lotes.py`): polígonos de un GeoJSON en EPSG:4326 hacia `predio_catastral.lote_geom`. Solo actualiza
 los predios que ya existen (por `codigo_municipal`, y si el lote no lo trae, por `codigo_cpu`); `--map` indica la
-propiedad. `CF_LOTES_POL_18` no trae esos códigos: hay que cruzarlos antes.
+propiedad. `CF_LOTES_POL_18` no trae esos códigos: hay que cruzarlos antes. Un predio sin polígono siempre lo recibe;
+uno que ya tiene uno se deja igual, salvo que `--actualizar-geometria` pida reemplazar el que cambió de verdad: mismo
+número de anillos, mismo número de vértices y ningún vértice a más de 1e-6 grados (~10 cm) del que ya está (el Core
+guarda en EPSG:32718 y responde en EPSG:4326, así que la igualdad exacta nunca se da). Sin `--actualizar-geometria` ni
+`--entrega`, la escritura es un PUT como hasta ahora; con cualquiera de las dos, cada polígono (nuevo o reemplazado) se
+escribe por `PATCH` de `geometries` (y de `attributes.entrega` con `--entrega`), con el código de la entrega como
+`X-Change-Reason` — mismas banderas `--entrega`/`--fecha-corte`/`--fuente` y mismas reglas que «Entregas» más abajo,
+salvo que aquí no hay `--pisos`/`--obras`/`--descripcion`: el resumen que queda en `entrega_catastral` cuenta los
+reemplazos como `cambios` y los predios sin novedad como `sin_cambio`; `ausentes` queda vacío (un lote sin predio es
+«sin predio», no un ausente) y una corrida sin nada que escribir no crea la entrega.
 
 ```sh
 ogr2ogr -f GeoJSON -t_srs EPSG:4326 lotes.geojson 120302_MD_Perene_ECF.gdb CF_LOTES_POL_18
 python3 -I import_lotes.py --geojson lotes.geojson --map codigo_municipal=COD_PRE --dry-run
+python3 -I import_lotes.py --geojson lotes.geojson --actualizar-geometria --entrega GIS-2026-10 \
+  --fecha-corte 2026-10-01 --fuente GIS
 ```
 
 ### Entregas
