@@ -19,7 +19,7 @@ data class Insumos(
     val obras: List<Obra>,
     // predio_catastral.estado_levantamiento (SIN_LEVANTAR, PARCIAL, COMPLETO); SIN_LEVANTAR is the first motivo asked
     val levantamiento: String? = null,
-    // URBANO or RUSTICO (model's tipo_predio); read by #26, not yet by this task
+    // URBANO or RUSTICO (model's tipo_predio); read by calcular (PREDIO_RUSTICO)
     val tipoPredio: String? = null
 )
 
