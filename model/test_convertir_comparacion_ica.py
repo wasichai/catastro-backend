@@ -322,6 +322,15 @@ class CliTests(unittest.TestCase):
         self.assertEqual([(f["cod_pre"], f["vinculo_metodo"]) for f in fichas],
                          [("S-0001", ""), ("S-0003", "GEOMETRICO")])
 
+    def test_a_ficha_whose_only_construccion_row_is_dropped_is_sin_levantar_not_parcial(self):
+        libro = escribir_libro(
+            self, [predio(cod="S-0004", area="0", urbanizacion=None)],
+            [construccion(cod="S-0004", nivel="NIVEL 71")])
+        code, _, err = self.convertir(libro=libro)
+        self.assertEqual(code, 0, err)
+        fichas = self.leer("fichas.csv")
+        self.assertEqual(fichas[0]["estado_levantamiento"], "SIN_LEVANTAR")
+
     def test_without_vinculos_every_ficha_is_loaded_and_vinculo_metodo_is_left_out(self):
         code, _, err = self.convertir()
         self.assertEqual(code, 0, err)

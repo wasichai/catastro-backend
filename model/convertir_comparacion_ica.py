@@ -116,6 +116,21 @@ def _optional(row, mapping, field):
     return row.get(mapping[field].lower())
 
 
+def codigos_con_piso(filas, mapa):
+    """Codes with at least one construccion row whose nivel loads a piso (what pisos_de keeps): a row dropped for
+    lacking a digit or for being NIVEL 71/81 does not count towards PARCIAL/SIN_LEVANTAR."""
+    codigos = set()
+    for row in filas:
+        codigo = code_text(column_for(row, mapa, "codigo_municipal"))
+        if not codigo:
+            continue
+        digitos = DIGITOS.search(clean_text(column_for(row, mapa, "nivel")) or "")
+        if digitos is None or int(digitos.group()) in NIVELES_FUERA:
+            continue
+        codigos.add(codigo)
+    return codigos
+
+
 def fichas_de(predios, con_pisos, con_titulares, vinculos, mapa):
     """(fichas, counts) from the predio_catastro rows. `con_pisos` / `con_titulares` are the codes with a construccion /
     titular row; `vinculos` maps a code to its vinculo_metodo, or is None when no vínculo file is given."""
@@ -357,7 +372,7 @@ def main(argv=None):
     def codigos_de(filas, mapa):
         return {c for c in (code_text(column_for(r, mapa, "codigo_municipal")) for r in filas) if c}
 
-    fichas, n_fichas = fichas_de(predios, codigos_de(construcciones, mapas["construccion"]),
+    fichas, n_fichas = fichas_de(predios, codigos_con_piso(construcciones, mapas["construccion"]),
                                  codigos_de(titular_filas, mapas["titulares"]), vinculos, mapas["predio"])
     codigos = {f["cod_pre"] for f in fichas}
     pisos, n_pisos = pisos_de(construcciones, codigos, mapas["construccion"], enums, args.anio_maximo)
