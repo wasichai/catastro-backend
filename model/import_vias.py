@@ -6,28 +6,34 @@ nom_via, ubigeo, fuente; LineString or MultiLineString), cf_lotes_pol (id_lote_p
 padron_predial (cod_predio, id_lote_p_vinculado), all in EPSG:32718. From the sheet `padron` of --padron-xlsx it reads
 only codigo_predio, codigo_de_via, nombre_de_la_via and tipo_predio, and keeps the urbanos (tipo_predio 1).
 
+The parts of a multipart eje are first put in one direction (chained by their shared endpoints; a part that meets
+none follows the first part's direction), so left and right are the same street side along the tramo, and that
+oriented geometry is what goes to Core (catastro-ui offsets each frente by the line's direction).
 Each tramo of the eje gets its code like this (the plano predial values a vía by frente, notes 2 and 3):
-  1. its nom_via, normalized (no accents, no leading type such as CA. AV. JR. PJE., spaces collapsed), names a single
-     SAT code of the padrón, and no other cod_via of the eje has that name: NOMBRE_UNICO, one row AMBOS;
+  1. its nom_via, normalized (no accents, PROLONGACIÓN as PROL, no leading type such as CA. AV. JR. PJE., spaces
+     collapsed), names a single SAT code of the padrón, and no other cod_via of the eje has that name: NOMBRE_UNICO,
+     one row AMBOS;
   2. otherwise the lotes of the predios of each code with that name (padron_predial.cod_predio ->
      id_lote_p_vinculado -> cf_lotes_pol) are placed on the left or the right of the tramo (the sign of the cross
      product with its nearest segment; a lote beyond either end of the tramo does not count). Each side takes the
-     code whose lote centroid is closest, within --distancia metres (30): CERCANIA. Both sides the same code, or only
+     code with the most lote centroids within --distancia metres (30), the nearest one breaking a tie: CERCANIA.
+     Both sides the same code, or only
      one side with lotes: one row AMBOS; two codes: two rows, IZQUIERDO and DERECHO;
   3. nothing found, a «SIN NOMBRE» or a name with no code: SIN_ARANCEL, one row AMBOS without id_aranc.
 cuadra stays empty: the eje has no such column. The geometry goes to Core as GeoJSON in EPSG:4326 (wasichai-gis
 transforms it back to the column's 32718), as a MultiLineString; utm_to_wgs84 is the inverse transverse Mercator of
 UTM 18S, so no proj is needed.
 
-Idempotent upsert by tramo_via.clave = "<fid>|<lado>": a row Core lacks is created, one whose attributes or geometry
-(beyond 1e-6 degrees, ~10 cm) differ is updated (PATCH), and a row of a fid in the file whose lado is no longer
-produced (AMBOS that is now IZQUIERDO and DERECHO, or the other way) is deleted. A row of a fid the file does not have
-is left as it is and counted. Only counts are printed; --revision writes cod_via_eje, fid_eje, lado, id_aranc and
+Idempotent upsert by tramo_via.clave = "<ubigeo>|<fid>|<lado>": a row Core lacks is created, one whose attributes or
+geometry (beyond 1e-6 degrees, ~10 cm) differ is updated (PATCH), and a row of an eje in the file whose lado is no
+longer produced (AMBOS that is now IZQUIERDO and DERECHO, or the other way) is deleted. A row of an ubigeo in the file
+whose fid the file does not have (a re-exported eje) is only counted, and deleted with --borrar-ausentes; a row of
+another ubigeo is never touched. Only counts are printed; --revision writes cod_via_eje, fid_eje, lado, id_aranc and
 asignacion of every row to a csv outside the repository (no personal data). --org refuses to write unless the account
 of --email belongs to that organization (its id). --dry-run reads Core and says what it would write, writing nothing.
 
 Run: python3 -I import_vias.py --gpkg ica.gpkg --padron-xlsx PADRON.xlsx [--revision /tmp/revision.csv]
-             [--org <organization id>] [--distancia 30] [--dry-run] [--workers 4]
+             [--org <organization id>] [--borrar-ausentes] [--distancia 30] [--dry-run] [--workers 4]
 Exit: 0 ok, 1 Core refused something, 2 the files do not fit (every problem is listed, nothing is sent), --org is
       another organization, or --revision points into the repository.
 """
@@ -69,7 +75,12 @@ TOLERANCE = 1e-6
 TIPOS = {"CA", "CALLE", "CAL", "AV", "AVDA", "AVENIDA", "JR", "JIRON", "PJE", "PSJE", "PJ", "PASAJE", "ALAMEDA",
          "MALECON", "CARRETERA", "CARR", "OVALO", "PLAZA", "PZA", "PARQUE", "BOULEVARD", "BLVD", "CALLEJON", "VIA",
          "TRAVESIA", "TR"}
+# spellings of the same word, made one before the leading type is stripped: PROLONGACIÓN and PROL. are one vía
+CANON = {"PROLONGACION": "PROL", "AVENIDA": "AV", "AVDA": "AV", "JIRON": "JR", "CALLE": "CA", "PASAJE": "PJE",
+         "PSJE": "PJE", "PJ": "PJE"}
 SIN_NOMBRE = {"SIN NOMBRE", "S N", "SN", "SIN NOMBRE S N"}
+# two endpoints closer than this (metres) are the same point when the parts of an eje are chained
+JOIN = 1e-3
 REVISION_COLUMNS = ["cod_via_eje", "fid_eje", "lado", "id_aranc", "asignacion"]
 
 
@@ -261,7 +272,7 @@ def read_gpkg(path):
     """(ejes, lote centroids by id_lote_p, id_lote_p by cod_predio, problems). An eje is a dict of EJE_COLUMNS plus
     abr_tvia, nom_alt and `parts` (its lines in 32718)."""
     problems = []
-    uri = "file:" + urllib.request.pathname2url(os.path.abspath(path)) + "?mode=ro"
+    uri = "file:" + urllib.request.pathname2url(os.path.abspath(path)) + "?mode=ro&immutable=1"
     if not os.path.isfile(path):
         raise OSError(f"{path}: no such file")
     con = sqlite3.connect(uri, uri=True)
@@ -322,7 +333,7 @@ def normalize(name):
     if text is None:
         return None
     text = "".join(c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)).upper()
-    words = "".join(c if c.isalnum() else " " for c in text).split()
+    words = [CANON.get(w, w) for w in "".join(c if c.isalnum() else " " for c in text).split()]
     while len(words) > 1 and words[0] in TIPOS:
         words = words[1:]
     text = " ".join(words)
@@ -376,6 +387,47 @@ def side_and_distance(parts, point):
     return best[0], IZQUIERDO if best[1] > 0 else DERECHO
 
 
+def _same_point(a, b):
+    return abs(a[0] - b[0]) <= JOIN and abs(a[1] - b[1]) <= JOIN
+
+
+def orient(parts):
+    """(parts, reversed): the parts of an eje all in one direction, so its left and right are the same street side
+    along the whole tramo (in the assignment and in the map's line-offset). The first part keeps its direction; a part
+    that shares an endpoint with an oriented one follows it (reversed when they meet start to start or end to end),
+    and a part that meets none follows the first part's start-to-end direction (dot product)."""
+    if len(parts) < 2:
+        return parts, 0
+    oriented = {0: parts[0]}
+    flipped = 0
+    changed = True
+    while changed:
+        changed = False
+        for i, part in enumerate(parts):
+            if i in oriented:
+                continue
+            for other in oriented.values():
+                if _same_point(part[0], other[-1]) or _same_point(part[-1], other[0]):
+                    oriented[i] = part
+                elif _same_point(part[0], other[0]) or _same_point(part[-1], other[-1]):
+                    oriented[i] = part[::-1]
+                    flipped += 1
+                else:
+                    continue
+                changed = True
+                break
+    (x0, y0), (x1, y1) = parts[0][0], parts[0][-1]
+    for i, part in enumerate(parts):
+        if i not in oriented:
+            (a0, b0), (a1, b1) = part[0], part[-1]
+            if (x1 - x0) * (a1 - a0) + (y1 - y0) * (b1 - b0) < 0:
+                oriented[i] = part[::-1]
+                flipped += 1
+            else:
+                oriented[i] = part
+    return [oriented[i] for i in range(len(parts))], flipped
+
+
 def _bbox(parts, margin):
     xs = [x for part in parts for x, _ in part]
     ys = [y for part in parts for _, y in part]
@@ -383,9 +435,10 @@ def _bbox(parts, margin):
 
 
 def nearest_by_side(parts, candidates, lotes_of_code, distancia):
-    """{side: code} with the closest lote of each side within `distancia`; ties go to the smaller code."""
+    """{side: (code, lotes)}: on each side, the code with the most lotes within `distancia` (one mislinked lote does not
+    beat a block of them); a tie goes to the code with the nearest lote, then to the smaller code."""
     x0, y0, x1, y1 = _bbox(parts, distancia)
-    best = {}
+    score = {}  # (side, code) -> [count, nearest]
     for code in sorted(candidates):
         for point in lotes_of_code.get(code, ()):
             if not (x0 <= point[0] <= x1 and y0 <= point[1] <= y1):
@@ -394,9 +447,15 @@ def nearest_by_side(parts, candidates, lotes_of_code, distancia):
             if found is None or found[0] > distancia:
                 continue
             d, side = found
-            if side not in best or (d, code) < best[side]:
-                best[side] = (d, code)
-    return {side: code for side, (_, code) in best.items()}
+            entry = score.setdefault((side, code), [0, d])
+            entry[0] += 1
+            entry[1] = min(entry[1], d)
+    best = {}
+    for (side, code), (count, nearest) in score.items():
+        key = (-count, nearest, code)
+        if side not in best or key < best[side][0]:
+            best[side] = (key, code, count)
+    return {side: (code, count) for side, (_, code, count) in best.items()}
 
 
 def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA):
@@ -406,20 +465,29 @@ def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA):
         points = {centroids[lote_of[p]] for p in codes_predios if p in lote_of and lote_of[p] in centroids}
         if points:
             lotes_of_code[code] = sorted(points)
+    multipart = flipped = single = 0
+    for eje in ejes:
+        if len(eje["parts"]) > 1:
+            multipart += 1
+            eje["parts"], n = orient(eje["parts"])
+            flipped += n
     names = [normalize(e["nom_via"]) for e in ejes]
     vias_of_name = {}
     for eje, name in zip(ejes, names):
-        if name:
+        # a segment without cod_via is not another vía of that name
+        if name and code_text(eje["cod_via"]):
             vias_of_name.setdefault(name, set()).add(code_text(eje["cod_via"]))
     rows, near, tried, split = [], set(), set(), 0
     for eje, name in zip(ejes, names):
         candidates = by_name.get(name, set()) if name else set()
         sides = {}
-        if len(candidates) == 1 and len(vias_of_name[name]) == 1:
+        if len(candidates) == 1 and len(vias_of_name.get(name, ())) <= 1:
             sides, how = {AMBOS: next(iter(candidates))}, NOMBRE_UNICO
         elif candidates:
             tried |= candidates
-            found = nearest_by_side(eje["parts"], candidates, lotes_of_code, distancia)
+            scored = nearest_by_side(eje["parts"], candidates, lotes_of_code, distancia)
+            single += sum(1 for _, count in scored.values() if count == 1)
+            found = {side: code for side, (code, _) in scored.items()}
             near |= set(found.values())
             how = CERCANIA
             if len(set(found.values())) == 2:
@@ -437,6 +505,9 @@ def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA):
         "ejes": len(ejes),
         "por_asignacion": {how: sum(1 for a, _ in rows if a["asignacion"] == how) for how in ASIGNACIONES},
         "partidos": split,
+        "multiparte": multipart,
+        "invertidas": flipped,
+        "de_un_lote": single,
         "sin_tramo": len(codes - assigned),
         "sin_lotes": len(codes - set(lotes_of_code)),
         "lejanos": len((tried & set(lotes_of_code)) - near - assigned),
@@ -446,13 +517,14 @@ def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA):
 
 def _attributes(eje, lado, code, how):
     fid = int(eje["fid"])
+    ubigeo = code_text(eje["ubigeo"])
     return {
-        "clave": f"{fid}|{lado}",
+        "clave": f"{ubigeo or ''}|{fid}|{lado}",
         "fid_eje": fid,
         "cod_via_eje": code_text(eje["cod_via"]),
         "tip_via": clean_text(eje.get("abr_tvia")) or clean_text(eje["tip_via"]),
         "nom_via": clean_text(eje["nom_via"]),
-        "ubigeo": code_text(eje["ubigeo"]),
+        "ubigeo": ubigeo,
         "fuente": clean_text(eje["fuente"]),
         "cuadra": None,
         "lado": lado,
@@ -481,13 +553,17 @@ def _differs(attributes, geometry, record):
     return not same_lines((record.get("geometries") or {}).get(GEOMETRY), geometry)
 
 
-def plan(records, rows):
-    """(create, update, delete, unchanged, orphans): what makes Core's tramo_via equal to `rows`. create and update
-    are [(record id or None, n, attributes, geometry)], delete the records of a fid in `rows` with a lado it no longer
-    has; orphans counts the records of a fid `rows` does not have, which are kept."""
+def plan(records, rows, borrar_ausentes=False):
+    """What makes Core's tramo_via equal to `rows`, as a dict:
+      create, update: [(record id or None, n, attributes, geometry)];
+      delete: the records to delete. Always those of an eje in `rows` with a lado it no longer has; with
+              `borrar_ausentes`, also those of an ubigeo of `rows` whose eje (ubigeo, fid) the file does not have;
+      unchanged; absent (records of an ubigeo of `rows` whose eje the file lacks: deleted only with borrar_ausentes,
+      counted either way); others (records of another ubigeo: always kept)."""
     existing = {(r.get("attributes") or {}).get("clave"): r for r in records}
     claves = {a["clave"] for a, _ in rows}
-    fids = {a["fid_eje"] for a, _ in rows}
+    ejes = {(a["ubigeo"], a["fid_eje"]) for a, _ in rows}
+    ubigeos = {a["ubigeo"] for a, _ in rows}
     create, update, unchanged = [], [], 0
     for n, (attributes, parts) in enumerate(rows, start=1):
         geometry = to_wgs84(parts)
@@ -498,9 +574,19 @@ def plan(records, rows):
             update.append((record["id"], n, attributes, geometry))
         else:
             unchanged += 1
-    others = [r for clave, r in existing.items() if clave not in claves]
-    delete = [r for r in others if _fid(r) in fids]
-    return create, update, delete, unchanged, len(others) - len(delete)
+    stale, absent, others = [], [], 0
+    for clave, record in existing.items():
+        if clave in claves:
+            continue
+        ubigeo = code_text((record.get("attributes") or {}).get("ubigeo"))
+        if (ubigeo, _fid(record)) in ejes:
+            stale.append(record)
+        elif ubigeo in ubigeos:
+            absent.append(record)
+        else:
+            others += 1
+    return {"create": create, "update": update, "delete": stale + (absent if borrar_ausentes else []),
+            "unchanged": unchanged, "absent": len(absent), "others": others}
 
 
 def _fid(record):
@@ -562,6 +648,8 @@ def _parse_args(argv):
     p.add_argument("--padron-xlsx", required=True, help="the padrón: sheet padron, codigo_predio, codigo_de_via, ...")
     p.add_argument("--revision", help="csv of the rows (cod_via_eje, fid_eje, lado, id_aranc, asignacion), outside the repo")
     p.add_argument("--org", help="the organization id the account must belong to, or nothing is written")
+    p.add_argument("--borrar-ausentes", action="store_true",
+                   help="delete the rows of an ubigeo in the file whose eje (fid) the file does not have: a re-exported eje")
     p.add_argument("--distancia", type=float, default=DISTANCIA, help="metres from a lote to its tramo (default 30)")
     p.add_argument("--core", default=os.environ.get("WASICHAI_CORE", "http://localhost:8091"))
     p.add_argument("--email", default=os.environ.get("WASICHAI_EMAIL", "admin@wasichai.local"))
@@ -576,9 +664,20 @@ def _report(stats):
     print(f"ejes: {stats['ejes']}")
     print(f"tramos: {sum(how.values())} ({', '.join(f'{k} {v}' for k, v in how.items())})")
     print(f"ejes partidos por lado: {stats['partidos']}")
+    print(f"ejes multiparte: {stats['multiparte']}")
+    print(f"partes invertidas: {stats['invertidas']}")
+    print(f"lados decididos por un solo lote: {stats['de_un_lote']}")
     print(f"codigos sin tramo: {stats['sin_tramo']}")
     print(f"codigos sin lotes: {stats['sin_lotes']}")
     print(f"codigos con lotes lejanos: {stats['lejanos']}")
+
+
+def _summary(todo, borrar_ausentes):
+    """The run's counts, with {create}, {update} and {delete} left for the verbs of a dry-run or a run."""
+    absent = (f"{todo['absent']} absent from the file deleted" if borrar_ausentes else
+              f"{todo['absent']} absent from the file kept (--borrar-ausentes deletes them)")
+    return (f"{len(todo['create'])} {{create}}, {len(todo['update'])} {{update}}, {len(todo['delete'])} {{delete}},"
+            f" {todo['unchanged']} unchanged, {absent}, {todo['others']} of another ubigeo kept")
 
 
 def main(argv=None):
@@ -604,24 +703,24 @@ def main(argv=None):
     client = Client(args.core)
     try:
         client.login(args.email, args.password)
-        if args.org is not None and (client.user or {}).get("organizationId") != args.org:
-            print(f"error: the account {args.email} is not of the organization {args.org}; nothing was written",
-                  file=sys.stderr)
+        organization = (client.user or {}).get("organizationId")
+        if args.org is not None and organization != args.org:
+            print(f"error: --org expects the organization's id, and the account {args.email} is of the organization"
+                  f" {organization or '(Core did not say)'}, not {args.org}; nothing was written", file=sys.stderr)
             return 2
-        create, update, delete, unchanged, orphans = plan(client.list_all(OBJECT), rows)
+        todo = plan(client.list_all(OBJECT), rows, args.borrar_ausentes)
+        summary = _summary(todo, args.borrar_ausentes)
         if args.dry_run:
-            print(f"{len(create)} to create, {len(update)} to update, {len(delete)} to delete, {unchanged} unchanged,"
-                  f" {orphans} of another eje kept")
+            print(summary.format(create="to create", update="to update", delete="to delete"))
             return 0
-        write(client, create, update, delete, args.workers)
+        write(client, todo["create"], todo["update"], todo["delete"], args.workers)
     except LoadError as e:
         print(f"error /api/objects/{OBJECT}/records (row {e.fila}) -> {e.error.status}\n{e.error.body}", file=sys.stderr)
         return 1
     except CoreError as e:
         print(f"error -> {e.status}\n{e.body}", file=sys.stderr)
         return 1
-    print(f"done: {len(create)} created, {len(update)} updated, {len(delete)} deleted, {unchanged} unchanged,"
-          f" {orphans} of another eje kept")
+    print("done: " + summary.format(create="created", update="updated", delete="deleted"))
     return 0
 
 

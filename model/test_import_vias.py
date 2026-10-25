@@ -188,6 +188,8 @@ class NameTests(unittest.TestCase):
         self.assertEqual(iv.normalize("AV. AVENIDA GRAU"), "GRAU")
         self.assertEqual(iv.normalize("JR.LIMA"), "LIMA")
         self.assertEqual(iv.normalize("PROL. GRAU"), "PROL GRAU")
+        self.assertEqual(iv.normalize("Prolongación Grau"), "PROL GRAU")
+        self.assertEqual(iv.normalize("AVENIDA GRAU"), iv.normalize("AVDA. GRAU"))
         self.assertEqual(iv.normalize("28 DE JULIO"), "28 DE JULIO")
         # a name that is only its type stays as it is
         self.assertEqual(iv.normalize("AV."), "AV")
@@ -229,26 +231,27 @@ class AssignTests(unittest.TestCase):
     def test_each_tramo_and_side(self):
         got = {clave: (a["id_aranc"], a["asignacion"]) for clave, a in self.by_clave.items()}
         self.assertEqual(got, {
-            "1|AMBOS": ("A-1", "NOMBRE_UNICO"),
-            "2|IZQUIERDO": ("G-01", "CERCANIA"),
-            "2|DERECHO": ("G-02", "CERCANIA"),
-            "3|AMBOS": ("L-1", "CERCANIA"),
-            "4|AMBOS": (None, "SIN_ARANCEL"),
-            "5|AMBOS": (None, "SIN_ARANCEL"),
-            "6|AMBOS": (None, "SIN_ARANCEL"),
-            "7|AMBOS": ("SJ", "CERCANIA"),
-            "8|AMBOS": (None, "SIN_ARANCEL"),
+            "110101|1|AMBOS": ("A-1", "NOMBRE_UNICO"),
+            "110101|2|IZQUIERDO": ("G-01", "CERCANIA"),
+            "110101|2|DERECHO": ("G-02", "CERCANIA"),
+            "110101|3|AMBOS": ("L-1", "CERCANIA"),
+            "110101|4|AMBOS": (None, "SIN_ARANCEL"),
+            "110101|5|AMBOS": (None, "SIN_ARANCEL"),
+            "110101|6|AMBOS": (None, "SIN_ARANCEL"),
+            "110101|7|AMBOS": ("SJ", "CERCANIA"),
+            "110101|8|AMBOS": (None, "SIN_ARANCEL"),
         })
 
     def test_the_row_carries_the_eje(self):
-        self.assertEqual(self.by_clave["2|IZQUIERDO"], {
-            "clave": "2|IZQUIERDO", "fid_eje": 2, "cod_via_eje": "002", "tip_via": "AV.", "nom_via": "AV. GRAU",
+        self.assertEqual(self.by_clave["110101|2|IZQUIERDO"], {
+            "clave": "110101|2|IZQUIERDO", "fid_eje": 2, "cod_via_eje": "002", "tip_via": "AV.", "nom_via": "AV. GRAU",
             "ubigeo": "110101", "fuente": "PRUEBA", "cuadra": None, "lado": "IZQUIERDO", "id_aranc": "G-01",
             "asignacion": "CERCANIA"})
 
     def test_the_counts(self):
         self.assertEqual(self.stats, {
-            "ejes": 8, "por_asignacion": {"NOMBRE_UNICO": 1, "CERCANIA": 4, "SIN_ARANCEL": 4}, "partidos": 1,
+            "ejes": 8, "por_asignacion": {"NOMBRE_UNICO": 1, "CERCANIA": 4, "SIN_ARANCEL": 4}, "partidos": 1, "multiparte": 0, "invertidas": 0,
+            "de_un_lote": 5,
             "sin_tramo": 2, "sin_lotes": 2, "lejanos": 1})
 
     def test_a_lote_farther_than_the_distance_does_not_count(self):
@@ -258,7 +261,66 @@ class AssignTests(unittest.TestCase):
         rows, _ = iv.assign(ejes, by_name, predios, centroids, lote_of, distancia=11)
         got = {a["clave"]: a["id_aranc"] for a, _ in rows}
         # G-01 and G-02 are 15 m away: none counts; L-1's lotes are 12 m away; SJ's 10 m
-        self.assertEqual((got["2|AMBOS"], got["3|AMBOS"], got["7|AMBOS"]), (None, None, "SJ"))
+        self.assertEqual((got["110101|2|AMBOS"], got["110101|3|AMBOS"], got["110101|7|AMBOS"]), (None, None, "SJ"))
+
+
+class OrientTests(unittest.TestCase):
+    def test_chained_parts_follow_the_first(self):
+        parts = [[(0, 0), (100, 0)], [(200, 0), (100, 0)], [(200, 0), (300, 0)]]
+        oriented, flipped = iv.orient(parts)
+        self.assertEqual(oriented, [[(0, 0), (100, 0)], [(100, 0), (200, 0)], [(200, 0), (300, 0)]])
+        self.assertEqual(flipped, 1)
+
+    def test_a_disjoint_part_follows_the_first_parts_direction(self):
+        oriented, flipped = iv.orient([[(0, 0), (100, 0)], [(300, 5), (200, 5)]])
+        self.assertEqual((oriented[1], flipped), ([(200, 5), (300, 5)], 1))
+        self.assertEqual(iv.orient([[(0, 0), (1, 0)]]), ([[(0, 0), (1, 0)]], 0))
+
+
+class MultipartTests(unittest.TestCase):
+    """An eje digitised in two parts that run against each other: north must be one side along the whole tramo."""
+
+    def test_two_reversed_parts_give_one_left_and_one_right_and_core_gets_them_oriented(self):
+        x = 420000.0
+        parts = [wkb_line([(x, 8445000.0), (x + 100, 8445000.0)]),
+                 wkb_line([(x + 200, 8445000.0), (x + 100, 8445000.0)])]
+        lotes = {"N1": (x + 50, 8445012.0), "N2": (x + 150, 8445012.0), "S1": (x + 50, 8444988.0),
+                 "S2": (x + 150, 8444988.0)}
+        predial = [("PN1", "N1"), ("PN2", "N2"), ("PS1", "S1"), ("PS2", "S2")]
+        padron = [["PN1", "N-01", "AV. GRAU", "1"], ["PN2", "N-01", "AV. GRAU", "1"],
+                  ["PS1", "S-02", "AV. GRAU", "1"], ["PS2", "S-02", "AV. GRAU", "1"]]
+        core = FakeCore()
+        self.addCleanup(core.stop)
+        gpkg = write_gpkg(self, ejes=[eje(1, "AV. GRAU", "002", gp(wkb_multi(5, parts)))], lotes=lotes,
+                          padron_predial=predial)
+        code, out, err = run(iv.main, ["--gpkg", gpkg, "--padron-xlsx", write_padron(self, rows=padron,
+                                       header=PADRON_HEADER[:4]), "--core", core.base_url])
+        self.assertEqual(code, 0, err)
+        self.assertIn("ejes multiparte: 1\npartes invertidas: 1", out)
+        tramos = {r["attributes"]["clave"]: r for r in core.records["tramo_via"]}
+        self.assertEqual({k: r["attributes"]["id_aranc"] for k, r in tramos.items()},
+                         {"110101|1|IZQUIERDO": "N-01", "110101|1|DERECHO": "S-02"})
+        second = tramos["110101|1|IZQUIERDO"]["geometries"]["geom"]["coordinates"][1]
+        # the second part now runs west to east, like the first
+        self.assertLess(second[0][0], second[1][0])
+
+
+class CercaniaTests(unittest.TestCase):
+    LINE = [[(0.0, 0.0), (100.0, 0.0)]]
+
+    def test_more_lotes_beat_one_nearer_lote(self):
+        lotes = {"A": [(20, 12), (50, 14), (80, 15)], "B": [(50, 5)]}
+        self.assertEqual(iv.nearest_by_side(self.LINE, {"A", "B"}, lotes, 30), {iv.IZQUIERDO: ("A", 3)})
+
+    def test_a_tie_goes_to_the_nearest(self):
+        lotes = {"A": [(20, 12)], "B": [(50, 5)]}
+        self.assertEqual(iv.nearest_by_side(self.LINE, {"A", "B"}, lotes, 30), {iv.IZQUIERDO: ("B", 1)})
+
+    def test_a_segment_without_cod_via_does_not_make_the_name_ambiguous(self):
+        line = [[(0.0, 0.0), (100.0, 0.0)]]
+        ejes = [{**eje(1, "CA. SOLA", "001", None), "parts": line}, {**eje(2, "CA. SOLA", None, None), "parts": line}]
+        rows, _ = iv.assign(ejes, {"SOLA": {"S"}}, {}, {}, {})
+        self.assertEqual({a["asignacion"] for a, _ in rows}, {"NOMBRE_UNICO"})
 
 
 class CliTests(unittest.TestCase):
@@ -282,47 +344,71 @@ class CliTests(unittest.TestCase):
         self.assertEqual(code, 0, err)
         self.assertIn("tramos: 9 (NOMBRE_UNICO 1, CERCANIA 4, SIN_ARANCEL 4)", out)
         self.assertIn("codigos con lotes lejanos: 1", out)
-        self.assertIn("done: 9 created, 0 updated, 0 deleted, 0 unchanged, 0 of another eje kept", out)
+        self.assertIn("done: 9 created, 0 updated, 0 deleted, 0 unchanged, 0 absent from the file kept (--borrar-ausentes deletes them),"
+                      " 0 of another ubigeo kept", out)
         tramos = self.tramos()
-        uno = tramos["1|AMBOS"]
+        uno = tramos["110101|1|AMBOS"]
         # None is never sent: cuadra stays out
-        self.assertEqual(uno["attributes"], {"clave": "1|AMBOS", "fid_eje": 1, "cod_via_eje": "001", "tip_via": "CA.",
+        self.assertEqual(uno["attributes"], {"clave": "110101|1|AMBOS", "fid_eje": 1, "cod_via_eje": "001", "tip_via": "CA.",
                                              "nom_via": "CA. LOS ALAMOS", "ubigeo": "110101", "fuente": "PRUEBA",
                                              "lado": "AMBOS", "id_aranc": "A-1", "asignacion": "NOMBRE_UNICO"})
         geom = uno["geometries"]["geom"]
         self.assertEqual(geom["type"], "MultiLineString")
         self.assertAlmostEqual(geom["coordinates"][0][0][0], -75.74099322028849, places=9)
         self.assertAlmostEqual(geom["coordinates"][0][0][1], -14.064631781194889, places=9)
-        self.assertNotIn("id_aranc", tramos["4|AMBOS"]["attributes"])
+        self.assertNotIn("id_aranc", tramos["110101|4|AMBOS"]["attributes"])
         before = len(self.writes())
         code, out, _ = self.cli()
         self.assertIn("done: 0 created, 0 updated, 0 deleted, 9 unchanged", out)
         self.assertEqual(len(self.writes()), before)
 
-    def test_a_changed_row_is_patched_a_stale_lado_deleted_and_another_eje_kept(self):
+    def stored(self, clave, fid, ubigeo="110101"):
+        attributes = {"clave": clave, "fid_eje": fid, "lado": "AMBOS", "asignacion": "SIN_ARANCEL"}
+        return self.core.add_record("tramo_via", {**attributes, **({"ubigeo": ubigeo} if ubigeo else {})})
+
+    def test_a_changed_row_is_patched_a_stale_lado_deleted_and_the_rest_kept(self):
         self.cli()
         tramos = self.tramos()
-        tramos["3|AMBOS"]["attributes"]["id_aranc"] = "OTRO"
+        tramos["110101|3|AMBOS"]["attributes"]["id_aranc"] = "OTRO"
         # moved by ~1 m: beyond the tolerance
-        tramos["7|AMBOS"]["geometries"]["geom"]["coordinates"][0][0][0] += 1e-5
-        stale = self.core.add_record("tramo_via", {"clave": "2|AMBOS", "fid_eje": 2, "lado": "AMBOS",
-                                                   "asignacion": "SIN_ARANCEL"})
-        self.core.add_record("tramo_via", {"clave": "99|AMBOS", "fid_eje": 99, "lado": "AMBOS",
-                                           "asignacion": "SIN_ARANCEL"})
+        tramos["110101|7|AMBOS"]["geometries"]["geom"]["coordinates"][0][0][0] += 1e-5
+        stale = self.stored("110101|2|AMBOS", 2)
+        self.stored("110101|99|AMBOS", 99)
+        # another ubigeo's fid 1 is another eje: never touched
+        self.stored("110102|1|AMBOS", 1, ubigeo="110102")
         code, out, err = self.cli()
         self.assertEqual(code, 0, err)
-        self.assertIn("done: 0 created, 2 updated, 1 deleted, 7 unchanged, 1 of another eje kept", out)
+        self.assertIn("done: 0 created, 2 updated, 1 deleted, 7 unchanged, 1 absent from the file kept"
+                      " (--borrar-ausentes deletes them), 1 of another ubigeo kept", out)
         tramos = self.tramos()
-        self.assertEqual(tramos["3|AMBOS"]["attributes"]["id_aranc"], "L-1")
-        self.assertNotIn("2|AMBOS", tramos)
-        self.assertIn("99|AMBOS", tramos)
+        self.assertEqual(tramos["110101|3|AMBOS"]["attributes"]["id_aranc"], "L-1")
+        self.assertNotIn("110101|2|AMBOS", tramos)
+        self.assertIn("110101|99|AMBOS", tramos)
+        self.assertIn("110102|1|AMBOS", tramos)
         self.assertIn(("DELETE", f"/api/objects/tramo_via/records/{stale['id']}"),
                       [(m, p) for m, p, _, _ in self.writes()])
+
+    def test_borrar_ausentes_deletes_the_ubigeos_rows_the_file_lacks_and_dry_run_says_so(self):
+        self.cli()
+        absent = self.stored("110101|99|AMBOS", 99)
+        self.stored("110102|99|AMBOS", 99, ubigeo="110102")
+        before = len(self.writes())
+        code, out, err = self.cli("--borrar-ausentes", "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("0 to create, 0 to update, 1 to delete, 9 unchanged, 1 absent from the file deleted,"
+                      " 1 of another ubigeo kept", out)
+        self.assertEqual(len(self.writes()), before)
+        code, out, err = self.cli("--borrar-ausentes")
+        self.assertEqual(code, 0, err)
+        self.assertIn("done: 0 created, 0 updated, 1 deleted", out)
+        self.assertNotIn("110101|99|AMBOS", self.tramos())
+        self.assertIn("110102|99|AMBOS", self.tramos())
+        self.assertEqual(self.writes()[-1][:2], ("DELETE", f"/api/objects/tramo_via/records/{absent['id']}"))
 
     def test_dry_run_reads_and_writes_nothing(self):
         code, out, err = self.cli("--dry-run")
         self.assertEqual(code, 0, err)
-        self.assertIn("9 to create, 0 to update, 0 to delete, 0 unchanged, 0 of another eje kept", out)
+        self.assertIn("9 to create, 0 to update, 0 to delete, 0 unchanged, 0 absent", out)
         self.assertEqual(self.writes(), [])
         self.assertNotIn("tramo_via", self.core.records)
 
@@ -349,7 +435,8 @@ class CliTests(unittest.TestCase):
         self.core.login_response = {"token": "t", "user": {"organizationId": "org-ica"}}
         code, _, err = self.cli("--org", "org-otra")
         self.assertEqual(code, 2)
-        self.assertIn("not of the organization org-otra", err)
+        self.assertIn("--org expects the organization's id", err)
+        self.assertIn("is of the organization org-ica, not org-otra", err)
         self.assertEqual(self.writes(), [])
         code, out, err = self.cli("--org", "org-ica")
         self.assertEqual(code, 0, err)
