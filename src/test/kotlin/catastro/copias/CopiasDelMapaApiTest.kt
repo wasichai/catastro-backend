@@ -124,6 +124,36 @@ class CopiasDelMapaApiTest : CatastroApiTest() {
     }
 
     @Test
+    fun `un registro que la copia no puede escribir se cuenta, no detiene a los demás y se reintenta`() {
+        val (org, _) = organizacionNueva()
+        val marca = uniqueName("vtf").uppercase()
+        arancel("$marca-01", esteAnio, 70, org)
+        // CopiaQueFalla refuses the platform's write of this one
+        val falla = tramo("${CopiaQueFalla.MARCA}$marca", "$marca-01", token = org)
+        val otros = (1..6).map { tramo(marca, "$marca-01", token = org) }
+        // and the fichas are still copied though a tramo failed
+        val corte =
+            registro(
+                "corte_brecha",
+                mapOf("clave" to "o|$marca", "org_slug" to "o", "fecha" to "2026-10-25", "anio" to esteAnio, "cargado_en" to "2026-10-25T12:00:00Z"),
+                token = org
+            )
+        val ficha = registro("brecha_ficha", mapOf("clave" to "$corte|F", "corte" to corte, "categoria" to "OMISO"), token = org)
+
+        hasta("los demás tramos copiados") { otros.all { valor(it, org) == (BigDecimal("70") to esteAnio) } }
+        hasta("la ficha copiada") {
+            arbol(send("GET", "/api/objects/brecha_ficha/records/$ficha", null, HttpStatus.OK, org))["attributes"]["estado"]?.asString() == "PENDIENTE"
+        }
+        assertEquals(null to null, valor(falla, org))
+        // every run tries it again, and says so
+        val corrida = arbol(send("POST", "/api/catastro/vias/valores", emptyMap<String, Any>(), HttpStatus.OK, org))
+        assertEquals(1, corrida["fallidas"].asInt())
+        assertEquals(0, corrida["tramos"].asInt())
+        runBlocking { copias.periodica() }
+        assertEquals(null to null, valor(falla, org))
+    }
+
+    @Test
     fun `un lector ve el valor guardado y no lo escribe`() {
         val lector = cuentaDeServicio(listOf("CATASTRO_LECTOR"))
         val marca = uniqueName("vtl").uppercase()

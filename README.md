@@ -217,11 +217,27 @@ de cualquier año de `GET /api/catastro/vias/aranceles`. Después de la carga la
   arancel del año en curso (alta, cambio o baja, también la sincronización de srtm), un tramo nuevo o con otro
   `id_aranc`, una decisión, un corte que se muestra o se borra, una ficha nueva o con otro `estado`. No escribe, no
   espera y no lanza, así que nunca falla ni retrasa la escritura que lo dispara; corre el último;
-- lee solo las filas cuya copia difiere (un `RecordCriterion`), así que una corrida sin nada que hacer cuesta unas
-  pocas lecturas por organización.
+- lee solo las filas cuya copia difiere (un `RecordCriterion`, la comparación la hace la base), así que una corrida sin
+  nada que hacer cuesta unas pocas lecturas por organización;
+- **cada registro va por su cuenta:** un parche que falla (un registro borrado mientras tanto, una regla que rompe) se
+  registra en el log con el objeto, el id y el tipo de error, nunca los valores, se cuenta en `fallidas` y la corrida
+  sigue con los demás (y con las fichas aunque fallen los tramos); la siguiente lo reintenta;
+- el aviso espera a que pasen `espera` segundos **sin avisos nuevos** (hasta un `periodo`), así una ráfaga de escrituras
+  es una sola corrida. Una escritura dentro de una transacción larga (un lote) puede leerse antes de su commit: entonces
+  la copia llega en la corrida periódica, a lo sumo un `periodo` después. Si el lock lo tiene otra réplica, reintenta
+  con espera creciente, hasta un `periodo`.
+
+**La primera corrida** en una base existente escribe muchas copias de una vez, cada una con su fila de auditoría (el
+estado anterior y el nuevo del registro): todas las fichas del corte más reciente ya cargadas, que aún no tienen
+`estado` (en Ica, unas 21 300), y cada tramo con arancel del año (unos miles). Con 4 escrituras a la vez toma algunos
+minutos, durante los que `POST /api/catastro/vias/valores` espera. Una carga nueva de un corte ya trae el `estado`. Cada
+**1 de enero** cada tramo con valor se escribe dos veces: la primera corrida del año lo vacía (no hay aranceles del año
+nuevo todavía) y la sincronización de srtm lo vuelve a llenar.
 
 **`POST /api/catastro/vias/valores`** (solo el admin de la organización, 403 a cualquier otro rol) pide una corrida para
-su organización y la espera: responde `{"anio", "tramos", "fichas"}`, lo que escribió. No lleva parámetros (siempre el
+su organización y la espera: responde `{"anio", "tramos", "fichas", "fallidas"}`, lo que escribió y lo que no pudo. Lo
+contesta una corrida que empieza después del pedido; si no llega en `catastro.copias.limite` (`PT10M`) responde 503, y
+las copias corren igual más tarde. No lleva parámetros (siempre el
 año en curso: un `anio`, o cualquier otro, es un 400 que lo nombra). Sirve para no esperar la corrida periódica.
 
 **Paso anual (1 de enero).** No hace falta nada para las copias: la primera corrida periódica del año pone el valor

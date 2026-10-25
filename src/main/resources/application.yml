@@ -12,6 +12,8 @@ catastro:
   copias:
     periodo: ${CATASTRO_COPIAS_PERIODO:PT5M}
     espera: ${CATASTRO_COPIAS_ESPERA:PT2S}
+    # how long POST /api/catastro/vias/valores waits for its run before a 503
+    limite: ${CATASTRO_COPIAS_LIMITE:PT10M}
 
 wasichai:
   database:
