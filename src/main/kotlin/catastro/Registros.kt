@@ -95,15 +95,16 @@ class Registros(
         sort: String
     ): List<T> = todas(objectName, type, sort, emptyMap())
 
-    // the same pass, over the records that meet `filters` (equality, as core's list reads them): a corte's fichas, the
-    // decisions of a year
+    // the same pass, over the records that meet `filters` (equality, as core's list reads them) and `criteria`: a
+    // corte's fichas, the decisions of a year, the tramos whose copy differs
     suspend fun <T : Any> todas(
         objectName: String,
         type: Class<T>,
         sort: String,
-        filters: Map<String, String>
+        filters: Map<String, String>,
+        criteria: List<RecordCriterion> = emptyList()
     ): List<T> =
-        todas(objectName, RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), sort = sort, filters = filters, count = false))
+        todas(objectName, RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), sort = sort, filters = filters, criteria = criteria, count = false))
             .map { read(type, it) }
 
     private suspend fun todas(

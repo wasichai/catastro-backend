@@ -1,10 +1,15 @@
 package catastro.cambios
 
 import catastro.CatastroApiTest
+import catastro.brechas.BRECHA_FICHA
+import catastro.brechas.CORTE_BRECHA
+import catastro.valuacion.ARANCEL
 import catastro.valuacion.CONSTRUCCION
 import catastro.valuacion.ENTREGA_CATASTRAL
 import catastro.valuacion.OBRA_COMPLEMENTARIA
 import catastro.valuacion.PREDIO_CATASTRAL
+import catastro.vias.TRAMO_VIA
+import catastro.vias.anioEnCurso
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -125,6 +130,76 @@ class CambiosApiTest : CatastroApiTest() {
         // no reason given: no entrega
         assertTrue(todos.all { it["entrega"].isNull })
     }
+
+    @Test
+    fun `las copias para el mapa no salen en cambios, ni el corte, ni sus fichas, ni las decisiones`() {
+        // an organization to itself: after the cursor, only what this test writes
+        val (org, _) = organizacionNueva()
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"), org)
+        val analista = cuentaDeServicio(listOf("CATASTRO_ANALISTA"), org)
+        val u = uniqueName("c5")
+        val anio = anioEnCurso()
+        val lote =
+            mapOf(
+                "type" to "Polygon",
+                "coordinates" to listOf(listOf(listOf(-75.73, -14.07), listOf(-75.7299, -14.07), listOf(-75.7299, -14.0699), listOf(-75.73, -14.07)))
+            )
+        registro(PREDIO_CATASTRAL, mapOf("codigo_municipal" to "P-$u"), mapOf("lote_geom" to lote), org)
+        val tramo =
+            registro(
+                TRAMO_VIA,
+                mapOf("clave" to "$u|1|AMBOS", "fid_eje" to 1, "lado" to "AMBOS", "id_aranc" to "A-$u", "asignacion" to "NOMBRE_UNICO"),
+                token = org
+            )
+        val (_, c0) = leer(srtm, desde = null, size = 500)
+
+        // srtm syncs an arancel of the year: CopiasDelMapa copies it onto the tramo, as the platform; the admin runs them
+        registro(ARANCEL, mapOf("clave" to "A-$u|$anio", "id_aranc" to "A-$u", "anio" to anio, "valor_m2" to 10), token = srtm)
+        send("POST", "/api/catastro/vias/valores", emptyMap<String, Any>(), HttpStatus.OK, org)
+        val copia = arbol(send("GET", "/api/objects/$TRAMO_VIA/records/$tramo", null, HttpStatus.OK, org))["attributes"]
+        assertEquals(10, copia["valor_m2"].asInt())
+        // a corte and its ficha with the lote and the estado, as importar_corte_brecha.py writes them; a decision's
+        // estado reaches the ficha
+        val corte =
+            registro(
+                CORTE_BRECHA,
+                mapOf("clave" to "o|$u", "org_slug" to "o", "fecha" to "2026-10-25", "anio" to anio, "cargado_en" to "2026-10-25T12:00:00Z"),
+                token = org
+            )
+        val ficha =
+            registro(
+                BRECHA_FICHA,
+                mapOf("clave" to "$corte|P-$u", "corte" to corte, "codigo_municipal" to "P-$u", "categoria" to "OMISO", "estado" to "PENDIENTE"),
+                mapOf("lote_geom" to lote),
+                org
+            )
+        send(
+            "POST",
+            "/api/catastro/brechas/decisiones",
+            mapOf("codigos" to listOf("P-$u"), "anio" to anio, "estado" to "A_FISCALIZAR"),
+            HttpStatus.OK,
+            analista
+        )
+        hasta("el estado de la decisión en la ficha") {
+            arbol(send("GET", "/api/objects/$BRECHA_FICHA/records/$ficha", null, HttpStatus.OK, org))["attributes"]["estado"].asString() == "A_FISCALIZAR"
+        }
+        // and the copies run once more, by hand, before the feed is read
+        send("POST", "/api/catastro/vias/valores", emptyMap<String, Any>(), HttpStatus.OK, org)
+        assertEquals(listOf<JsonNode>(), leer(srtm, desde = c0, size = 500).first)
+
+        // the feed still moves: a predio's change is there, alone
+        send("PATCH", "/api/objects/$PREDIO_CATASTRAL/records/${predioDe(org, "P-$u")}", mapOf("attributes" to mapOf("sector" to "01")), HttpStatus.OK, org)
+        val despues = leer(srtm, desde = c0, size = 500).first
+        assertEquals(
+            listOf(Triple("P-$u", PREDIO_CATASTRAL, "UPDATE")),
+            despues.map { Triple(codigo(it), it["objeto"].asString(), it["operacion"].asString()) }
+        )
+    }
+
+    private fun predioDe(
+        token: String,
+        codigo: String
+    ): String = arbol(send("GET", "/api/objects/$PREDIO_CATASTRAL/records?codigo_municipal=$codigo", null, HttpStatus.OK, token))["content"][0]["id"].asString()
 
     @Test
     fun `sin token 401, sin el rol 403, desde o size malos 422 que lo nombran`() {

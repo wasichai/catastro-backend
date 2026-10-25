@@ -6,6 +6,15 @@ spring:
   application:
     name: catastro-backend
 
+catastro:
+  # the map's copies (tramo_via.valor_m2, brecha_ficha.estado): CopiasDelMapa runs over every organization each
+  # periodo, and `espera` after a write that nudges it
+  copias:
+    periodo: ${CATASTRO_COPIAS_PERIODO:PT5M}
+    espera: ${CATASTRO_COPIAS_ESPERA:PT2S}
+    # how long POST /api/catastro/vias/valores waits for its run before a 503
+    limite: ${CATASTRO_COPIAS_LIMITE:PT10M}
+
 wasichai:
   database:
     host: ${WASICHAI_DB_HOST:localhost}

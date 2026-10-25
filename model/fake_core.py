@@ -16,6 +16,9 @@ OBJECT = re.compile(r"^/api/objects/([a-z0-9_]+)$")
 ROLE = re.compile(r"^/api/roles/([A-Z0-9_]+)$")
 ROLE_PERMISSIONS = re.compile(r"^/api/roles/([A-Z0-9_]+)/permissions$")
 SERVICE_ACCOUNT = re.compile(r"^/api/service-accounts/([0-9a-f-]+)$")
+MAP_VIEWS = re.compile(r"^/api/gis/objects/([a-z0-9_]+)/map-views$")
+MAP_VIEW = re.compile(r"^/api/gis/objects/([a-z0-9_]+)/map-views/([a-z0-9_-]+)$")
+LAYER = re.compile(r"^/api/gis/layers/([a-z0-9_]+)/([a-z0-9_]+)$")
 
 
 def _meta(label, plural_label=None, description=None, enabled=True):
@@ -41,9 +44,12 @@ class FakeCoreHandler(BaseHTTPRequestHandler):
             server.reasons.append((method, self.path, self.headers.get("X-Change-Reason")))
             status, payload = server.script(method, self.path, body)
         self.send_response(status)
-        self.send_header("Content-Type", "application/json")
+        # bytes go as they are: GeoServer's WFS answers XML
+        self.send_header("Content-Type", "application/xml" if isinstance(payload, bytes) else "application/json")
         self.end_headers()
-        if payload is not None:
+        if isinstance(payload, bytes):
+            self.wfile.write(payload)
+        elif payload is not None:
             self.wfile.write(json.dumps(payload).encode("utf-8"))
 
     def do_GET(self):
@@ -68,7 +74,7 @@ class FakeCore:
     def __init__(self, existing_objects=(), existing_relationships=(), fail_on_post_object=None,
                  fail_put=False, fail_put_status=500, login_response=None, fail_on_record=None, existing_fields=None,
                  fail_on_update=None, fail_on_delete=None, object_rules=None, fail_object_put=None, object_meta=None, fail_record_after=None,
-                 fail_on_role=None, fail_on_service_account=None, fail_on_record_body=None):
+                 fail_on_role=None, fail_on_service_account=None, fail_on_record_body=None, fail_on_layer=None):
         self.existing_objects = set(existing_objects)
         # object name -> its object-level rules ({"indexes", "appendOnly"}), as Core stores them; none by default
         self.object_rules = {n: dict((object_rules or {}).get(n, {})) for n in self.existing_objects}
@@ -91,6 +97,16 @@ class FakeCore:
         self.roles = {}  # role name -> {"name", "label", "permissions": [{"objectName", "action", "allowed"}]}
         self.fail_on_service_account = fail_on_service_account  # POST /api/service-accounts -> this status
         self.service_accounts = {}  # id -> ServiceAccountResponse without the secret
+        self.map_views = {}  # (object, name) -> MapViewResponse, as wasichai-gis answers it
+        self.layers = []  # (object, geometry, style) of every publish, in order
+        self.unpublished = []  # (object, geometry) of every DELETE /api/gis/layers/..., in order
+        # (object, geometry) -> the attribute columns GeoServer's feature type has, as DescribeFeatureType answers;
+        # a pair in here is a published layer (GET /api/gis/layers says so). wfs_reachable False: the WFS is down
+        self.layer_attributes = {}
+        self.wfs_reachable = True
+        self.bbox_queries = []  # (object, bbox, geometry) of every list with a bbox
+        self.columns = {}  # object -> its attribute columns, for a feature type published from now on
+        self.fail_on_layer = fail_on_layer  # POST /api/gis/layers/... -> this status (GeoServer down, say)
         self.requests = []
         self.reasons = []  # (method, path, X-Change-Reason header or None), one per request, parallel to requests
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), FakeCoreHandler)
@@ -128,7 +144,15 @@ class FakeCore:
         size = int(params.pop("size", 25))
         params.pop("sort", None)
         params.pop("dir", None)
+        # wasichai-gis's bbox (EPSG:4326) on the geometry it names: a vertex inside is enough here
+        caja, geometria = params.pop("bbox", None), params.pop("geometry", None)
         rows = [r for r in self.records.get(name, []) if all(str(r["attributes"].get(k)) == v for k, v in params.items())]
+        if caja is not None:
+            x0, y0, x1, y1 = (float(v) for v in caja.split(","))
+            self.bbox_queries.append((name, caja, geometria))
+            rows = [r for r in rows if any(x0 <= x <= x1 and y0 <= y <= y1
+                                           for anillo in ((r.get("geometries") or {}).get(geometria) or {}).get("coordinates", [])
+                                           for x, y, *_ in anillo)]
         total_pages = (len(rows) + size - 1) // size
         return 200, {
             "content": rows[page * size:(page + 1) * size],
@@ -260,8 +284,71 @@ class FakeCore:
             account["enabled"] = body["enabled"]
         return 200, account
 
+    def _gis(self, method, path, body):
+        """wasichai-gis's map views (MapViewController) and layer publish (LayerController)."""
+        match = MAP_VIEWS.match(path)
+        if match and method == "POST":
+            key = (match.group(1), body["name"])
+            if key in self.map_views:
+                return 409, {"detail": f"Map view '{body['name']}' already exists"}
+            self.map_views[key] = {"id": str(uuid.uuid4()), "name": body["name"], "label": body.get("label") or key[0],
+                                   "objectName": key[0], "geometryName": body.get("geometryName") or "geom",
+                                   "style": body.get("style")}
+            return 201, self.map_views[key]
+        if match and method == "GET":
+            return 200, [v for (o, _), v in self.map_views.items() if o == match.group(1)]
+        if path == "/api/gis/layers" and method == "GET":
+            return 200, [{"objectName": o, "geometryName": g, "layerName": f"{o}__{g}", "published": True,
+                          "wfs": f"{self.base_url}/geoserver/wfs?service=WFS&version=2.0.0&request=GetFeature"
+                                 f"&typeNames=ws:{o}__{g}"}
+                         for (o, g) in self.layer_attributes]
+        match = MAP_VIEW.match(path)
+        if match:
+            view = self.map_views.get(match.groups())
+            if view is None:
+                return 404, {"detail": "no such map view"}
+            if method == "DELETE":
+                del self.map_views[match.groups()]
+                return 204, None
+            if method == "PUT":
+                view.update({"label": body.get("label") or view["label"],
+                             "geometryName": body.get("geometryName") or view["geometryName"],
+                             "style": body.get("style")})
+            return 200, view
+        match = LAYER.match(path)
+        if match and method == "DELETE":
+            self.unpublished.append(match.groups())
+            self.layer_attributes.pop(match.groups(), None)
+            return 204, None
+        if match and method == "POST":
+            if self.fail_on_layer:
+                return self.fail_on_layer, {"detail": "boom-layer"}
+            self.layers.append((*match.groups(), (body or {}).get("style")))
+            # a new feature type takes every column; a republish keeps the one it had (wasichai 1.5.0)
+            self.layer_attributes.setdefault(match.groups(), list(self.columns.get(match.group(1), [])))
+            return 200, {"objectName": match.group(1), "geometryName": match.group(2), "published": True}
+        return 500, {"message": "boom"}
+
+    def _describe(self, query):
+        """GeoServer's WFS DescribeFeatureType of one layer: an XSD with an element per attribute column."""
+        params = {k: v[0] for k, v in urllib.parse.parse_qs(query).items()}
+        if not self.wfs_reachable or params.get("request") != "DescribeFeatureType":
+            return 503, {"detail": "wfs down"}
+        nombre = params.get("typeNames", "").split(":", 1)[-1]
+        pareja = next((k for k in self.layer_attributes if f"{k[0]}__{k[1]}" == nombre), None)
+        if pareja is None:
+            return 400, {"detail": "unknown layer"}
+        elementos = "".join(f'<xsd:element name="{c}" type="xsd:string"/>' for c in ["id", *self.layer_attributes[pareja], pareja[1]])
+        return 200, ('<?xml version="1.0"?><xsd:schema xmlns:xsd="http://www.w3.org/2001/XMLSchema">'
+                     f'<xsd:complexType name="t"><xsd:sequence>{elementos}</xsd:sequence></xsd:complexType>'
+                     '</xsd:schema>').encode("utf-8")
+
     def _script(self, method, full_path, body):
         path, _, query = full_path.partition("?")
+        if path.startswith("/api/gis/"):
+            return self._gis(method, path, body)
+        if path == "/geoserver/wfs" and method == "GET":
+            return self._describe(query)
         if path == "/api/roles" or path.startswith("/api/roles/"):
             return self._roles(method, path, body)
         if path == "/api/service-accounts" or path.startswith("/api/service-accounts/"):

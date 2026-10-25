@@ -561,6 +561,35 @@ class CliTests(unittest.TestCase):
         self.assertIn("done: 0 created, 0 updated, 0 deleted, 9 unchanged", out)
         self.assertEqual(len(self.writes()), before)
 
+    def test_each_row_carries_the_valor_of_its_arancel_of_the_current_year(self):
+        anio = iv.anio_en_curso()
+        self.core.add_record("arancel", {"clave": f"A-1|{anio}", "id_aranc": "A-1", "anio": anio, "valor_m2": 356.0})
+        # another year's value is not this year's
+        self.core.add_record("arancel", {"clave": f"A-1|{anio - 1}", "id_aranc": "A-1", "anio": anio - 1, "valor_m2": 1.0})
+        code, out, err = self.cli()
+        self.assertEqual(code, 0, err)
+        tramos = self.tramos()
+        uno = tramos["110101|1|AMBOS"]["attributes"]
+        self.assertEqual((uno["valor_m2"], uno["anio_valor"]), (356.0, anio))
+        self.assertIn("siguiente paso: python3 -I vistas_de_mapa.py", out)
+        # without an arancel that year, or without id_aranc, neither is sent
+        for clave, record in tramos.items():
+            if record["attributes"].get("id_aranc") != "A-1":
+                self.assertNotIn("valor_m2", record["attributes"], clave)
+                self.assertNotIn("anio_valor", record["attributes"], clave)
+        # a new value of the year is patched on the next run; the rest stays
+        next(r for r in self.core.records["arancel"] if r["attributes"]["anio"] == anio)["attributes"]["valor_m2"] = 400.0
+        code, out, err = self.cli()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.tramos()["110101|1|AMBOS"]["attributes"]["valor_m2"], 400.0)
+        self.assertIn("done: 0 created, 1 updated", out)
+
+    def test_the_current_year_is_limas(self):
+        from datetime import datetime, timezone
+        # 1 January 03:00 UTC is still 31 December in Lima
+        self.assertEqual(iv.anio_en_curso(datetime(2027, 1, 1, 3, 0, tzinfo=timezone.utc)), 2026)
+        self.assertEqual(iv.anio_en_curso(datetime(2027, 1, 1, 5, 0, tzinfo=timezone.utc)), 2027)
+
     def stored(self, clave, fid, ubigeo="110101"):
         attributes = {"clave": clave, "fid_eje": fid, "lado": "AMBOS", "asignacion": "SIN_ARANCEL"}
         return self.core.add_record("tramo_via", {**attributes, **({"ubigeo": ubigeo} if ubigeo else {})})

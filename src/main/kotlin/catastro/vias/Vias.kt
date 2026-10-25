@@ -4,9 +4,16 @@ import tools.jackson.databind.PropertyNamingStrategies
 import tools.jackson.databind.annotation.JsonNaming
 import wasichai.gis.Feature
 import java.math.BigDecimal
+import java.time.LocalDate
+import java.time.ZoneId
 
 // the object of model/model.json: one frente of a tramo of the eje vial, with the SAT code of its arancel
 const val TRAMO_VIA = "tramo_via"
+
+// the municipality's clock: "the current year" of the map and of tramo_via.valor_m2
+val LIMA: ZoneId = ZoneId.of("America/Lima")
+
+fun anioEnCurso(): Int = LocalDate.now(LIMA).year
 
 // a tramo_via as core returns it (fields by their model names); geom is wasichai-gis's GeoJSON in EPSG:4326
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
@@ -23,8 +30,8 @@ data class TramoVia(
 )
 
 // one tramo as the map's Feature (GET /api/catastro/vias/aranceles): the year's valor_m2 of its id_aranc, joined on
-// read and never stored in the tramo, so an arancel srtm syncs shows on the map without writing anything else. every
-// property is present, null without a datum. null when the tramo has no geometry: there is nothing to draw
+// read for any year (the tramo's own valor_m2 is a copy of the current year's, for the map view and the WMS layer
+// only), so an arancel srtm syncs shows on the map at once. every property is present, null without a datum. null when the tramo has no geometry: there is nothing to draw
 internal fun feature(
     tramo: TramoVia,
     anio: Int,

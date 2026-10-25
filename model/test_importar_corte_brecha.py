@@ -193,6 +193,8 @@ class ImportarCorteTests(unittest.TestCase):
         self.assertIn("sin ficha: 1 con codigo_catastro, 1 sin codigo", out)
         self.assertIn("supera 5 UIT: 2", out)
         self.assertIn("corte ica-prueba|2026-10-25: create; fichas: 5 created", out)
+        # the layers keep the classes of their publish: the summary says to publish them again
+        self.assertIn("siguiente paso: python3 -I vistas_de_mapa.py", out)
         # only counts: no code and no amount of a predio
         for dato in ("01-02-0003", "1-2-3", "PR-1", "120.5", "30000"):
             self.assertNotIn(dato, out)
@@ -425,6 +427,144 @@ class ImportarCorteTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("aws s3 cp s3://bucket/x salió con 1: An error occurred (AccessDenied)", err)
         self.assertEqual(self.core.requests, [])
+
+    # ---- the copies for the map view: the decision's estado and the predio's lote ----
+
+    def con_lotes(self):
+        """01-02-0003 and 01-02-0005 get a lote; 01-02-0002 has none. A decision of 2026 for 01-02-0003."""
+        for predio in self.core.records["predio_catastral"]:
+            codigo = predio["attributes"].get("codigo_municipal")
+            if codigo in ("01-02-0003", "01-02-0005"):
+                predio["geometries"] = {"lote_geom": lote(codigo)}
+        self.core.add_record("decision_brecha", {"clave": "01-02-0003|2026", "codigo_municipal": "01-02-0003",
+                                                 "anio": 2026, "estado": "A_FISCALIZAR"})
+        # another year's decision is not this corte's
+        self.core.add_record("decision_brecha", {"clave": "01-02-0005|2025", "codigo_municipal": "01-02-0005",
+                                                 "anio": 2025, "estado": "DESCARTADO"})
+
+    def lotes_por_corte(self):
+        """corte id -> {codigo_predio: its lote_geom or None}."""
+        por_corte = {}
+        for r in self.core.records.get("brecha_ficha", []):
+            por_corte.setdefault(r["attributes"]["corte"], {})[r["attributes"]["codigo_predio"]] = \
+                (r.get("geometries") or {}).get("lote_geom")
+        return por_corte
+
+    def corte_id(self, fecha):
+        return next(c["id"] for c in self.core.records["corte_brecha"] if c["attributes"]["fecha"] == fecha)
+
+    def test_cada_ficha_lleva_el_estado_de_su_decision_y_el_lote_de_su_predio(self):
+        self.con_lotes()
+        code, out, err = self.cli(armar_corte(self))
+        self.assertEqual(code, 0, err)
+        f = self.fichas()
+        self.assertEqual({k: v["estado"] for k, v in f.items()},
+                         {"PR-1": "A_FISCALIZAR", "PR-2": "PENDIENTE", "PR-3": "PENDIENTE", "PR-4": "PENDIENTE",
+                          "PR-5": "PENDIENTE"})
+        lotes = self.lotes_por_corte()[self.corte_id(FECHA)]
+        self.assertEqual(lotes, {"PR-1": lote("01-02-0003"), "PR-2": None, "PR-3": None, "PR-4": None,
+                                 "PR-5": lote("01-02-0005")})
+        # a POST without a lote sends no geometries at all
+        posts = [b for m, p, _, b in self.core.requests if m == "POST" and p == "/api/objects/brecha_ficha/records"]
+        self.assertEqual(sorted("geometries" in b for b in posts), [False, False, False, True, True])
+        self.assertIn("lotes: 2 fichas del corte con lote; 0 fichas de cortes anteriores con lote cleared", out)
+        # a lote that comes back from Core within the tolerance is the same: nothing to write
+        for r in self.core.records["brecha_ficha"]:
+            g = (r.get("geometries") or {}).get("lote_geom")
+            if g:
+                g["coordinates"] = [[[x + 4e-7, y - 4e-7] for x, y in anillo] for anillo in g["coordinates"]]
+        self.core.requests.clear()
+        code, out, err = self.cli(armar_corte(self))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.escrituras(), [])
+        # a decision taken since, and a lote that moved, are written on the next load
+        self.core.records["decision_brecha"][0]["attributes"]["estado"] = "INSPECCIONADO"
+        movido = lote("01-02-0005", dx=0.001)
+        next(p for p in self.core.records["predio_catastral"]
+             if p["attributes"].get("codigo_municipal") == "01-02-0005")["geometries"]["lote_geom"] = movido
+        code, out, err = self.cli(armar_corte(self))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.fichas()["PR-1"]["estado"], "INSPECCIONADO")
+        self.assertEqual(self.lotes_por_corte()[self.corte_id(FECHA)]["PR-5"], movido)
+        self.assertIn("fichas: 0 created, 2 updated", out)
+
+    def test_un_corte_nuevo_quita_el_lote_de_las_fichas_de_los_anteriores(self):
+        self.con_lotes()
+        self.assertEqual(self.cli(armar_corte(self))[0], 0)
+        code, out, err = self.cli(armar_corte(self, fecha="2026-11-25"), "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("lotes: 2 fichas del corte con lote; 2 fichas de cortes anteriores con lote to clear", out)
+        code, out, err = self.cli(armar_corte(self, fecha="2026-11-25"))
+        self.assertEqual(code, 0, err)
+        self.assertIn("2 fichas de cortes anteriores con lote cleared", out)
+        por_corte = self.lotes_por_corte()
+        self.assertEqual(set(por_corte[self.corte_id(FECHA)].values()), {None})
+        self.assertEqual(sum(1 for g in por_corte[self.corte_id("2026-11-25")].values() if g), 2)
+        # the clearing PATCHes send only the geometry, with the corte's reason
+        limpiar = [(b, r) for (m, p, _, b), (_, _, r) in zip(self.core.requests, self.core.reasons)
+                   if m == "PATCH" and "/brecha_ficha/" in p and b.get("geometries") == {"lote_geom": None}]
+        self.assertEqual(len(limpiar), 2)
+        self.assertTrue(all(b["attributes"] == {} and r == "corte-brecha:ica-prueba:2026-11-25" for b, r in limpiar))
+        # --con-geometria-anterior keeps them
+        code, out, err = self.cli(armar_corte(self, fecha="2026-12-25"), "--con-geometria-anterior")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sum(1 for g in self.lotes_por_corte()[self.corte_id("2026-11-25")].values() if g), 2)
+        self.assertIn("0 fichas de cortes anteriores con lote cleared", out)
+
+    def test_un_corte_anterior_cargado_despues_no_lleva_lote(self):
+        self.con_lotes()
+        self.assertEqual(self.cli(armar_corte(self, fecha="2026-11-25"))[0], 0)
+        code, out, err = self.cli(armar_corte(self))
+        self.assertEqual(code, 0, err)
+        self.assertIn("lotes: 0 fichas del corte con lote (hay un corte más reciente: este no lleva lotes)", out)
+        por_corte = self.lotes_por_corte()
+        self.assertEqual(set(por_corte[self.corte_id(FECHA)].values()), {None})
+        self.assertEqual(sum(1 for g in por_corte[self.corte_id("2026-11-25")].values() if g), 2)
+
+    def test_con_geometria_anterior_un_corte_anterior_conserva_sus_lotes(self):
+        self.con_lotes()
+        self.assertEqual(self.cli(armar_corte(self))[0], 0)
+        self.assertEqual(self.cli(armar_corte(self, fecha="2026-11-25"), "--con-geometria-anterior")[0], 0)
+        # reloading the older corte, now not the latest, with --con-geometria-anterior: its lotes stay as they are
+        self.core.requests.clear()
+        code, out, err = self.cli(armar_corte(self), "--con-geometria-anterior")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sum(1 for g in self.lotes_por_corte()[self.corte_id(FECHA)].values() if g), 2)
+        self.assertEqual(self.escrituras(), [])
+
+    def test_un_corte_mas_nuevo_a_medio_cargar_no_le_quita_los_lotes_al_ultimo(self):
+        self.con_lotes()
+        self.assertEqual(self.cli(armar_corte(self))[0], 0)
+        # a newer corte whose load crashed: no cargado_en, the API does not show it
+        self.core.add_record("corte_brecha", {"clave": "ica-prueba|2026-12-01", "org_slug": ORG, "fecha": "2026-12-01",
+                                              "anio": 2026})
+        code, out, err = self.cli(armar_corte(self))
+        self.assertEqual(code, 0, err)
+        self.assertEqual(sum(1 for g in self.lotes_por_corte()[self.corte_id(FECHA)].values() if g), 2)
+
+    def test_los_lotes_anteriores_se_buscan_con_un_bbox_en_el_servidor(self):
+        self.con_lotes()
+        self.assertEqual(self.cli(armar_corte(self))[0], 0)
+        self.assertEqual(self.cli(armar_corte(self, fecha="2026-11-25"))[0], 0)
+        [(objeto, caja, geometria)] = [q for q in self.core.bbox_queries]
+        self.assertEqual((objeto, geometria), ("brecha_ficha", "lote_geom"))
+        x0, y0, x1, y1 = (float(v) for v in caja.split(","))
+        self.assertTrue(x0 < -75.73 < x1 and y0 < -14.07 < y1, caja)
+
+    def test_un_codigo_de_dos_predios_no_toma_lote(self):
+        self.con_lotes()
+        self.core.add_record("predio_catastral", {"codigo_municipal": "01-02-0005"},
+                             geometries={"lote_geom": lote("01-02-0005", dx=0.01)})
+        code, out, err = self.cli(armar_corte(self))
+        self.assertEqual(code, 0, err)
+        self.assertIsNone(self.lotes_por_corte()[self.corte_id(FECHA)]["PR-5"])
+        self.assertIn("lotes: 1 fichas del corte con lote, 1 códigos de dos o más predios sin lote", out)
+
+
+def lote(codigo, dx=0.0):
+    """A small fictitious square in Ica (EPSG:4326), a different one per code."""
+    x, y = -75.73 + int(codigo[-1]) * 0.001 + dx, -14.07
+    return {"type": "Polygon", "coordinates": [[[x, y], [x + 0.0001, y], [x + 0.0001, y + 0.0001], [x, y]]]}
 
 
 if __name__ == "__main__":

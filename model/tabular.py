@@ -225,25 +225,33 @@ def post_all(client, object_name, items, workers):
 
 
 def write_all(client, ops, workers, reason):
-    """Writes (key, fila, method, object_name, record_id, attributes) ops with X-Change-Reason `reason`.
+    """Writes (key, fila, method, object_name, record_id, attributes[, geometries]) ops with X-Change-Reason `reason`.
 
-    POST creates (attributes with None stripped, as `payload`); PATCH merges `attributes` as given, so a None clears
-    a field; DELETE ignores `attributes`. Returns key -> new id (POST only). The first refusal raises LoadError and
-    cancels the rest (as post_all).
+    POST creates (attributes with None stripped, as `payload`; geometries too); PATCH merges `attributes` as given,
+    so a None clears a field, and `geometries` when the op has them (a None clears that geometry); DELETE ignores
+    both. Returns key -> new id (POST only). The first refusal raises LoadError and cancels the rest (as post_all).
     """
     ids = {}
     if not ops:
         return ids
 
     def one(op):
-        key, fila, method, object_name, record_id, attributes = op
+        key, fila, method, object_name, record_id, attributes, *resto = op
+        geometries = resto[0] if resto else None
         path = f"/api/objects/{object_name}/records"
         try:
             if method == "POST":
-                _, record = client.post(path, payload(attributes), reason=reason)
+                body = payload(attributes)
+                presentes = {k: v for k, v in (geometries or {}).items() if v is not None}
+                if presentes:
+                    body["geometries"] = presentes
+                _, record = client.post(path, body, reason=reason)
                 return key, record["id"]
             if method == "PATCH":
-                client.patch(f"{path}/{record_id}", {"attributes": attributes}, reason=reason)
+                body = {"attributes": attributes}
+                if geometries is not None:
+                    body["geometries"] = geometries
+                client.patch(f"{path}/{record_id}", body, reason=reason)
             elif method == "DELETE":
                 client.delete(f"{path}/{record_id}", reason=reason)
             else:

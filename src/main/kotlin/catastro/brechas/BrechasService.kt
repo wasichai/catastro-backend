@@ -294,11 +294,7 @@ class BrechasService(
 
     // by fecha, the most recent first; two cortes of a day by clave. a corte without cargado_en is one
     // importar_corte_brecha.py is still loading (or left half done): never shown
-    private suspend fun cortesCompletos(): List<CorteBrecha> =
-        registros
-            .todas(CORTE_BRECHA, CorteBrecha::class.java, sort = "clave")
-            .filter { !it.cargadoEn.isNullOrBlank() }
-            .sortedWith(compareByDescending<CorteBrecha, String?>(nullsFirst()) { it.fecha }.thenByDescending { it.clave })
+    private suspend fun cortesCompletos(): List<CorteBrecha> = completos(registros.todas(CORTE_BRECHA, CorteBrecha::class.java, sort = "clave"))
 
     // the caller, once it holds `accion` on `objeto` (403 otherwise)
     private suspend fun exigir(

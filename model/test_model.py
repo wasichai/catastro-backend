@@ -39,7 +39,7 @@ OBJETOS = {
         {"codigo_municipal"}, set()),
     "tramo_via": (
         ["clave", "fid_eje", "cod_via_eje", "tip_via", "nom_via", "ubigeo", "fuente", "cuadra", "lado", "id_aranc",
-         "asignacion", "geom"],
+         "asignacion", "geom", "valor_m2", "anio_valor"],
         {"clave", "fid_eje", "lado", "asignacion"}, {"clave"}),
     "corte_brecha": (
         ["clave", "org_slug", "fecha", "corrida", "anio", "manifiesto_sha256", "version_srtm", "version_catastro",
@@ -50,7 +50,7 @@ OBJETOS = {
         ["clave", "codigo_catastro", "codigo_municipal", "codigo_predio", "categoria", "confianza", "confianza_motivo",
          "sector", "manzana", "lote", "uso", "autoavaluo_declarado", "autoavaluo_catastro", "delta_autoavaluo",
          "impuesto_declarado", "impuesto_catastro", "delta_impuesto", "delta_arbitrios", "estimado", "motivo",
-         "supera_5_uit"],
+         "supera_5_uit", "estado", "lote_geom"],
         {"clave", "categoria"}, {"clave"}),
     "decision_brecha": (
         ["clave", "codigo_municipal", "anio", "estado", "responsable", "nota", "motivo_descarte", "decidido_en",
@@ -181,6 +181,8 @@ class ModelTests(unittest.TestCase):
         self.assertEqual((f["asignacion"]["type"], f["asignacion"]["enum"]), ("ENUM", "asignacion_tramo"))
         self.assertEqual((f["fid_eje"]["type"], f["id_aranc"]["type"]), ("INTEGER", "TEXT"))
         self.assertEqual(self.objects["tramo_via"]["indexes"], [["id_aranc"], ["cod_via_eje"]])
+        # the copy of the year's arancel the map view and the WMS layer colour by (the server keeps it)
+        self.assertEqual((f["valor_m2"]["type"], f["anio_valor"]["type"]), ("DECIMAL", "INTEGER"))
 
     def test_la_brecha_de_un_corte_y_su_bandeja(self):
         # the contract of the brechas dashboard (catastro-ui): a corte per org and fecha, its fichas hanging from it,
@@ -196,6 +198,12 @@ class ModelTests(unittest.TestCase):
         for name in ("autoavaluo_declarado", "delta_autoavaluo", "delta_impuesto", "delta_arbitrios"):
             self.assertEqual(ficha[name]["type"], "DECIMAL", name)
         self.assertEqual((ficha["estimado"]["type"], ficha["supera_5_uit"]["type"]), ("BOOLEAN", "BOOLEAN"))
+        # the copies the map view and the WMS layer colour and draw: the decision's estado and the predio's lote, in
+        # the srid of predio_catastral.lote_geom
+        self.assertEqual((ficha["estado"]["type"], ficha["estado"]["enum"]), ("ENUM", "estado_decision"))
+        lote = {x["name"]: x for x in self.objects["predio_catastral"]["fields"]}["lote_geom"]
+        self.assertEqual((ficha["lote_geom"]["type"], ficha["lote_geom"]["geometryType"], ficha["lote_geom"]["srid"]),
+                         ("GEOMETRY", "POLYGON", lote["srid"]))
         self.assertEqual(self.objects["brecha_ficha"]["indexes"],
                          [["corte", "categoria"], ["corte", "confianza"], ["corte", "sector"], ["codigo_municipal"]])
         corte = {x["name"]: x for x in self.objects["corte_brecha"]["fields"]}
