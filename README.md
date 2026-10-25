@@ -381,6 +381,52 @@ python3 -I import_fichas.py --fichas ~/ica/entrega/fichas.csv --pisos ~/ica/entr
 
 Volver a cargar el VPS de pruebas de Ica con esta salida es una operación a mano, fuera de este repositorio.
 
+### Aranceles de las fichas
+
+El arancel de una ficha (`predio_catastral.id_aranc`) debe ser uno **vigente**: una clave `<id_aranc>|<año>` que existe
+en `arancel` para el año, porque catastro guarda solo la copia de los aranceles vigentes de srtm (ADR-012).
+`aranceles_no_vigentes.py --anio <año>` lee las fichas y los aranceles del Core y lista las que no lo cumplen, sin
+escribir nada. Con `--padron` lee además el código de vía del padrón del SAT (xlsx o csv; hoja `PREDIO URBANO`,
+columnas `Código Predio` y `Codigo de via`; `--hoja`, `--columna-codigo` y `--columna-via` las cambian). Los códigos
+se leen sin espacios, una celda vacía no cuenta, y una ficha tiene los códigos de todas las filas del padrón con su
+código, con su frecuencia.
+
+Los motivos (una ficha puede tener varios, y cada uno cuenta):
+
+- `id_aranc_vacio`: la ficha no tiene `id_aranc`;
+- `clave_inexistente`: no hay arancel con ese `id_aranc` para el año;
+- `clave_provisional`: el `id_aranc` no tiene el formato de código de vía (`^\d{10}-\d{2}$`), p. ej. `R<valor>`;
+- `varios_codigos_alguno_no_vigente` (con `--padron`): dos o más códigos, y alguno sin arancel vigente (también
+  cuando los códigos vigentes tienen valores distintos entre sí: cuenta aquí, no en el motivo siguiente);
+- `varios_codigos_valores_distintos` (con `--padron`): dos o más códigos, todos vigentes, con `valor_m2` distintos;
+- `codigo_sin_arancel_vigente` (con `--padron`): ninguno de sus códigos tiene arancel vigente.
+
+Con `--padron` también cuenta `sin_padron` (fichas sin fila en el padrón) y lo que haría la corrección: `corregibles`,
+`ya_apunta` y `sin_levantar_no_se_corrige`. Cada motivo y `sin_padron` salen con su parte por estado, p. ej.
+`codigo_sin_arancel_vigente: 8488 (levantadas 5273, sin levantar 3215)`: las levantadas son las `COMPLETO` y
+`PARCIAL` (y las sin estado), las otras las `SIN_LEVANTAR`, que la corrección no toca. `--reporte reporte.csv` escribe
+una fila por ficha y motivo (`codigo_municipal,id_aranc,estado_levantamiento,motivo,codigos_padron`, los códigos
+separados por `;`). El padrón trae datos personales (Ley 29733): de él solo salen el código del predio y los códigos de
+vía.
+
+**Corrección.** Con `--entrega <codigo> --fecha-corte AAAA-MM-DD` (y `--padron`), una ficha cuyos códigos tienen
+**todos** arancel vigente y del **mismo** valor pasa a apuntar al código más frecuente (en un empate, el menor); si
+algún código no tiene arancel vigente o los valores difieren, no se toca y queda en el reporte. No se estima nada. Se
+dejan las fichas que ya apuntan a ese código y las `SIN_LEVANTAR`. El script escribe `cod_pre,id_aranc` (en `--csv`, o
+en una carpeta temporal nueva) y lo carga con `import_fichas.py --entrega <codigo> --fuente OTRA` (más `--descripcion`
+y `--dry-run` si se dan): la entrega compara solo las columnas que trae el archivo, así que solo cambia `id_aranc`
+([Entregas](#entregas)). Sin nada que corregir, no llama a `import_fichas.py`.
+
+Es repetible: se corre de nuevo cada vez que normativa publica aranceles nuevos (por ejemplo, al llegar el padrón
+completo con todas las vías), con un código de entrega nuevo. Lo ya corregido no vuelve a salir.
+
+```sh
+python3 -I aranceles_no_vigentes.py --anio 2026 --padron padron_sat.xlsx --reporte ~/ica/aranceles.csv
+python3 -I aranceles_no_vigentes.py --anio 2026 --padron padron_sat.xlsx \
+  --entrega ICA-ARANCEL-VIA-2026-11 --fecha-corte 2026-11-01 --dry-run
+# revisado el reporte, la misma línea sin --dry-run
+```
+
 ## Región de la organización
 
 Los valores unitarios de edificación y de obras complementarias de la R.M. N.° 277-2025-VIVIENDA son distintos por
