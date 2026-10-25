@@ -1,6 +1,7 @@
 # ADR-008: El modelo y los cargadores son Python con la biblioteca estándar, idempotentes y aislados
 
-**Estado**: aceptada · 2026-10-19 · enmendada el 2026-10-20 (`python3 -I`)
+**Estado**: aceptada · 2026-10-19 · enmendada el 2026-10-20 (`python3 -I`) · enmendada por
+[ADR-013](0013-el-levantamiento-llega-por-entregas.md) (upsert por entregas)
 
 ## Contexto
 
