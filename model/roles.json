@@ -3,7 +3,7 @@
     {
       "name": "SRTM_LECTOR",
       "label": "Lector de srtm",
-      "description": "El rol de la cuenta de servicio de srtm-backend: lee el levantamiento (predios, construcciones, obras complementarias, aranceles, entregas y titulares) y la región de la organización para pedir sus valuaciones por año (GET /api/catastro/valuaciones) y valuar insumos sueltos (POST /api/catastro/valuacion). Escribe solo los aranceles: srtm es su dueño (su módulo de normativa los registra y verifica con doble firma) y catastro guarda la copia con que valúa (wasichai/catastro-backend#18).",
+      "description": "El rol de la cuenta de servicio de srtm-backend: lee el levantamiento (predios, construcciones, obras complementarias, aranceles, entregas, titulares y tramos de vía) y la región de la organización para pedir sus valuaciones por año (GET /api/catastro/valuaciones) y valuar insumos sueltos (POST /api/catastro/valuacion). Escribe solo los aranceles: srtm es su dueño (su módulo de normativa los registra y verifica con doble firma) y catastro guarda la copia con que valúa (wasichai/catastro-backend#18).",
       "permisos": {
         "predio_catastral": [
           "READ"
@@ -27,6 +27,37 @@
           "READ"
         ],
         "titular_catastral": [
+          "READ"
+        ],
+        "tramo_via": [
+          "READ"
+        ]
+      }
+    },
+    {
+      "name": "CATASTRO_LECTOR",
+      "label": "Lector de catastro",
+      "description": "El rol del personal municipal que consulta catastro-ui sin editar: lee las fichas (predios, construcciones y obras complementarias), las entregas del levantamiento, la región de la organización, los aranceles y los tramos de vía, lo que pide la página «Aranceles por vía» (GET /api/catastro/vias/aranceles lee tramo_via y arancel). Solo lectura: no crea, no cambia ni borra nada. No lee titular_catastral, que son datos personales (Ley 29733) y solo lee SRTM_LECTOR.",
+      "permisos": {
+        "predio_catastral": [
+          "READ"
+        ],
+        "construccion": [
+          "READ"
+        ],
+        "obra_complementaria": [
+          "READ"
+        ],
+        "arancel": [
+          "READ"
+        ],
+        "configuracion_catastro": [
+          "READ"
+        ],
+        "entrega_catastral": [
+          "READ"
+        ],
+        "tramo_via": [
           "READ"
         ]
       }

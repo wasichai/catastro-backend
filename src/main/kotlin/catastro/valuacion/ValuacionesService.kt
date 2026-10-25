@@ -45,7 +45,7 @@ class ValuacionesService(
             } else {
                 registros.conCampoEn(OBRA_COMPLEMENTARIA, FichaObra::class.java, PREDIO, ids, sort = "codigo_vu").groupBy { it.predio }
             }
-        val aranceles = aranceles(predios.content.mapNotNull { it.idAranc }, anio)
+        val aranceles = registros.arancelesDelAnio(predios.content.mapNotNull { it.idAranc }, anio)
         val entregas = entregas(predios.content.mapNotNull { it.entrega })
         val items =
             predios.content.map { p ->
@@ -135,7 +135,7 @@ class ValuacionesService(
                     .conCampoEn(PREDIO_CATASTRAL, PredioCatastral::class.java, "codigo_municipal", listOf(codigo))
                     .firstOrNull()
                     ?.idAranc
-                    ?.let { aranceles(listOf(it), pedido.insumos.anio)[it]?.valorM2 }
+                    ?.let { registros.arancelesDelAnio(listOf(it), pedido.insumos.anio)[it]?.valorM2 }
             }
         val insumos = if (deLaFicha == null) pedido.insumos else pedido.insumos.copy(arancelM2 = deLaFicha)
         val v = Valorizacion.valorizar(insumos, tablas)
@@ -162,19 +162,6 @@ class ValuacionesService(
             detalle = valor?.detalle
         )
     }
-
-    // the year's arancel of each vía, by id_aranc. unique per (id_aranc, anio); arancel.clave guards that pair on write
-    private suspend fun aranceles(
-        idsArancel: List<String>,
-        anio: Int
-    ): Map<String?, Arancel> =
-        if (idsArancel.isEmpty()) {
-            emptyMap()
-        } else {
-            registros
-                .conCampoEn(ARANCEL, Arancel::class.java, "id_aranc", idsArancel.distinct(), filters = mapOf("anio" to anio.toString()))
-                .associateBy { it.idAranc }
-        }
 
     // the entregas the page's predios point at, read once by id (Registros.porIds): the item's "entrega" key is the
     // codigo, never the relation's own id

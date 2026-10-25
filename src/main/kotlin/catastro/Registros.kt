@@ -60,6 +60,14 @@ class Registros(
             records.list(objectName, RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), ids = grupo, count = false)).content.map { read(type, it) }
         }
 
+    // every record of an object, in one keyset pass sorted by `sort` (no COUNT, no OFFSET): for a layer drawn whole,
+    // such as the tramos de vía of the map
+    suspend fun <T : Any> todas(
+        objectName: String,
+        type: Class<T>,
+        sort: String
+    ): List<T> = todas(objectName, RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), sort = sort, count = false)).map { read(type, it) }
+
     private suspend fun todas(
         objectName: String,
         primera: RecordQuery

@@ -37,6 +37,10 @@ OBJETOS = {
     "titular_catastral": (
         ["codigo_municipal", "tipo_documento", "numero_documento", "nombre", "porcentaje", "condicion"],
         {"codigo_municipal"}, set()),
+    "tramo_via": (
+        ["clave", "fid_eje", "cod_via_eje", "tip_via", "nom_via", "ubigeo", "fuente", "cuadra", "lado", "id_aranc",
+         "asignacion", "geom"],
+        {"clave", "fid_eje", "lado", "asignacion"}, {"clave"}),
 }
 
 
@@ -149,6 +153,19 @@ class ModelTests(unittest.TestCase):
         f = {x["name"]: x for x in self.objects["predio_catastral"]["fields"]}
         self.assertEqual((f["tipo_predio"]["type"], f["tipo_predio"]["enum"]), ("ENUM", "tipo_predio"))
         self.assertNotIn("required", f["tipo_predio"])
+
+    def test_a_tramo_de_via_is_a_line_in_utm_with_its_frente_and_its_arancel(self):
+        # the plano predial values a vía by frente (cuadra and lado): one tramo_via per frente, keyed by the eje's fid
+        # and its lado (clave = fid|lado, import_vias.py); id_aranc is the SAT code, its valor_m2 is read per year
+        f = {x["name"]: x for x in self.objects["tramo_via"]["fields"]}
+        self.assertEqual((f["geom"]["type"], f["geom"]["geometryType"], f["geom"]["srid"]),
+                         ("GEOMETRY", "MULTILINESTRING", 32718))
+        self.assertEqual(self.model["enums"]["lado_tramo"], ["AMBOS", "IZQUIERDO", "DERECHO"])
+        self.assertEqual(self.model["enums"]["asignacion_tramo"], ["NOMBRE_UNICO", "CERCANIA", "SIN_ARANCEL"])
+        self.assertEqual((f["lado"]["type"], f["lado"]["enum"]), ("ENUM", "lado_tramo"))
+        self.assertEqual((f["asignacion"]["type"], f["asignacion"]["enum"]), ("ENUM", "asignacion_tramo"))
+        self.assertEqual((f["fid_eje"]["type"], f["id_aranc"]["type"]), ("INTEGER", "TEXT"))
+        self.assertEqual(self.objects["tramo_via"]["indexes"], [["id_aranc"], ["cod_via_eje"]])
 
 
 if __name__ == "__main__":

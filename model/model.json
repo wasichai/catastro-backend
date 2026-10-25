@@ -13,7 +13,9 @@
     "estado_levantamiento": ["SIN_LEVANTAR", "PARCIAL", "COMPLETO"],
     "fuente_entrega": ["BARRIDO", "INSPECCION", "LICENCIA", "GIS", "OTRA"],
     "vinculo_metodo": ["CODIGO_RENTAS", "LLAVE_HU_MZ_LOTE", "GEOMETRICO", "MANUAL"],
-    "tipo_predio": ["URBANO", "RUSTICO"]
+    "tipo_predio": ["URBANO", "RUSTICO"],
+    "lado_tramo": ["AMBOS", "IZQUIERDO", "DERECHO"],
+    "asignacion_tramo": ["NOMBRE_UNICO", "CERCANIA", "SIN_ARANCEL"]
   },
   "objects": [
     {
@@ -467,6 +469,97 @@
           "label": "Condición",
           "type": "TEXT",
           "description": "Propietario, poseedor u otra condición, tal como la nombra el padrón de origen."
+        }
+      ]
+    },
+    {
+      "name": "tramo_via",
+      "label": "Tramo de vía",
+      "pluralLabel": "Tramos de vía",
+      "description": "Un frente de un tramo del eje vial con el código SAT de su arancel (id_aranc). El valor por m2 no se copia aquí: GET /api/catastro/vias/aranceles lo lee de arancel por id_aranc y año. Lo carga model/import_vias.py, una fila por frente: AMBOS, o IZQUIERDO y DERECHO cuando cada lado tiene su código (notas 2 y 3 del plano predial).",
+      "indexes": [
+        ["id_aranc"],
+        ["cod_via_eje"]
+      ],
+      "fields": [
+        {
+          "name": "clave",
+          "label": "Clave",
+          "type": "TEXT",
+          "required": true,
+          "unique": true,
+          "description": "fid del eje|lado: wasichai no tiene únicos compuestos, esta clave hace idempotente la carga."
+        },
+        {
+          "name": "fid_eje",
+          "label": "fid del eje",
+          "type": "INTEGER",
+          "required": true,
+          "description": "El fid del tramo en la capa del eje vial (cf_eje_vial)."
+        },
+        {
+          "name": "cod_via_eje",
+          "label": "Código de vía del eje",
+          "type": "TEXT",
+          "description": "cod_via de la capa del eje vial. No es el código SAT."
+        },
+        {
+          "name": "tip_via",
+          "label": "Tipo de vía",
+          "type": "TEXT",
+          "description": "Abreviatura del tipo de vía (CA., AV., JR., ...), tal como la trae el eje."
+        },
+        {
+          "name": "nom_via",
+          "label": "Nombre de la vía",
+          "type": "TEXT"
+        },
+        {
+          "name": "ubigeo",
+          "label": "Ubigeo",
+          "type": "TEXT"
+        },
+        {
+          "name": "fuente",
+          "label": "Fuente",
+          "type": "TEXT",
+          "description": "La fuente del tramo, tal como la trae el eje."
+        },
+        {
+          "name": "cuadra",
+          "label": "Cuadra",
+          "type": "TEXT",
+          "description": "Vacía mientras el eje no traiga la cuadra."
+        },
+        {
+          "name": "lado",
+          "label": "Lado",
+          "type": "ENUM",
+          "enum": "lado_tramo",
+          "required": true,
+          "description": "AMBOS, o IZQUIERDO o DERECHO según el sentido de la línea."
+        },
+        {
+          "name": "id_aranc",
+          "label": "Identificador de arancel",
+          "type": "TEXT",
+          "description": "El código SAT de la vía (por ejemplo 0010000401-01), el mismo id_aranc de arancel. Vacío si no tiene."
+        },
+        {
+          "name": "asignacion",
+          "label": "Asignación",
+          "type": "ENUM",
+          "enum": "asignacion_tramo",
+          "required": true,
+          "description": "Cómo se le asignó el código: NOMBRE_UNICO (su nombre es de un solo código), CERCANIA (los lotes de ese código están de ese lado, a 30 m o menos) o SIN_ARANCEL."
+        },
+        {
+          "name": "geom",
+          "label": "Eje",
+          "type": "GEOMETRY",
+          "geometryType": "MULTILINESTRING",
+          "srid": 32718,
+          "description": "El eje del tramo (UTM 18S). Un LineString se guarda como MultiLineString de una parte."
         }
       ]
     }

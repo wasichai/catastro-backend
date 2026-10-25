@@ -22,6 +22,7 @@ class Client:
     def __init__(self, base_url):
         self.base_url = base_url.rstrip("/")
         self.token = None
+        self.user = None  # the login's "user" (id, email, organizationId, roles), when Core sends it
 
     def _call(self, method, path, body=None, use_auth=True, reason=None):
         url = self.base_url + path
@@ -56,6 +57,7 @@ class Client:
         if not isinstance(result, dict) or "token" not in result:
             raise CoreError("no token in response", "")
         self.token = result["token"]
+        self.user = result.get("user")
         return self.token
 
     def get(self, path):

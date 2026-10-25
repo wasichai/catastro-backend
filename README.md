@@ -42,10 +42,11 @@ yarn install && yarn format:check
 ## Modelo y carga
 
 El modelo (`model/model.json`) y los cargadores son Python solo con la biblioteca estándar, con la forma de los de
-srtm-backend. Siete objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
+srtm-backend. Ocho objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
 `construccion`, `obra_complementaria` y `titular_catastral` (cuelgan de un predio; este último, datos personales de
 Ley 29733, ver [Modelo y carga](#modelo-y-carga)), `arancel`, `configuracion_catastro` (la región de la organización, ver
-abajo) y `entrega_catastral` (cada entrega del levantamiento, ver [Entregas](#entregas)). wasichai
+abajo) y `entrega_catastral` (cada entrega del levantamiento, ver [Entregas](#entregas)) y `tramo_via` (un frente del eje vial con el código SAT
+de su arancel, ver «Vías» abajo). wasichai
 no tiene únicos compuestos, así que `arancel.clave` (`id_aranc|anio`) garantiza el par único. `codigo_vu` de una obra
 es `TIPO DE OBRA|número`, como `obra_categoria` de srtm (`model/data/obras_complementarias.csv`).
 
@@ -157,6 +158,68 @@ python3 -I import_lotes.py --geojson lotes.geojson --map codigo_municipal=COD_PR
 python3 -I import_lotes.py --geojson lotes.geojson --actualizar-geometria --entrega GIS-2026-10 \
   --fecha-corte 2026-10-01 --fuente GIS
 ```
+
+**Vías** (`import_vias.py`): el eje vial de un GeoPackage hacia `tramo_via`, cada frente con el código SAT de su
+arancel (`id_aranc`, el `codigo_de_via` completo del padrón, por ejemplo `0010000401-01`). Lee con `sqlite3`, sin GDAL,
+`cf_eje_vial`, `cf_lotes_pol` y `padron_predial` de `--gpkg` (las tres en EPSG:32718; el encabezado del GeoPackage y el
+WKB se leen a mano), y de la hoja `padron` de `--padron-xlsx` solo `codigo_predio`, `codigo_de_via`,
+`nombre_de_la_via` y `tipo_predio` (se quedan los urbanos, `tipo_predio` 1). El gpkg se abre con
+`mode=ro&immutable=1`, así que SQLite no crea `-shm` ni `-wal` junto al archivo. Un eje de varias partes se orienta
+primero: las partes se encadenan por sus extremos comunes y la que corre al revés se invierte (una parte suelta sigue
+el sentido de la primera), así la izquierda y la derecha son la misma acera en todo el tramo, y esa geometría
+orientada es la que va al Core, para que el `line-offset` del mapa coincida. El plano predial fija el valor por frente
+de vía (notas 2 y 3), así que cada tramo se asigna así:
+
+1. su nombre normalizado (sin tildes, PROLONGACIÓN como PROL. y AVENIDA/AVDA. como AV., sin el tipo inicial CA., AV.,
+   JR., PJE., etc., con los espacios colapsados) es de un solo código urbano, y ningún otro `cod_via` del eje se llama
+   igual (un segmento sin `cod_via` no cuenta): `NOMBRE_UNICO`, una fila `AMBOS`;
+2. si no, los lotes de los predios de cada código con ese nombre (`cod_predio` → `id_lote_p_vinculado` →
+   `cf_lotes_pol`) se ubican a la izquierda o a la derecha del tramo (el signo del producto cruz con su segmento más
+   cercano; un lote más allá de un extremo no cuenta). Cada lado toma el código con más lotes a `--distancia` metros o
+   menos (30), y un empate lo decide el lote más cercano: `CERCANIA`. Así un solo predio mal vinculado no le gana a
+   una cuadra entera. Si los dos lados dan el mismo código, o solo un lado tiene lotes, queda
+   una fila `AMBOS`; si dan dos códigos, dos filas, `IZQUIERDO` y `DERECHO` (según el sentido de la línea);
+3. si nada se cumple, o el tramo es «SIN NOMBRE»: `SIN_ARANCEL`, una fila `AMBOS` sin `id_aranc`.
+
+**Por qué una línea con lado.** El arancel urbano se fija por frente de vía (cuadra y lado), no por sector: así lo
+aprueba la RM 514-2025-EF/15 en el plano predial, cuyas notas 2 y 3 dicen que el valor al centro de la calle rige
+para los dos frentes y el que está dentro de la manzana solo para ese frente. Por eso la geometría de `tramo_via` es
+una línea con su lado, y el código SAT del padrón (`0010000401-01`, `-02`) es uno por frente.
+
+**Regla para varios códigos de vía.** Una ficha vinculada a varios `codigo_de_via` (uno por frente; la entrega que
+reapunta el `id_aranc` de las fichas la aplica):
+
+- si todos esos códigos tienen el mismo valor de arancel en el año, toma el código más frecuente;
+- si sus valores difieren, la ficha queda sin cambio y se reporta para revisión.
+
+`cuadra` queda vacía: el eje no la trae. La geometría va al Core en GeoJSON EPSG:4326, como `MultiLineString`
+(wasichai-gis la guarda en la 32718 de la columna); la conversión desde UTM 18S es la serie de Krüger en Python, sin
+proj. El comando es idempotente por `tramo_via.clave` = `<ubigeo>|<fid>|<lado>`: crea lo que falta, actualiza
+(`PATCH`) lo que cambió (atributos, o un vértice a más de 1e-6 grados) y borra la fila de un eje cuyo lado ya no sale
+(un `AMBOS` que ahora es `IZQUIERDO` y `DERECHO`, o al revés). Las filas de un ubigeo del archivo cuyo fid el archivo
+ya no trae solo se cuentan; `--borrar-ausentes` las borra (el `--dry-run` dice cuántas). **Un eje reexportado o
+editado (sus fid cambian) se carga con `--borrar-ausentes`**, primero en dry-run; si no, sus tramos viejos siguen en el
+mapa. Las filas de otro ubigeo nunca se tocan. Solo imprime conteos: tramos por asignación, ejes partidos por lado,
+ejes multiparte, partes invertidas, lados decididos por un solo lote, y códigos sin tramo, sin lotes y con lotes
+lejanos.
+`--revision` escribe un csv con `cod_via_eje`, `fid_eje`, `lado`, `id_aranc` y `asignacion`, sin datos personales, y
+se niega a escribirlo dentro del repositorio. `--org` espera el **id** (UUID) de la organización, no su slug: se niega
+a escribir si la cuenta de `--email` es de otra, y el error dice el id de la organización de la cuenta. `--dry-run` lee el Core y dice cuánto crearía, actualizaría y borraría, sin escribir nada.
+
+```sh
+python3 -I import_vias.py --gpkg ica.gpkg --padron-xlsx PADRON_CONSTRUCCION.xlsx --revision /tmp/revision-vias.csv \
+  --org <id de la organización> --dry-run
+```
+
+**Orden para poner las vías en un despliegue** (cada paso primero en dry-run, con el OK de quien opera la base):
+
+1. `python3 apply.py --diff`, luego `python3 apply.py`: crea `tramo_via` (sin él, `import_vias.py` sale con 1 por el
+   404 y el endpoint responde 404);
+2. `python3 apply_roles.py --dry-run`, luego `python3 apply_roles.py`: el `READ` de `SRTM_LECTOR` sobre `tramo_via`
+   (antes de `apply.py` nombraría un objeto que no existe);
+3. el jar con `GET /api/catastro/vias/aranceles`;
+4. `import_vias.py --dry-run`, luego sin `--dry-run`;
+5. recién entonces catastro-ui con la página «Aranceles por vía» (antes del jar, la página da 404).
 
 ### Entregas
 
@@ -684,7 +747,7 @@ que lee todas las valuaciones sin mirar el feed.
 ```sh
 cd model
 python3 apply.py                 # el modelo, con configuracion_catastro
-python3 apply_roles.py           # crea o sincroniza SRTM_LECTOR (model/roles.json): READ sobre los cinco objetos y la escritura de arancel
+python3 apply_roles.py           # crea o sincroniza SRTM_LECTOR (READ sobre los ocho objetos y la escritura de arancel) y CATASTRO_LECTOR
 python3 configurar_region.py --region SELVA   # la región de la organización (Perené); COSTA para Ica
 python3 crear_cuenta_srtm.py --clave perene   # la cuenta `srtm` con SRTM_LECTOR; imprime clientId y clientSecret
 ```
@@ -720,6 +783,55 @@ anterior). srtm pide su token con `POST /api/auth/token {"clientId", "clientSecr
 
 Si se cambia el jar antes, cada corrida de la brecha de srtm falla en la página 0 con uno de esos códigos, y srtm solo
 muestra el código (no el cuerpo, que dice `configuracion_catastro.region`).
+
+## API para catastro-ui: aranceles por vía
+
+El mapa de catastro-ui pinta cada tramo de vía con su valor arancelario de un año.
+
+```
+GET /api/catastro/vias/aranceles?anio=2026
+Authorization: Bearer <token>
+```
+
+- `anio` de 1900 a 2100; sin él, el año en curso (America/Lima). Un `anio` que no se lee, o un parámetro que sobra, es
+  un **400** que lo nombra (`errors[0].field`): ese es el contrato con catastro-ui.
+- Sin token, **401**. Lee como quien llama: sin `READ` sobre `tramo_via`, **403** de core. También lee `arancel`
+  para el valor: sin `READ` sobre `arancel`, también **403**, así que quien use el mapa necesita `READ` sobre los
+  dos. Para el personal municipal está el rol **`CATASTRO_LECTOR`** («Lector de catastro», `model/roles.json`): solo
+  `READ` sobre las fichas (predios, construcciones, obras), las entregas, la región, los aranceles y los tramos de vía;
+  no crea, no cambia ni borra nada, y no lee `titular_catastral` (datos personales, solo `SRTM_LECTOR`). **La página
+  «Aranceles por vía» de catastro-ui necesita ese rol, o el admin.** `apply_roles.py` lo crea; se asigna a cada
+  usuario en el admin de wasichai.
+- Responde un `FeatureCollection` GeoJSON en EPSG:4326, un `Feature` por fila de `tramo_via` (las que no tienen
+  geometría no se dibujan y no salen), ordenados por `clave`. `id` es el id del registro. Un `MultiLineString` de una
+  parte sale como su `LineString`.
+- `valor_m2` sale del `arancel` con clave `id_aranc|anio`, leído en un solo lote por `id_aranc` como lo leen las
+  valuaciones; nunca se copia al tramo, así que un arancel que srtm sincroniza se ve en el mapa sin escribir nada más.
+  Es `null` si el tramo no tiene `id_aranc` o si su vía no tiene arancel ese año (nunca se toma el de otro año).
+
+```json
+{
+  "type": "FeatureCollection",
+  "features": [
+    {
+      "type": "Feature",
+      "id": "6c1f…",
+      "geometry": { "type": "LineString", "coordinates": [[-75.7300, -14.0700], [-75.7290, -14.0700]] },
+      "properties": {
+        "cod_via_eje": "026220",
+        "tip_via": "CA.",
+        "nom_via": "CA. LOS ÁLAMOS",
+        "cuadra": null,
+        "lado": "AMBOS",
+        "id_aranc": "0010000401-01",
+        "asignacion": "NOMBRE_UNICO",
+        "anio": 2026,
+        "valor_m2": 356.0
+      }
+    }
+  ]
+}
+```
 
 ## Decisiones normativas
 
