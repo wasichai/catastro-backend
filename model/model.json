@@ -12,7 +12,8 @@
     ],
     "estado_levantamiento": ["SIN_LEVANTAR", "PARCIAL", "COMPLETO"],
     "fuente_entrega": ["BARRIDO", "INSPECCION", "LICENCIA", "GIS", "OTRA"],
-    "vinculo_metodo": ["CODIGO_RENTAS", "LLAVE_HU_MZ_LOTE", "GEOMETRICO", "MANUAL"]
+    "vinculo_metodo": ["CODIGO_RENTAS", "LLAVE_HU_MZ_LOTE", "GEOMETRICO", "MANUAL"],
+    "tipo_predio": ["URBANO", "RUSTICO"]
   },
   "objects": [
     {
@@ -148,6 +149,13 @@
           "label": "Código de referencia catastral",
           "type": "TEXT",
           "description": "Ubigeo-sector-manzana-lote-edifica-entrada-piso-unidad, del Sistema Nacional Integrado de Catastro (Ley 28294)."
+        },
+        {
+          "name": "tipo_predio",
+          "label": "Tipo de predio",
+          "type": "ENUM",
+          "enum": "tipo_predio",
+          "description": "URBANO o RUSTICO. Mientras no haya tablas rústicas, un predio RUSTICO sale SinValorizar con motivo PREDIO_RUSTICO (ADR-004, ADR-005)."
         }
       ]
     },

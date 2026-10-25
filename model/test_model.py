@@ -21,7 +21,8 @@ OBJETOS = {
     "predio_catastral": (
         ["codigo_municipal", "codigo_cpu", "sector", "manzana", "lote", "id_aranc", "cod_via", "cuadra", "lado", "uso",
          "area_terreno", "longitud_frente", "anio_levantamiento", "es_edificio", "lote_geom", "fecha_levantamiento",
-         "estado_levantamiento", "vinculo_metodo", "vinculo_revisado", "cuc", "codigo_referencia_catastral"],
+         "estado_levantamiento", "vinculo_metodo", "vinculo_revisado", "cuc", "codigo_referencia_catastral",
+         "tipo_predio"],
         {"codigo_municipal"}, {"codigo_municipal"}),
     "construccion": (["piso", "area_construida", "anio_construccion", "material", "estado_conservacion", *CATEGORIAS,
                       "techo_incluido", "clasificacion", "seccion"], set(), set()),
@@ -141,6 +142,13 @@ class ModelTests(unittest.TestCase):
     def test_titulares_page_by_codigo_municipal(self):
         # contract 2 pages /titulares by codigo_municipal then id: Core orders by one field of the object itself
         self.assertEqual(self.objects["titular_catastral"]["indexes"], [["codigo_municipal"]])
+
+    def test_tipo_predio_is_urbano_or_rustico(self):
+        # contract 4: tipo_predio ENUM URBANO|RUSTICO, optional (valuacion-v3, ADR-004/005)
+        self.assertEqual(self.model["enums"]["tipo_predio"], ["URBANO", "RUSTICO"])
+        f = {x["name"]: x for x in self.objects["predio_catastral"]["fields"]}
+        self.assertEqual((f["tipo_predio"]["type"], f["tipo_predio"]["enum"]), ("ENUM", "tipo_predio"))
+        self.assertNotIn("required", f["tipo_predio"])
 
 
 if __name__ == "__main__":

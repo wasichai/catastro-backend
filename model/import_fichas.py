@@ -15,7 +15,8 @@ Default columns follow the MEF carga masiva contract (kamayuk ContratoDeImportac
           cod_via, cuadra, lado, uso, area_terreno, longitud_frente, anio_levantamiento, es_edificio, and the
           levantamiento's own estado_levantamiento (the model's enum) and fecha_levantamiento (YYYY-MM-DD or an
           xlsx serial day number). Four more optional columns for the vínculo with rentas and the SNIC codes (Ley
-          28294): vinculo_metodo (the model's enum), vinculo_revisado (SI/NO), cuc and codigo_referencia_catastral
+          28294): vinculo_metodo (the model's enum), vinculo_revisado (SI/NO), cuc and codigo_referencia_catastral.
+          One more optional column: tipo_predio (the model's enum, URBANO or RUSTICO)
   pisos:  cod_pre -> codigo_municipal, piso, area_construida, anio_construccion, material, estado_conservacion, and
           the seven categories either as one 7-letter text in `categorias` (e.g. CCDCCDC, in the order muros_columnas,
           techos, pisos, puertas_ventanas, revestimientos, banos, instalaciones) or in seven columns named as the fields,
@@ -85,7 +86,7 @@ FICHA_COLUMNS = {
     "area_terreno": "area_terreno", "longitud_frente": "longitud_frente", "anio_levantamiento": "anio_levantamiento",
     "es_edificio": "es_edificio", "estado_levantamiento": "estado_levantamiento", "fecha_levantamiento": "fecha_levantamiento",
     "vinculo_metodo": "vinculo_metodo", "vinculo_revisado": "vinculo_revisado", "cuc": "cuc",
-    "codigo_referencia_catastral": "codigo_referencia_catastral",
+    "codigo_referencia_catastral": "codigo_referencia_catastral", "tipo_predio": "tipo_predio",
 }
 FICHA_TEXT = ["codigo_cpu", "sector", "manzana", "lote", "id_aranc", "cod_via", "cuadra", "lado", "uso", "cuc",
              "codigo_referencia_catastral"]
@@ -219,6 +220,9 @@ def fichas_from(rows, mapping, enums):
         attributes["vinculo_revisado"], error = parse_bool(column_for(row, mapping, "vinculo_revisado"))
         if error:
             found.append(f"vinculo_revisado {error}")
+        attributes["tipo_predio"], error = enum_option(column_for(row, mapping, "tipo_predio"), enums["tipo_predio"])
+        if error:
+            found.append(f"tipo_predio {error}")
         problems.extend(f"fichas {where} ({codigo}): {f}" for f in found)
         fichas.append((row["_fila"], attributes))
     return fichas, problems
