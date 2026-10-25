@@ -1,5 +1,10 @@
 package catastro
 
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.springframework.stereotype.Component
 import tools.jackson.databind.DeserializationFeature
 import tools.jackson.databind.json.JsonMapper
@@ -35,19 +40,41 @@ class Registros(
         campo: String,
         valores: Collection<Any>,
         filters: Map<String, String> = emptyMap(),
-        sort: String? = null
-    ): List<T> =
-        valores.distinct().chunked(PageRequest.MAX_SIZE).flatMap { grupo ->
-            val enGrupo =
-                RecordCriterion { definition, bind ->
-                    val columna = "\"${definition.fields.first { it.name == campo }.columnName}\""
-                    "$columna = ANY(${bind(arreglo(grupo))})"
-                }
-            todas(
-                objectName,
-                RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), sort = sort, filters = filters, criteria = listOf(enGrupo), count = false)
-            ).map { read(type, it) }
+        sort: String? = null,
+        criteria: List<RecordCriterion> = emptyList(),
+        concurrencia: Int = 1
+    ): List<T> {
+        // up to `concurrencia` groups at a time, in their order; the reads run in the caller's coroutine context, so
+        // as the caller
+        val limite = Semaphore(concurrencia)
+        return coroutineScope {
+            valores
+                .distinct()
+                .chunked(PageRequest.MAX_SIZE)
+                .map { grupo ->
+                    async {
+                        limite.withPermit {
+                            val enGrupo =
+                                RecordCriterion { definition, bind ->
+                                    val columna = "\"${definition.fields.first { it.name == campo }.columnName}\""
+                                    "$columna = ANY(${bind(arreglo(grupo))})"
+                                }
+                            todas(
+                                objectName,
+                                RecordQuery(
+                                    page = PageRequest.of(0, PageRequest.MAX_SIZE),
+                                    sort = sort,
+                                    filters = filters,
+                                    criteria = criteria + enGrupo,
+                                    count = false
+                                )
+                            ).map { read(type, it) }
+                        }
+                    }
+                }.awaitAll()
+                .flatten()
         }
+    }
 
     // every record of `ids`, read whole, one query per MAX_SIZE ids: a page's predios point at a handful of entregas,
     // cheaper to fetch once by id than per predio
@@ -66,7 +93,18 @@ class Registros(
         objectName: String,
         type: Class<T>,
         sort: String
-    ): List<T> = todas(objectName, RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), sort = sort, count = false)).map { read(type, it) }
+    ): List<T> = todas(objectName, type, sort, emptyMap())
+
+    // the same pass, over the records that meet `filters` (equality, as core's list reads them): a corte's fichas, the
+    // decisions of a year
+    suspend fun <T : Any> todas(
+        objectName: String,
+        type: Class<T>,
+        sort: String,
+        filters: Map<String, String>
+    ): List<T> =
+        todas(objectName, RecordQuery(page = PageRequest.of(0, PageRequest.MAX_SIZE), sort = sort, filters = filters, count = false))
+            .map { read(type, it) }
 
     private suspend fun todas(
         objectName: String,

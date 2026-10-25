@@ -39,20 +39,25 @@ abstract class CatastroApiTest : WasichaiIntegrationTest() {
         if (region != null) registro(CONFIGURACION_CATASTRO, mapOf("region" to region))
     }
 
-    // a record created by the seeded admin: its id
+    // a record created by the seeded admin (or the admin `token` of another organization): its id
     protected fun registro(
         objeto: String,
         atributos: Map<String, Any?>,
-        geometrias: Map<String, Any?>? = null
+        geometrias: Map<String, Any?>? = null,
+        token: String = admin
     ): String {
         val cuerpo = mutableMapOf<String, Any?>("attributes" to atributos)
         if (geometrias != null) cuerpo["geometries"] = geometrias
-        return arbol(send("POST", "/api/objects/$objeto/records", cuerpo, HttpStatus.CREATED, admin))["id"].asString()
+        return arbol(send("POST", "/api/objects/$objeto/records", cuerpo, HttpStatus.CREATED, token))["id"].asString()
     }
 
-    // a service account with `roles`, signed in through /api/auth/token as srtm does: its Bearer
-    protected fun cuentaDeServicio(roles: List<String>): String {
-        val cuenta = arbol(send("POST", "/api/service-accounts", mapOf("name" to uniqueName("srtm"), "roles" to roles), HttpStatus.CREATED, admin))
+    // a service account with `roles`, signed in through /api/auth/token as srtm does: its Bearer. `token` is the admin
+    // of its organization
+    protected fun cuentaDeServicio(
+        roles: List<String>,
+        token: String = admin
+    ): String {
+        val cuenta = arbol(send("POST", "/api/service-accounts", mapOf("name" to uniqueName("srtm"), "roles" to roles), HttpStatus.CREATED, token))
         val acceso =
             arbol(
                 send(
@@ -60,14 +65,33 @@ abstract class CatastroApiTest : WasichaiIntegrationTest() {
                     "/api/auth/token",
                     mapOf("clientId" to cuenta["clientId"].asString(), "clientSecret" to cuenta["clientSecret"].asString()),
                     HttpStatus.OK,
-                    admin
+                    token
                 )
             )
         return "Bearer ${acceso["token"].asString()}"
     }
 
+    // a new organization with the real model and roles applied, for a test that needs one to itself (nothing of
+    // other tests or runs in it): the Bearer of its admin and the admin's email
+    protected fun organizacionNueva(): Pair<String, String> {
+        val slug = uniqueName("org").lowercase().replace('_', '-')
+        val email = "admin@$slug.test"
+        val clave = "clave-$slug"
+        send(
+            "POST",
+            "/api/organizations",
+            mapOf("name" to slug, "slug" to slug, "adminEmail" to email, "adminPassword" to clave),
+            HttpStatus.CREATED,
+            admin
+        )
+        val token = bearer(email, clave)
+        aplicarModelo(token)
+        aplicarRoles(token)
+        return token to email
+    }
+
     // model/roles.json, as model/apply_roles.py applies it: a missing role is created, its permissions are roles.json's
-    private fun aplicarRoles() {
+    private fun aplicarRoles(admin: String = this.admin) {
         val existentes = arbol(send("GET", "/api/roles", null, HttpStatus.OK, admin)).lista().map { it["name"].asString() }.toSet()
         for (rol in arbol(File("model/roles.json"))["roles"]) {
             val nombre = rol["name"].asString()
@@ -81,7 +105,7 @@ abstract class CatastroApiTest : WasichaiIntegrationTest() {
     // model/apply.py in kotlin, as much of it as an empty or an earlier test db needs: missing objects (with their
     // fields), fields and relationships are created, a relation model.json requires is made required, and the
     // indexes follow model.json
-    private fun aplicarModelo() {
+    private fun aplicarModelo(admin: String = this.admin) {
         val model = arbol(File("model/model.json"))
         val enums = model["enums"]
 
