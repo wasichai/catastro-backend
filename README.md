@@ -163,7 +163,11 @@ python3 -I import_lotes.py --geojson lotes.geojson --actualizar-geometria --entr
 arancel (`id_aranc`, el `codigo_de_via` completo del padrón, por ejemplo `0010000401-01`). Lee con `sqlite3`, sin GDAL,
 `cf_eje_vial`, `cf_lotes_pol` y `padron_predial` de `--gpkg` (las tres en EPSG:32718; el encabezado del GeoPackage y el
 WKB se leen a mano), y de la hoja `padron` de `--padron-xlsx` solo `codigo_predio`, `codigo_de_via`,
-`nombre_de_la_via` y `tipo_predio` (se quedan los urbanos, `tipo_predio` 1). El gpkg se abre con
+`nombre_de_la_via` y `tipo_predio` (se quedan los urbanos, `tipo_predio` 1). Los predios de cada lote salen de dos
+fuentes que se suman: `cf_lotes_pol.cod_predio_padron` (uno o más `codigo_predio` del padrón separados por comas, así
+que un lote puede tener varios predios) y `padron_predial.cod_predio` → `id_lote_p_vinculado` (vacío en el gpkg de
+Ica). Las columnas se detectan con `pragma table_info`: puede faltar cualquiera de las dos fuentes (la columna, o la
+tabla `padron_predial`); si faltan las dos, el archivo no encaja y sale con 2. El gpkg se abre con
 `mode=ro&immutable=1`, así que SQLite no crea `-shm` ni `-wal` junto al archivo. Un eje de varias partes se orienta
 primero: las partes se encadenan por sus extremos comunes y la que corre al revés se invierte (una parte suelta sigue
 el sentido de la primera), así la izquierda y la derecha son la misma acera en todo el tramo, y esa geometría
@@ -171,15 +175,17 @@ orientada es la que va al Core, para que el `line-offset` del mapa coincida. El 
 de vía (notas 2 y 3), así que cada tramo se asigna así:
 
 1. su nombre normalizado (sin tildes, PROLONGACIÓN como PROL. y AVENIDA/AVDA. como AV., sin el tipo inicial CA., AV.,
-   JR., PJE., etc., con los espacios colapsados) es de un solo código urbano, y ningún otro `cod_via` del eje se llama
-   igual (un segmento sin `cod_via` no cuenta): `NOMBRE_UNICO`, una fila `AMBOS`;
-2. si no, los lotes de los predios de cada código con ese nombre (`cod_predio` → `id_lote_p_vinculado` →
-   `cf_lotes_pol`) se ubican a la izquierda o a la derecha del tramo (el signo del producto cruz con su segmento más
+   JR., PJE., etc., con los espacios colapsados) es de un solo código urbano del padrón: `NOMBRE_UNICO`, una fila
+   `AMBOS`, en todos los tramos de ese nombre. No importa cuántos `cod_via` del eje lo compartan: en Ica el
+   `cod_via` es uno por tramo, no uno por calle;
+2. si el nombre tiene varios códigos urbanos, los lotes de los predios de cada código (por cualquiera de las dos
+   fuentes) se ubican a la izquierda o a la derecha del tramo (el signo del producto cruz con su segmento más
    cercano; un lote más allá de un extremo no cuenta). Cada lado toma el código con más lotes a `--distancia` metros o
    menos (30), y un empate lo decide el lote más cercano: `CERCANIA`. Así un solo predio mal vinculado no le gana a
    una cuadra entera. Si los dos lados dan el mismo código, o solo un lado tiene lotes, queda
    una fila `AMBOS`; si dan dos códigos, dos filas, `IZQUIERDO` y `DERECHO` (según el sentido de la línea);
-3. si nada se cumple, o el tramo es «SIN NOMBRE»: `SIN_ARANCEL`, una fila `AMBOS` sin `id_aranc`.
+3. si nada se cumple (varios códigos y ningún lote cerca, un nombre sin código o un tramo «SIN NOMBRE»):
+   `SIN_ARANCEL`, una fila `AMBOS` sin `id_aranc`.
 
 **Por qué una línea con lado.** El arancel urbano se fija por frente de vía (cuadra y lado), no por sector: así lo
 aprueba la RM 514-2025-EF/15 en el plano predial, cuyas notas 2 y 3 dicen que el valor al centro de la calle rige
@@ -199,9 +205,10 @@ proj. El comando es idempotente por `tramo_via.clave` = `<ubigeo>|<fid>|<lado>`:
 (un `AMBOS` que ahora es `IZQUIERDO` y `DERECHO`, o al revés). Las filas de un ubigeo del archivo cuyo fid el archivo
 ya no trae solo se cuentan; `--borrar-ausentes` las borra (el `--dry-run` dice cuántas). **Un eje reexportado o
 editado (sus fid cambian) se carga con `--borrar-ausentes`**, primero en dry-run; si no, sus tramos viejos siguen en el
-mapa. Las filas de otro ubigeo nunca se tocan. Solo imprime conteos: tramos por asignación, ejes partidos por lado,
-ejes multiparte, partes invertidas, lados decididos por un solo lote, y códigos sin tramo, sin lotes y con lotes
-lejanos.
+mapa. Las filas de otro ubigeo nunca se tocan. Solo imprime conteos: lotes vinculados a predios (en total y por
+cada fuente, o «sin la columna»), tramos por asignación, ejes partidos por lado, ejes multiparte, partes invertidas,
+lados decididos por un solo lote, códigos sin tramo, sin lotes y con lotes lejanos, y nombres del padrón sin eje (un
+nombre urbano que ningún tramo tiene: mide la cobertura del eje, o un nombre escrito de otra forma).
 `--revision` escribe un csv con `cod_via_eje`, `fid_eje`, `lado`, `id_aranc` y `asignacion`, sin datos personales, y
 se niega a escribirlo dentro del repositorio. `--org` espera el **id** (UUID) de la organización, no su slug: se niega
 a escribir si la cuenta de `--email` es de otra, y el error dice el id de la organización de la cuenta. `--dry-run` lee el Core y dice cuánto crearía, actualizaría y borraría, sin escribir nada.

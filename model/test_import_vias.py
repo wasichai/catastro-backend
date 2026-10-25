@@ -67,11 +67,13 @@ EJES = [
     # big-endian, an xyz envelope, as a MultiLineString of one part
     eje(2, "AV. GRAU", "002", gp(wkb_multi(5, [wkb_line(east(1), little=False)], little=False), envelope=2,
                                  little=False), abr_tvia="AV."),
+    # JR. LIMA names two SAT codes in the padrón (L-1 and L-2): its tramos go by the lotes
     eje(3, "JR. LIMA", "003", gp(wkb_line(east(2)), envelope=0)),
     eje(4, "SIN NOMBRE", "004", gp(wkb_line(east(3)))),
     eje(5, "CA. DESCONOCIDA", "005", gp(wkb_line(east(4)))),
     eje(6, "JR. LIMA", "006", gp(wkb_line(east(5)))),
-    # an ISO LineString Z with an xyzm envelope
+    # an ISO LineString Z with an xyzm envelope. CA. SAN JUAN is two cod_via of the eje but one SAT code: both are
+    # NOMBRE_UNICO, lotes or not
     eje(7, "CA. SAN JUAN", "007", gp(wkb_line(east(6), z=True), envelope=4)),
     eje(8, "CA. SAN JUAN", "008", gp(wkb_line(east(7)))),
 ]
@@ -81,7 +83,9 @@ LOTES = {
     "LL1a": (x_of(2, 30), 8445012.0), "LL1b": (x_of(2, 70), 8444988.0), "LL2": (x_of(2, 50), 8445200.0),
     "LSJ": (x_of(6, 50), 8445010.0),
 }
-PADRON_PREDIAL = [("PG1", "LG1"), ("PG2", "LG2"), ("PL1a", "LL1a"), ("PL1b", "LL1b"), ("PL2", "LL2"), ("PSJ", "LSJ")]
+# the lote -> predio link comes from both sources, merged: cf_lotes_pol.cod_predio_padron and padron_predial
+LOTE_PREDIOS = {"LL1a": "PL1a", "LL1b": "PL1b"}
+PADRON_PREDIAL = [("PG1", "LG1"), ("PG2", "LG2"), ("PL1a", None), ("PL1b", ""), ("PL2", "LL2"), ("PSJ", "LSJ")]
 PADRON_HEADER = ["codigo_predio", "codigo_de_via", "nombre_de_la_via", "tipo_predio", "arancel"]
 PADRON = [
     ["PA1", "A-1", "CALLE LOS ÁLAMOS", "1", "10"],
@@ -97,7 +101,9 @@ PADRON = [
 ]
 
 
-def write_gpkg(testcase, ejes=EJES, lotes=LOTES, padron_predial=PADRON_PREDIAL, eje_srs=32718, lote_blobs=None):
+def write_gpkg(testcase, ejes=EJES, lotes=LOTES, padron_predial=PADRON_PREDIAL, eje_srs=32718, lote_blobs=None,
+               lote_predios=LOTE_PREDIOS):
+    """lote_predios None leaves cf_lotes_pol without cod_predio_padron; padron_predial None leaves out the table."""
     fd, path = tempfile.mkstemp(suffix=".gpkg")
     os.close(fd)
     testcase.addCleanup(os.unlink, path)
@@ -107,17 +113,24 @@ def write_gpkg(testcase, ejes=EJES, lotes=LOTES, padron_predial=PADRON_PREDIAL, 
                                             srs_id INTEGER, z INTEGER, m INTEGER);
         CREATE TABLE cf_eje_vial (fid INTEGER PRIMARY KEY, geom BLOB, id_via TEXT, ubigeo TEXT, cod_via TEXT,
                                   tip_via TEXT, abr_tvia TEXT, nom_via TEXT, nom_alt TEXT, con_den TEXT, fuente TEXT);
-        CREATE TABLE cf_lotes_pol (fid INTEGER PRIMARY KEY, geom BLOB, id_lote_p TEXT);
-        CREATE TABLE padron_predial (fid INTEGER PRIMARY KEY, cod_predio TEXT, id_lote_p_vinculado TEXT);
     """)
+    con.execute("CREATE TABLE cf_lotes_pol (fid INTEGER PRIMARY KEY, geom BLOB, id_lote_p TEXT"
+                + (", cod_predio_padron TEXT)" if lote_predios is not None else ")"))
+    if padron_predial is not None:
+        con.execute("CREATE TABLE padron_predial (fid INTEGER PRIMARY KEY, cod_predio TEXT, id_lote_p_vinculado TEXT)")
     con.execute("INSERT INTO gpkg_geometry_columns VALUES ('cf_eje_vial', 'geom', 'MULTILINESTRING', ?, 0, 0)", (eje_srs,))
     con.execute("INSERT INTO gpkg_geometry_columns VALUES ('cf_lotes_pol', 'geom', 'MULTIPOLYGON', 32718, 0, 0)")
     columns = list(EJES[0])
     con.executemany(f"INSERT INTO cf_eje_vial ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
                     [tuple(e[c] for c in columns) for e in ejes])
     blobs = lote_blobs or {k: gp(wkb_multi(6, [wkb_polygon(square(*c))])) for k, c in lotes.items()}
-    con.executemany("INSERT INTO cf_lotes_pol (id_lote_p, geom) VALUES (?, ?)", [(k, b) for k, b in blobs.items()])
-    con.executemany("INSERT INTO padron_predial (cod_predio, id_lote_p_vinculado) VALUES (?, ?)", padron_predial)
+    if lote_predios is None:
+        con.executemany("INSERT INTO cf_lotes_pol (id_lote_p, geom) VALUES (?, ?)", list(blobs.items()))
+    else:
+        con.executemany("INSERT INTO cf_lotes_pol (id_lote_p, geom, cod_predio_padron) VALUES (?, ?, ?)",
+                        [(k, b, lote_predios.get(k)) for k, b in blobs.items()])
+    if padron_predial is not None:
+        con.executemany("INSERT INTO padron_predial (cod_predio, id_lote_p_vinculado) VALUES (?, ?)", padron_predial)
     con.commit()
     con.close()
     return path
@@ -220,7 +233,7 @@ class SideTests(unittest.TestCase):
 
 class AssignTests(unittest.TestCase):
     def setUp(self):
-        ejes, centroids, lote_of, problems = iv.read_gpkg(write_gpkg(self))
+        ejes, centroids, lote_of, self.vinculos, problems = iv.read_gpkg(write_gpkg(self))
         self.assertEqual(problems, [])
         from tabular import read_table
         by_name, predios, _, problems = iv.read_padron(read_table(write_padron(self), sheet="padron"))
@@ -238,8 +251,8 @@ class AssignTests(unittest.TestCase):
             "110101|4|AMBOS": (None, "SIN_ARANCEL"),
             "110101|5|AMBOS": (None, "SIN_ARANCEL"),
             "110101|6|AMBOS": (None, "SIN_ARANCEL"),
-            "110101|7|AMBOS": ("SJ", "CERCANIA"),
-            "110101|8|AMBOS": (None, "SIN_ARANCEL"),
+            "110101|7|AMBOS": ("SJ", "NOMBRE_UNICO"),
+            "110101|8|AMBOS": ("SJ", "NOMBRE_UNICO"),
         })
 
     def test_the_row_carries_the_eje(self):
@@ -250,18 +263,23 @@ class AssignTests(unittest.TestCase):
 
     def test_the_counts(self):
         self.assertEqual(self.stats, {
-            "ejes": 8, "por_asignacion": {"NOMBRE_UNICO": 1, "CERCANIA": 4, "SIN_ARANCEL": 4}, "partidos": 1, "multiparte": 0, "invertidas": 0,
-            "de_un_lote": 5,
-            "sin_tramo": 2, "sin_lotes": 2, "lejanos": 1})
+            "ejes": 8, "por_asignacion": {"NOMBRE_UNICO": 3, "CERCANIA": 3, "SIN_ARANCEL": 3}, "partidos": 1, "multiparte": 0, "invertidas": 0,
+            "de_un_lote": 4,
+            "sin_tramo": 2, "sin_lotes": 2, "lejanos": 1, "nombres_sin_eje": 1})
+        # LL1a and LL1b by cod_predio_padron, the other four by padron_predial
+        self.assertEqual(self.vinculos, {"cod_predio_padron": 2, "padron_predial": 4, "total": 6})
 
     def test_a_lote_farther_than_the_distance_does_not_count(self):
-        ejes, centroids, lote_of, _ = iv.read_gpkg(write_gpkg(self))
+        ejes, centroids, lote_of, _, _ = iv.read_gpkg(write_gpkg(self))
         from tabular import read_table
         by_name, predios, _, _ = iv.read_padron(read_table(write_padron(self), sheet="padron"))
-        rows, _ = iv.assign(ejes, by_name, predios, centroids, lote_of, distancia=11)
-        got = {a["clave"]: a["id_aranc"] for a, _ in rows}
-        # G-01 and G-02 are 15 m away: none counts; L-1's lotes are 12 m away; SJ's 10 m
-        self.assertEqual((got["110101|2|AMBOS"], got["110101|3|AMBOS"], got["110101|7|AMBOS"]), (None, None, "SJ"))
+        got = {}
+        for distancia in (11, 13):
+            rows, _ = iv.assign(ejes, by_name, predios, centroids, lote_of, distancia=distancia)
+            got[distancia] = {a["clave"]: a["id_aranc"] for a, _ in rows}
+        # G-01 and G-02 are 15 m away: none counts; L-1's lotes are 12 m away
+        self.assertEqual((got[11]["110101|2|AMBOS"], got[11]["110101|3|AMBOS"]), (None, None))
+        self.assertEqual((got[13]["110101|2|AMBOS"], got[13]["110101|3|AMBOS"]), (None, "L-1"))
 
 
 class OrientTests(unittest.TestCase):
@@ -292,11 +310,13 @@ class MultipartTests(unittest.TestCase):
         core = FakeCore()
         self.addCleanup(core.stop)
         gpkg = write_gpkg(self, ejes=[eje(1, "AV. GRAU", "002", gp(wkb_multi(5, parts)))], lotes=lotes,
-                          padron_predial=predial)
+                          padron_predial=predial, lote_predios=None)
         code, out, err = run(iv.main, ["--gpkg", gpkg, "--padron-xlsx", write_padron(self, rows=padron,
                                        header=PADRON_HEADER[:4]), "--core", core.base_url])
         self.assertEqual(code, 0, err)
         self.assertIn("ejes multiparte: 1\npartes invertidas: 1", out)
+        self.assertIn("lotes vinculados a predios: 4 (cf_lotes_pol.cod_predio_padron sin la columna,"
+                      " padron_predial.id_lote_p_vinculado 4)", out)
         tramos = {r["attributes"]["clave"]: r for r in core.records["tramo_via"]}
         self.assertEqual({k: r["attributes"]["id_aranc"] for k, r in tramos.items()},
                          {"110101|1|IZQUIERDO": "N-01", "110101|1|DERECHO": "S-02"})
@@ -316,11 +336,65 @@ class CercaniaTests(unittest.TestCase):
         lotes = {"A": [(20, 12)], "B": [(50, 5)]}
         self.assertEqual(iv.nearest_by_side(self.LINE, {"A", "B"}, lotes, 30), {iv.IZQUIERDO: ("B", 1)})
 
-    def test_a_segment_without_cod_via_does_not_make_the_name_ambiguous(self):
+    def test_one_sat_code_is_nombre_unico_however_many_cod_via_the_eje_has(self):
+        # cod_via is one per tramo in Ica's eje: it says nothing about how many streets share the name
         line = [[(0.0, 0.0), (100.0, 0.0)]]
-        ejes = [{**eje(1, "CA. SOLA", "001", None), "parts": line}, {**eje(2, "CA. SOLA", None, None), "parts": line}]
-        rows, _ = iv.assign(ejes, {"SOLA": {"S"}}, {}, {}, {})
-        self.assertEqual({a["asignacion"] for a, _ in rows}, {"NOMBRE_UNICO"})
+        ejes = [{**eje(n, "CA. SOLA", cod, None), "parts": line} for n, cod in ((1, "001"), (2, "002"), (3, None))]
+        rows, stats = iv.assign(ejes, {"SOLA": {"S"}, "OTRA": {"O"}}, {}, {}, {})
+        self.assertEqual({(a["id_aranc"], a["asignacion"]) for a, _ in rows}, {("S", "NOMBRE_UNICO")})
+        self.assertEqual(len(rows), 3)
+        self.assertEqual(stats["nombres_sin_eje"], 1)
+
+
+class LinkTests(unittest.TestCase):
+    """The lote -> predio link: cf_lotes_pol.cod_predio_padron (codes split on commas) merged with
+    padron_predial.id_lote_p_vinculado; either may be missing."""
+
+    GRAU = [eje(1, "AV. GRAU", "002", gp(wkb_line(east(0))))]
+    LOTES = {"N": (x_of(0, 50), 8445012.0), "S": (x_of(0, 50), 8444988.0)}
+    PADRON = [["PN", "G-01", "AV. GRAU", "1"], ["PS", "G-02", "AV. GRAU", "1"]]
+
+    def assigned(self, gpkg):
+        ejes, centroids, lote_of, vinculos, problems = iv.read_gpkg(gpkg)
+        self.assertEqual(problems, [])
+        by_name, predios, _, _ = iv.read_padron([dict(zip(PADRON_HEADER, r)) for r in self.PADRON])
+        rows, _ = iv.assign(ejes, by_name, predios, centroids, lote_of)
+        return {a["lado"]: a["id_aranc"] for a, _ in rows}, vinculos
+
+    def test_a_comma_list_a_lote_of_two_predios_and_both_sources_merged(self):
+        lotes = {"X": (0.0, 0.0), "Y": (50.0, 0.0), "Z": (100.0, 0.0), "V": (150.0, 0.0)}
+        gpkg = write_gpkg(self, ejes=self.GRAU, lotes=lotes,
+                          lote_predios={"X": "P1, P2", "Y": " P3 ,P1,", "Z": "", "V": None},
+                          padron_predial=[("P4", "Z"), ("P1", "W"), ("P5", None), ("P6", ""), (None, "V")])
+        _, _, lote_of, vinculos, problems = iv.read_gpkg(gpkg)
+        self.assertEqual(problems, [])
+        # W is not a lote of the file: it is linked, but it is no lote to count
+        self.assertEqual(lote_of, {"P1": {"X", "Y", "W"}, "P2": {"X"}, "P3": {"Y"}, "P4": {"Z"}})
+        self.assertEqual(vinculos, {"cod_predio_padron": 2, "padron_predial": 1, "total": 3})
+
+    def test_an_empty_id_lote_p_vinculado_links_through_cod_predio_padron(self):
+        gpkg = write_gpkg(self, ejes=self.GRAU, lotes=self.LOTES, lote_predios={"N": "PN", "S": "PS"},
+                          padron_predial=[("PN", None), ("PS", "")])
+        self.assertEqual(self.assigned(gpkg), ({"IZQUIERDO": "G-01", "DERECHO": "G-02"},
+                                               {"cod_predio_padron": 2, "padron_predial": 0, "total": 2}))
+
+    def test_without_cod_predio_padron_it_links_through_padron_predial(self):
+        gpkg = write_gpkg(self, ejes=self.GRAU, lotes=self.LOTES, lote_predios=None,
+                          padron_predial=[("PN", "N"), ("PS", "S")])
+        self.assertEqual(self.assigned(gpkg), ({"IZQUIERDO": "G-01", "DERECHO": "G-02"},
+                                               {"cod_predio_padron": None, "padron_predial": 2, "total": 2}))
+
+    def test_without_padron_predial_it_links_through_cod_predio_padron(self):
+        gpkg = write_gpkg(self, ejes=self.GRAU, lotes=self.LOTES, lote_predios={"N": "PN", "S": "PS"},
+                          padron_predial=None)
+        self.assertEqual(self.assigned(gpkg), ({"IZQUIERDO": "G-01", "DERECHO": "G-02"},
+                                               {"cod_predio_padron": 2, "padron_predial": None, "total": 2}))
+
+    def test_with_neither_source_the_file_does_not_fit(self):
+        gpkg = write_gpkg(self, ejes=self.GRAU, lotes=self.LOTES, lote_predios=None, padron_predial=None)
+        problems = iv.read_gpkg(gpkg)[-1]
+        self.assertEqual(len(problems), 1)
+        self.assertIn("no link between lotes and predios", problems[0])
 
 
 class CliTests(unittest.TestCase):
@@ -342,8 +416,10 @@ class CliTests(unittest.TestCase):
     def test_creates_then_a_second_run_changes_nothing(self):
         code, out, err = self.cli()
         self.assertEqual(code, 0, err)
-        self.assertIn("tramos: 9 (NOMBRE_UNICO 1, CERCANIA 4, SIN_ARANCEL 4)", out)
-        self.assertIn("codigos con lotes lejanos: 1", out)
+        self.assertIn("tramos: 9 (NOMBRE_UNICO 3, CERCANIA 3, SIN_ARANCEL 3)", out)
+        self.assertIn("codigos con lotes lejanos: 1\nnombres del padron sin eje: 1", out)
+        self.assertIn("lotes vinculados a predios: 6 (cf_lotes_pol.cod_predio_padron 2,"
+                      " padron_predial.id_lote_p_vinculado 4)", out)
         self.assertIn("done: 9 created, 0 updated, 0 deleted, 0 unchanged, 0 absent from the file kept (--borrar-ausentes deletes them),"
                       " 0 of another ubigeo kept", out)
         tramos = self.tramos()

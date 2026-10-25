@@ -2,24 +2,28 @@
 """Loads the eje vial of a GeoPackage into tramo_via, each frente with the SAT code of its arancel (id_aranc).
 
 Reads, with sqlite3 and without GDAL, three layers of --gpkg: cf_eje_vial (fid, geom, cod_via, tip_via, abr_tvia,
-nom_via, ubigeo, fuente; LineString or MultiLineString), cf_lotes_pol (id_lote_p, geom; Polygon or MultiPolygon) and
-padron_predial (cod_predio, id_lote_p_vinculado), all in EPSG:32718. From the sheet `padron` of --padron-xlsx it reads
-only codigo_predio, codigo_de_via, nombre_de_la_via and tipo_predio, and keeps the urbanos (tipo_predio 1).
+nom_via, ubigeo, fuente; LineString or MultiLineString), cf_lotes_pol (id_lote_p, geom, cod_predio_padron; Polygon or
+MultiPolygon) and padron_predial (cod_predio, id_lote_p_vinculado), the geometries in EPSG:32718. From the sheet
+`padron` of --padron-xlsx it reads only codigo_predio, codigo_de_via, nombre_de_la_via and tipo_predio, and keeps the
+urbanos (tipo_predio 1).
+
+A lote's predios come from two sources, merged: cf_lotes_pol.cod_predio_padron (one or more padrón codigo_predio
+separated by commas: a lote may hold several predios) and padron_predial.cod_predio -> id_lote_p_vinculado (empty in
+Ica's file). Either may be missing (the column, or the padron_predial table); with neither, the file does not fit.
 
 The parts of a multipart eje are first put in one direction (chained by their shared endpoints; a part that meets
 none follows the first part's direction), so left and right are the same street side along the tramo, and that
 oriented geometry is what goes to Core (catastro-ui offsets each frente by the line's direction).
 Each tramo of the eje gets its code like this (the plano predial values a vía by frente, notes 2 and 3):
   1. its nom_via, normalized (no accents, PROLONGACIÓN as PROL, no leading type such as CA. AV. JR. PJE., spaces
-     collapsed), names a single SAT code of the padrón, and no other cod_via of the eje has that name: NOMBRE_UNICO,
-     one row AMBOS;
-  2. otherwise the lotes of the predios of each code with that name (padron_predial.cod_predio ->
-     id_lote_p_vinculado -> cf_lotes_pol) are placed on the left or the right of the tramo (the sign of the cross
-     product with its nearest segment; a lote beyond either end of the tramo does not count). Each side takes the
-     code with the most lote centroids within --distancia metres (30), the nearest one breaking a tie: CERCANIA.
-     Both sides the same code, or only
-     one side with lotes: one row AMBOS; two codes: two rows, IZQUIERDO and DERECHO;
-  3. nothing found, a «SIN NOMBRE» or a name with no code: SIN_ARANCEL, one row AMBOS without id_aranc.
+     collapsed), names a single urban SAT code of the padrón: NOMBRE_UNICO, one row AMBOS, however many cod_via of
+     the eje share the name (Ica's cod_via is one per tramo, not one per street);
+  2. a name of several urban codes: the lotes of the predios of each code (codigo_predio -> its lotes, by either
+     source) are placed on the left or the right of the tramo (the sign of the cross product with its nearest
+     segment; a lote beyond either end of the tramo does not count). Each side takes the code with the most lote
+     centroids within --distancia metres (30), the nearest one breaking a tie: CERCANIA. Both sides the same code,
+     or only one side with lotes: one row AMBOS; two codes: two rows, IZQUIERDO and DERECHO;
+  3. no lote near, a «SIN NOMBRE» or a name with no code: SIN_ARANCEL, one row AMBOS without id_aranc.
 cuadra stays empty: the eje has no such column. The geometry goes to Core as GeoJSON in EPSG:4326 (wasichai-gis
 transforms it back to the column's 32718), as a MultiLineString; utm_to_wgs84 is the inverse transverse Mercator of
 UTM 18S, so no proj is needed.
@@ -29,8 +33,9 @@ geometry (beyond 1e-6 degrees, ~10 cm) differ is updated (PATCH), and a row of a
 longer produced (AMBOS that is now IZQUIERDO and DERECHO, or the other way) is deleted. A row of an ubigeo in the file
 whose fid the file does not have (a re-exported eje) is only counted, and deleted with --borrar-ausentes; a row of
 another ubigeo is never touched. Only counts are printed; --revision writes cod_via_eje, fid_eje, lado, id_aranc and
-asignacion of every row to a csv outside the repository (no personal data). --org refuses to write unless the account
-of --email belongs to that organization (its id). --dry-run reads Core and says what it would write, writing nothing.
+asignacion of every row to a csv outside the repository (no personal data). Among the counts, «nombres del padron
+sin eje» are the padrón's urban names no tramo has: how much of the padrón the eje covers. --org refuses to write
+unless the account of --email belongs to that organization (its id). --dry-run reads Core and says what it would write, writing nothing.
 
 Run: python3 -I import_vias.py --gpkg ica.gpkg --padron-xlsx PADRON.xlsx [--revision /tmp/revision.csv]
              [--org <organization id>] [--borrar-ausentes] [--distancia 30] [--dry-run] [--workers 4]
@@ -61,6 +66,8 @@ OBJECT = "tramo_via"
 GEOMETRY = "geom"
 SRID = 32718
 EJE, LOTES, PADRON_PREDIAL = "cf_eje_vial", "cf_lotes_pol", "padron_predial"
+# the two sources of a lote's predios: a column of the lote, and padron_predial's two columns
+LOTE_PREDIOS, PREDIAL_COLUMNS = "cod_predio_padron", ["cod_predio", "id_lote_p_vinculado"]
 EJE_COLUMNS = ["fid", "cod_via", "tip_via", "nom_via", "ubigeo", "fuente"]
 PADRON_COLUMNS = ["codigo_predio", "codigo_de_via", "nombre_de_la_via", "tipo_predio"]
 PADRON_SHEET = "padron"
@@ -269,8 +276,9 @@ def _geometry(blob):
 
 
 def read_gpkg(path):
-    """(ejes, lote centroids by id_lote_p, id_lote_p by cod_predio, problems). An eje is a dict of EJE_COLUMNS plus
-    abr_tvia, nom_alt and `parts` (its lines in 32718)."""
+    """(ejes, lote centroids by id_lote_p, the id_lote_p set of each cod_predio, vinculos, problems). An eje is a dict
+    of EJE_COLUMNS plus abr_tvia, nom_alt and `parts` (its lines in 32718). vinculos counts the lotes of the file
+    linked to a predio by each source (None when the source is missing) and by either ("total")."""
     problems = []
     uri = "file:" + urllib.request.pathname2url(os.path.abspath(path)) + "?mode=ro&immutable=1"
     if not os.path.isfile(path):
@@ -278,19 +286,25 @@ def read_gpkg(path):
     con = sqlite3.connect(uri, uri=True)
     try:
         tables = {r[0].lower() for r in con.execute("SELECT name FROM sqlite_master WHERE type IN ('table', 'view')")}
-        for table in (EJE, LOTES, PADRON_PREDIAL, "gpkg_geometry_columns"):
+        for table in (EJE, LOTES, "gpkg_geometry_columns"):
             if table not in tables:
                 problems.append(f"{path}: no table {table}")
         if problems:
-            return [], {}, {}, problems
-        wanted = {EJE: EJE_COLUMNS, LOTES: ["id_lote_p"], PADRON_PREDIAL: ["cod_predio", "id_lote_p_vinculado"]}
+            return [], {}, {}, {}, problems
+        wanted = {EJE: EJE_COLUMNS, LOTES: ["id_lote_p"]}
         for table, columns in wanted.items():
             have = _columns(con, table)
             problems += [f"{table}: no column {c}" for c in columns if c not in have]
+        by_lote = LOTE_PREDIOS in _columns(con, LOTES)
+        predial = _columns(con, PADRON_PREDIAL) if PADRON_PREDIAL in tables else []
+        by_predial = all(c in predial for c in PREDIAL_COLUMNS)
+        if not by_lote and not by_predial:
+            problems.append(f"{path}: no link between lotes and predios: neither {LOTES}.{LOTE_PREDIOS} nor"
+                            f" {PADRON_PREDIAL}.{' and '.join(PREDIAL_COLUMNS)}")
         eje_geom = _geometry_column(con, EJE, problems)
         lote_geom = _geometry_column(con, LOTES, problems)
         if problems:
-            return [], {}, {}, problems
+            return [], {}, {}, {}, problems
         eje_columns = _columns(con, EJE)
         extra = [c for c in ("abr_tvia", "nom_alt") if c in eje_columns]
         select = ", ".join(f'"{c}"' for c in EJE_COLUMNS + extra)
@@ -307,9 +321,16 @@ def read_gpkg(path):
                 continue
             eje["parts"] = parts
             ejes.append(eje)
-        centroids = {}
-        for id_lote, blob in con.execute(f'SELECT id_lote_p, "{lote_geom}" FROM "{LOTES}"'):
+        centroids, lote_of, keys = {}, {}, set()
+        linked = {LOTE_PREDIOS: set() if by_lote else None, PADRON_PREDIAL: set() if by_predial else None}
+        predios_column = f', "{LOTE_PREDIOS}"' if by_lote else ", NULL"
+        for id_lote, blob, codes in con.execute(f'SELECT id_lote_p, "{lote_geom}"{predios_column} FROM "{LOTES}"'):
             key = code_text(id_lote)
+            if key:
+                keys.add(key)
+                for code in filter(None, (code_text(c) for c in str(codes or "").split(","))):
+                    lote_of.setdefault(code, set()).add(key)
+                    linked[LOTE_PREDIOS].add(key)
             try:
                 point = centroid(_geometry(blob))
             except (GpkgError, struct.error) as e:
@@ -317,11 +338,15 @@ def read_gpkg(path):
                 continue
             if key and point is not None:
                 centroids[key] = point
-        lote_of = {}
-        for cod_predio, id_lote in con.execute(f'SELECT cod_predio, id_lote_p_vinculado FROM "{PADRON_PREDIAL}"'):
-            if code_text(cod_predio) and code_text(id_lote):
-                lote_of[code_text(cod_predio)] = code_text(id_lote)
-        return ejes, centroids, lote_of, problems
+        if by_predial:
+            for cod_predio, id_lote in con.execute(f'SELECT {", ".join(PREDIAL_COLUMNS)} FROM "{PADRON_PREDIAL}"'):
+                if code_text(cod_predio) and code_text(id_lote):
+                    lote_of.setdefault(code_text(cod_predio), set()).add(code_text(id_lote))
+                    linked[PADRON_PREDIAL].add(code_text(id_lote))
+        # only the lotes the file has count: an id_lote_p_vinculado may name a lote that is not there
+        vinculos = {k: None if v is None else len(v & keys) for k, v in linked.items()}
+        vinculos["total"] = len(set().union(*(v for v in linked.values() if v)) & keys)
+        return ejes, centroids, lote_of, vinculos, problems
     finally:
         con.close()
 
@@ -462,7 +487,7 @@ def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA):
     """(rows, stats). A row is (attributes, parts) of one frente; stats carries the counts the run prints."""
     lotes_of_code = {}
     for code, codes_predios in predios.items():
-        points = {centroids[lote_of[p]] for p in codes_predios if p in lote_of and lote_of[p] in centroids}
+        points = {centroids[lote] for p in codes_predios for lote in lote_of.get(p, ()) if lote in centroids}
         if points:
             lotes_of_code[code] = sorted(points)
     multipart = flipped = single = 0
@@ -472,16 +497,11 @@ def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA):
             eje["parts"], n = orient(eje["parts"])
             flipped += n
     names = [normalize(e["nom_via"]) for e in ejes]
-    vias_of_name = {}
-    for eje, name in zip(ejes, names):
-        # a segment without cod_via is not another vía of that name
-        if name and code_text(eje["cod_via"]):
-            vias_of_name.setdefault(name, set()).add(code_text(eje["cod_via"]))
     rows, near, tried, split = [], set(), set(), 0
     for eje, name in zip(ejes, names):
         candidates = by_name.get(name, set()) if name else set()
         sides = {}
-        if len(candidates) == 1 and len(vias_of_name.get(name, ())) <= 1:
+        if len(candidates) == 1:
             sides, how = {AMBOS: next(iter(candidates))}, NOMBRE_UNICO
         elif candidates:
             tried |= candidates
@@ -511,6 +531,8 @@ def assign(ejes, by_name, predios, centroids, lote_of, distancia=DISTANCIA):
         "sin_tramo": len(codes - assigned),
         "sin_lotes": len(codes - set(lotes_of_code)),
         "lejanos": len((tried & set(lotes_of_code)) - near - assigned),
+        # a name of the padrón no eje has: a vía the eje lacks, or spelled otherwise
+        "nombres_sin_eje": len(set(by_name) - set(names)),
     }
     return rows, stats
 
@@ -659,8 +681,12 @@ def _parse_args(argv):
     return p.parse_args(argv)
 
 
-def _report(stats):
+def _report(stats, vinculos):
     how = stats["por_asignacion"]
+    by = ", ".join(f"{name} {'sin la columna' if vinculos[key] is None else vinculos[key]}"
+                   for key, name in ((LOTE_PREDIOS, f"{LOTES}.{LOTE_PREDIOS}"),
+                                     (PADRON_PREDIAL, f"{PADRON_PREDIAL}.{PREDIAL_COLUMNS[1]}")))
+    print(f"lotes vinculados a predios: {vinculos['total']} ({by})")
     print(f"ejes: {stats['ejes']}")
     print(f"tramos: {sum(how.values())} ({', '.join(f'{k} {v}' for k, v in how.items())})")
     print(f"ejes partidos por lado: {stats['partidos']}")
@@ -670,6 +696,7 @@ def _report(stats):
     print(f"codigos sin tramo: {stats['sin_tramo']}")
     print(f"codigos sin lotes: {stats['sin_lotes']}")
     print(f"codigos con lotes lejanos: {stats['lejanos']}")
+    print(f"nombres del padron sin eje: {stats['nombres_sin_eje']}")
 
 
 def _summary(todo, borrar_ausentes):
@@ -686,7 +713,7 @@ def main(argv=None):
         print(f"error: --revision {args.revision} is inside the repository; write it elsewhere", file=sys.stderr)
         return 2
     try:
-        ejes, centroids, lote_of, problems = read_gpkg(args.gpkg)
+        ejes, centroids, lote_of, vinculos, problems = read_gpkg(args.gpkg)
         by_name, predios, _, found = read_padron(read_table(args.padron_xlsx, sheet=PADRON_SHEET))
     except (sqlite3.Error, *INPUT_ERRORS) as e:
         print(f"input: {e}", file=sys.stderr)
@@ -696,7 +723,7 @@ def main(argv=None):
         report_problems(problems)
         return 2
     rows, stats = assign(ejes, by_name, predios, centroids, lote_of, args.distancia)
-    _report(stats)
+    _report(stats, vinculos)
     if args.revision:
         write_revision(args.revision, rows)
         print(f"revision: {len(rows)} rows")
