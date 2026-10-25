@@ -14,9 +14,9 @@ from fake_core import FakeCore
 
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "model.json")
 OBJECT_ORDER = ["predio_catastral", "construccion", "obra_complementaria", "arancel", "configuracion_catastro",
-                "entrega_catastral", "titular_catastral", "tramo_via"]
+                "entrega_catastral", "titular_catastral", "tramo_via", "corte_brecha", "brecha_ficha", "decision_brecha"]
 RELATIONSHIP_ORDER = ["construccion_predio", "obra_complementaria_predio", "predio_catastral_entrega",
-                      "titular_catastral_predio"]
+                      "titular_catastral_predio", "brecha_ficha_corte"]
 
 
 def load_model():
@@ -72,8 +72,9 @@ class HappyPathTests(ApplyCliTestCase):
             ("/api/metadata/objects/construccion/fields/predio", {"required": True}),
             ("/api/metadata/objects/obra_complementaria/fields/predio", {"required": True}),
             ("/api/metadata/objects/titular_catastral/fields/predio", {"required": True}),
+            ("/api/metadata/objects/brecha_ficha/fields/corte", {"required": True}),
         ])
-        self.assertIn("done: 12 created, 4 updated, 0 skipped", out)
+        self.assertIn("done: 16 created, 7 updated, 0 skipped", out)
 
     def test_the_two_composite_indexes_are_declared(self):
         self.run_cli([])
@@ -95,8 +96,8 @@ class IdempotencyTests(ApplyCliTestCase):
         # each relationship is POSTed and answered 409; the two required ones have their field re-marked
         # required; no object or field is written
         posts = [r[1] for r in self.core.requests if r[0] == "POST" and "login" not in r[1]]
-        self.assertEqual(posts, ["/api/relationships"] * 4)
-        self.assertIn("done: 0 created, 0 updated, 12 skipped", out)
+        self.assertEqual(posts, ["/api/relationships"] * len(RELATIONSHIP_ORDER))
+        self.assertIn("done: 0 created, 0 updated, 16 skipped", out)
 
 
 class FailureTests(ApplyCliTestCase):

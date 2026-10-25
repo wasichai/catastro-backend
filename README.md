@@ -42,11 +42,12 @@ yarn install && yarn format:check
 ## Modelo y carga
 
 El modelo (`model/model.json`) y los cargadores son Python solo con la biblioteca estándar, con la forma de los de
-srtm-backend. Ocho objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
+srtm-backend (salvo `importar_corte_brecha.py`, que lee Parquet con duckdb). Once objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
 `construccion`, `obra_complementaria` y `titular_catastral` (cuelgan de un predio; este último, datos personales de
 Ley 29733, ver [Modelo y carga](#modelo-y-carga)), `arancel`, `configuracion_catastro` (la región de la organización, ver
 abajo) y `entrega_catastral` (cada entrega del levantamiento, ver [Entregas](#entregas)) y `tramo_via` (un frente del eje vial con el código SAT
-de su arancel, ver «Vías» abajo). wasichai
+de su arancel, ver «Vías» abajo), más los tres del dashboard de brechas: `corte_brecha`, `brecha_ficha` y
+`decision_brecha` (ver [Corte de brecha](#corte-de-brecha)). wasichai
 no tiene únicos compuestos, así que `arancel.clave` (`id_aranc|anio`) garantiza el par único. `codigo_vu` de una obra
 es `TIPO DE OBRA|número`, como `obra_categoria` de srtm (`model/data/obras_complementarias.csv`).
 
@@ -426,6 +427,56 @@ python3 -I aranceles_no_vigentes.py --anio 2026 --padron padron_sat.xlsx \
   --entrega ICA-ARANCEL-VIA-2026-11 --fecha-corte 2026-11-01 --dry-run
 # revisado el reporte, la misma línea sin --dry-run
 ```
+
+### Corte de brecha
+
+El dashboard de brechas de catastro-ui lee la brecha de recaudación de srtm desde el **corte analítico**
+(srtm-backend `docs/informes/brecha`, `make corte`), no en vivo: una carpeta `<org>/<fecha>/` con `manifiesto.json` y
+un Parquet por tabla, publicada en S3. `importar_corte_brecha.py` la carga en tres objetos:
+
+- `corte_brecha`, uno por corte (`clave` `<org>|<fecha>`): la corrida de srtm, el sha256 del manifiesto, las versiones
+  y los totales de la corrida (Δ impuesto, el confiable, el dudoso y el sin levantar, y el de los omisos estimado);
+- `brecha_ficha`, una por fila de `srtm_brecha_predio` (`clave` `<id del corte>|<codigo_catastro>`, o
+  `<id del corte>|id:<id de la fila en srtm>` si la fila no tiene `codigo_catastro` o lo comparte con otra), con
+  `codigo_municipal` de la ficha que empata y `supera_5_uit`;
+- `decision_brecha`, la bandeja (`clave` `<codigo_municipal>|<anio>`): no la toca la carga, la escribe la API, y así
+  una decisión sobrevive a los cortes nuevos.
+
+Antes de leer nada verifica cada archivo del manifiesto (bytes y sha256): uno que falta o no coincide, o un
+manifiesto sin `srtm_brecha_corrida.parquet` y `srtm_brecha_predio.parquet`, sale con 2 sin llamar al Core. Lee con
+**duckdb** (`requirements-corte.txt`, la misma versión que el venv del corte: `python3 -m pip install -r
+model/requirements-corte.txt`) la corrida del manifiesto y sus filas, y la UIT del año de `srtm_parametro` (tipo `UIT`,
+vigente al 1 de enero); si el corte no la trae, `--uit`, y sin ninguna `supera_5_uit` queda vacío. `supera_5_uit` es
+|Δ autoavalúo| > 5 UIT.
+
+Cada fila empata con su ficha por la llave de `Brecha.llave()` de srtm: sin espacios, en mayúsculas y cada grupo de
+dígitos sin ceros a la izquierda (`01-01-0006` es `1-1-6`). `codigo_catastro` es el código del ítem de catastro como lo
+muestra srtm (su código municipal, si no su CPU, si no sector-manzana-lote), así que se busca primero entre los
+`codigo_municipal` de las fichas, luego entre sus `codigo_cpu` y al final entre su sector-manzana-lote; una llave que
+comparten dos fichas no empata con ninguna (y se cuenta).
+
+Es idempotente por `clave`: crea lo que falta, actualiza (`PATCH`) lo que cambió y un corte igual no escribe nada, ni
+`cargado_en`. Las fichas del corte que el corte ya no trae solo se cuentan; `--reemplazar` las borra. Cada escritura
+lleva `X-Change-Reason` `corte-brecha:<org>:<fecha>`. Solo imprime conteos: filas, por categoría, empatadas con ficha,
+sin ficha (con y sin código), llaves repetidas y cuántas superan 5 UIT; nunca un código ni un monto. `--org` espera el
+id de la organización, como `import_vias.py`. `--s3` baja el corte con `aws s3 cp --recursive` a una carpeta temporal
+que se borra al final.
+
+```sh
+python3 -I importar_corte_brecha.py --corte ~/cortes/analitica/ica/2026-10-25 --org <id de la organización> --dry-run
+python3 -I importar_corte_brecha.py --s3 s3://<bucket>/analitica/ica/2026-10-25 --org <id> [--uit 5500] [--reemplazar] \
+  [--workers 4]
+```
+
+**Orden** (cada paso primero en dry-run, con el OK de quien opera la base):
+
+1. `python3 apply.py --diff`, luego `python3 apply.py`: crea los tres objetos y la relación `brecha_ficha_corte`;
+2. `python3 apply_roles.py --dry-run`, luego `python3 apply_roles.py`: el `READ` de `CATASTRO_LECTOR` sobre los
+   tres, el rol nuevo `CATASTRO_ANALISTA` (además `CREATE` y `UPDATE` sobre `decision_brecha`) y el `READ` de
+   `SRTM_LECTOR` sobre `decision_brecha`;
+3. en srtm-backend, `make corte ORG=<org>` (escribe y publica el corte);
+4. `importar_corte_brecha.py --dry-run`, revisado el resumen, la misma línea sin `--dry-run`. Puede ir en el cron
+   mensual, después de `make corte`.
 
 ## Región de la organización
 

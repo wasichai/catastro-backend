@@ -3,7 +3,7 @@
     {
       "name": "SRTM_LECTOR",
       "label": "Lector de srtm",
-      "description": "El rol de la cuenta de servicio de srtm-backend: lee el levantamiento (predios, construcciones, obras complementarias, aranceles, entregas, titulares y tramos de vía) y la región de la organización para pedir sus valuaciones por año (GET /api/catastro/valuaciones) y valuar insumos sueltos (POST /api/catastro/valuacion). Escribe solo los aranceles: srtm es su dueño (su módulo de normativa los registra y verifica con doble firma) y catastro guarda la copia con que valúa (wasichai/catastro-backend#18).",
+      "description": "El rol de la cuenta de servicio de srtm-backend: lee el levantamiento (predios, construcciones, obras complementarias, aranceles, entregas, titulares y tramos de vía) y la región de la organización para pedir sus valuaciones por año (GET /api/catastro/valuaciones) y valuar insumos sueltos (POST /api/catastro/valuacion). Escribe solo los aranceles: srtm es su dueño (su módulo de normativa los registra y verifica con doble firma) y catastro guarda la copia con que valúa (wasichai/catastro-backend#18). Lee también la bandeja de decisiones de brecha (decision_brecha), para saber qué pasa a fiscalizar; no lee los cortes cargados, que son suyos.",
       "permisos": {
         "predio_catastral": [
           "READ"
@@ -31,13 +31,16 @@
         ],
         "tramo_via": [
           "READ"
+        ],
+        "decision_brecha": [
+          "READ"
         ]
       }
     },
     {
       "name": "CATASTRO_LECTOR",
       "label": "Lector de catastro",
-      "description": "El rol del personal municipal que consulta catastro-ui sin editar: lee las fichas (predios, construcciones y obras complementarias), las entregas del levantamiento, la región de la organización, los aranceles y los tramos de vía, lo que pide la página «Aranceles por vía» (GET /api/catastro/vias/aranceles lee tramo_via y arancel). Solo lectura: no crea, no cambia ni borra nada. No lee titular_catastral, que son datos personales (Ley 29733) y solo lee SRTM_LECTOR.",
+      "description": "El rol del personal municipal que consulta catastro-ui sin editar: lee las fichas (predios, construcciones y obras complementarias), las entregas del levantamiento, la región de la organización, los aranceles y los tramos de vía, lo que pide la página «Aranceles por vía» (GET /api/catastro/vias/aranceles lee tramo_via y arancel). También lee el dashboard de brechas (corte_brecha, brecha_ficha y decision_brecha: /api/catastro/brechas). Solo lectura: no crea, no cambia ni borra nada. No lee titular_catastral, que son datos personales (Ley 29733) y solo lee SRTM_LECTOR.",
       "permisos": {
         "predio_catastral": [
           "READ"
@@ -59,6 +62,54 @@
         ],
         "tramo_via": [
           "READ"
+        ],
+        "corte_brecha": [
+          "READ"
+        ],
+        "brecha_ficha": [
+          "READ"
+        ],
+        "decision_brecha": [
+          "READ"
+        ]
+      }
+    },
+    {
+      "name": "CATASTRO_ANALISTA",
+      "label": "Analista de catastro",
+      "description": "El rol del personal municipal que trabaja el dashboard de brechas en catastro-ui: lee todo lo que lee CATASTRO_LECTOR y además decide sobre las fichas de un corte (POST /api/catastro/brechas/decisiones), lo que pide CREATE y UPDATE sobre decision_brecha. No borra decisiones ni toca otro objeto, y tampoco lee titular_catastral (Ley 29733).",
+      "permisos": {
+        "predio_catastral": [
+          "READ"
+        ],
+        "construccion": [
+          "READ"
+        ],
+        "obra_complementaria": [
+          "READ"
+        ],
+        "arancel": [
+          "READ"
+        ],
+        "configuracion_catastro": [
+          "READ"
+        ],
+        "entrega_catastral": [
+          "READ"
+        ],
+        "tramo_via": [
+          "READ"
+        ],
+        "corte_brecha": [
+          "READ"
+        ],
+        "brecha_ficha": [
+          "READ"
+        ],
+        "decision_brecha": [
+          "READ",
+          "CREATE",
+          "UPDATE"
         ]
       }
     }

@@ -1,0 +1,3 @@
+# importar_corte_brecha.py reads the corte with duckdb, the same pin as srtm-backend docs/informes/brecha/requirements.txt.
+# the other scripts of model/ are stdlib only
+duckdb==1.5.5

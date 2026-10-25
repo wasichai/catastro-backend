@@ -16,6 +16,9 @@ from fake_core import FakeCore
 HERE = os.path.dirname(os.path.abspath(__file__))
 ROLES_PATH = os.path.join(HERE, "roles.json")
 MODEL_PATH = os.path.join(HERE, "model.json")
+# lo que lee CATASTRO_LECTOR, en el orden de roles.json (decision_brecha al final)
+LEE_EL_LECTOR = ("predio_catastral", "construccion", "obra_complementaria", "arancel", "configuracion_catastro",
+                 "entrega_catastral", "tramo_via", "corte_brecha", "brecha_ficha", "decision_brecha")
 
 
 def load(path):
@@ -33,17 +36,20 @@ class RolesJsonTests(unittest.TestCase):
         self.roles = {r["name"]: r for r in load(ROLES_PATH)["roles"]}
         self.objetos = [o["name"] for o in load(MODEL_PATH)["objects"]]
 
-    def test_declara_el_lector_de_srtm_y_el_de_catastro(self):
-        self.assertEqual(list(self.roles), ["SRTM_LECTOR", "CATASTRO_LECTOR"])
+    def test_declara_el_lector_de_srtm_el_de_catastro_y_el_analista(self):
+        self.assertEqual(list(self.roles), ["SRTM_LECTOR", "CATASTRO_LECTOR", "CATASTRO_ANALISTA"])
 
     def test_valida_contra_el_modelo(self):
         self.assertEqual(apply_roles.validate(load(ROLES_PATH), load(MODEL_PATH)), [])
 
     def test_el_lector_de_srtm_lee_cada_objeto_del_modelo_y_solo_escribe_los_aranceles(self):
         # lo que GET /api/catastro/valuaciones lee: un objeto nuevo en model.json sin su READ hace fallar esta prueba. los
-        # aranceles los manda srtm (su normativa los verifica) y los copia aquí: CREATE, UPDATE y DELETE solo sobre arancel
+        # aranceles los manda srtm (su normativa los verifica) y los copia aquí: CREATE, UPDATE y DELETE solo sobre arancel.
+        # los cortes de brecha salen de srtm: no los lee de vuelta; sí la bandeja, para saber qué pasa a fiscalizar
         escribe = {("arancel", a) for a in ("CREATE", "UPDATE", "DELETE")}
-        self.assertEqual(permisos(self.roles["SRTM_LECTOR"]), {(o, "READ") for o in self.objetos} | escribe)
+        lee = {(o, "READ") for o in self.objetos if o not in ("corte_brecha", "brecha_ficha")}
+        self.assertEqual(permisos(self.roles["SRTM_LECTOR"]), lee | escribe)
+        self.assertIn(("decision_brecha", "READ"), lee)
 
 
     def test_el_lector_de_catastro_solo_lee_y_no_ve_a_los_titulares(self):
@@ -56,6 +62,16 @@ class RolesJsonTests(unittest.TestCase):
         self.assertEqual(permisos(lector), esperado)
         self.assertIn(("tramo_via", "READ"), esperado)
         self.assertIn(("arancel", "READ"), esperado)
+        for objeto in ("corte_brecha", "brecha_ficha", "decision_brecha"):
+            self.assertIn((objeto, "READ"), esperado)
+
+    def test_el_analista_lee_lo_del_lector_y_decide_sobre_las_brechas(self):
+        # POST /api/catastro/brechas/decisiones: CREATE y UPDATE sobre decision_brecha, nada más que el lector no tenga
+        analista = self.roles["CATASTRO_ANALISTA"]
+        self.assertEqual(analista["label"], "Analista de catastro")
+        self.assertTrue(analista["description"].strip())
+        decide = {("decision_brecha", a) for a in ("CREATE", "UPDATE")}
+        self.assertEqual(permisos(analista), permisos(self.roles["CATASTRO_LECTOR"]) | decide)
 
 
 class ValidationTests(unittest.TestCase):
@@ -106,9 +122,10 @@ class ApplyRolesTests(unittest.TestCase):
         code, out, err = self.run_cli(["--dry-run"])
         self.assertEqual(code, 0, err)
         self.assertEqual(self.core.requests, [])
-        self.assertEqual(out.count("# POST /api/roles\n"), 2)
+        self.assertEqual(out.count("# POST /api/roles\n"), 3)
         self.assertIn("# PUT /api/roles/SRTM_LECTOR/permissions\n", out)
         self.assertIn("# PUT /api/roles/CATASTRO_LECTOR/permissions\n", out)
+        self.assertIn("# PUT /api/roles/CATASTRO_ANALISTA/permissions\n", out)
 
     def test_crea_el_rol_con_sus_permisos(self):
         code, out, err = self.run_cli()
@@ -126,16 +143,18 @@ class ApplyRolesTests(unittest.TestCase):
                 {"objectName": "configuracion_catastro", "action": "READ"},
                 {"objectName": "entrega_catastral", "action": "READ"},
                 {"objectName": "titular_catastral", "action": "READ"},
-                {"objectName": "tramo_via", "action": "READ"}]}),
+                {"objectName": "tramo_via", "action": "READ"},
+                {"objectName": "decision_brecha", "action": "READ"}]}),
             ("POST", "/api/roles", {"name": "CATASTRO_LECTOR", "label": "Lector de catastro"}),
             ("PUT", "/api/roles/CATASTRO_LECTOR/permissions", {"permissions": [
-                {"objectName": o, "action": "READ"} for o in ("predio_catastral", "construccion",
-                                                              "obra_complementaria", "arancel",
-                                                              "configuracion_catastro", "entrega_catastral",
-                                                              "tramo_via")]})])
+                {"objectName": o, "action": "READ"} for o in LEE_EL_LECTOR]}),
+            ("POST", "/api/roles", {"name": "CATASTRO_ANALISTA", "label": "Analista de catastro"}),
+            ("PUT", "/api/roles/CATASTRO_ANALISTA/permissions", {"permissions": [
+                {"objectName": o, "action": "READ"} for o in LEE_EL_LECTOR[:-1]] + [
+                {"objectName": "decision_brecha", "action": a} for a in ("READ", "CREATE", "UPDATE")]})])
         for method, path, auth, body in self.core.requests:
             self.assertEqual(auth, None if path == "/api/auth/login" else "Bearer t")
-        self.assertIn("done: 2 created, 0 updated, 0 skipped", out)
+        self.assertIn("done: 3 created, 0 updated, 0 skipped", out)
 
     def test_la_segunda_corrida_no_escribe_nada(self):
         self.run_cli()
@@ -143,7 +162,7 @@ class ApplyRolesTests(unittest.TestCase):
         code, out, err = self.run_cli()
         self.assertEqual(code, 0, err)
         self.assertEqual(self.writes(), [])
-        self.assertIn("done: 0 created, 0 updated, 2 skipped", out)
+        self.assertIn("done: 0 created, 0 updated, 3 skipped", out)
 
     def test_sincroniza_los_permisos_de_un_rol_que_ya_existe(self):
         # un SRTM_LECTOR al que en el admin le dieron UPDATE sobre construccion y que no lee obras: queda como dice roles.json
@@ -157,8 +176,8 @@ class ApplyRolesTests(unittest.TestCase):
         srtm = [w for w in self.writes() if "SRTM_LECTOR" in w[1] or (w[2] or {}).get("name") == "SRTM_LECTOR"]
         self.assertEqual(srtm, [("PUT", "/api/roles/SRTM_LECTOR/permissions",
                                  apply_roles.permissions_payload(self.roles_json["SRTM_LECTOR"]))])
-        # CATASTRO_LECTOR did not exist: it is created
-        self.assertIn("done: 1 created, 1 updated, 0 skipped", out)
+        # CATASTRO_LECTOR and CATASTRO_ANALISTA did not exist: they are created
+        self.assertIn("done: 2 created, 1 updated, 0 skipped", out)
 
     def test_un_rechazo_de_core_sale_con_1(self):
         self.core.fail_on_role = "SRTM_LECTOR"

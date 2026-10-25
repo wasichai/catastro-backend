@@ -41,6 +41,21 @@ OBJETOS = {
         ["clave", "fid_eje", "cod_via_eje", "tip_via", "nom_via", "ubigeo", "fuente", "cuadra", "lado", "id_aranc",
          "asignacion", "geom"],
         {"clave", "fid_eje", "lado", "asignacion"}, {"clave"}),
+    "corte_brecha": (
+        ["clave", "org_slug", "fecha", "corrida", "anio", "manifiesto_sha256", "version_srtm", "version_catastro",
+         "cargado_en", "total_fichas", "declarado", "catastro", "delta_impuesto", "delta_arbitrios",
+         "delta_impuesto_confiable", "delta_impuesto_dudoso", "delta_impuesto_sin_levantar", "omisos_estimado"],
+        {"clave", "org_slug", "fecha", "anio"}, {"clave"}),
+    "brecha_ficha": (
+        ["clave", "codigo_catastro", "codigo_municipal", "codigo_predio", "categoria", "confianza", "confianza_motivo",
+         "sector", "manzana", "lote", "uso", "autoavaluo_declarado", "autoavaluo_catastro", "delta_autoavaluo",
+         "impuesto_declarado", "impuesto_catastro", "delta_impuesto", "delta_arbitrios", "estimado", "motivo",
+         "supera_5_uit"],
+        {"clave", "categoria"}, {"clave"}),
+    "decision_brecha": (
+        ["clave", "codigo_municipal", "anio", "estado", "responsable", "nota", "motivo_descarte", "decidido_en",
+         "corte_origen"],
+        {"clave", "codigo_municipal", "anio", "estado"}, {"clave"}),
 }
 
 
@@ -166,6 +181,32 @@ class ModelTests(unittest.TestCase):
         self.assertEqual((f["asignacion"]["type"], f["asignacion"]["enum"]), ("ENUM", "asignacion_tramo"))
         self.assertEqual((f["fid_eje"]["type"], f["id_aranc"]["type"]), ("INTEGER", "TEXT"))
         self.assertEqual(self.objects["tramo_via"]["indexes"], [["id_aranc"], ["cod_via_eje"]])
+
+    def test_la_brecha_de_un_corte_y_su_bandeja(self):
+        # the contract of the brechas dashboard (catastro-ui): a corte per org and fecha, its fichas hanging from it,
+        # and the decisions by codigo_municipal|anio, so they outlive the corte
+        enums = self.model["enums"]
+        self.assertEqual(enums["categoria_brecha"],
+                         ["OMISO", "SIN_CATASTRO", "SIN_VALOR", "SUBVALUADO", "SOBREVALUADO", "COINCIDE", "SIN_LEVANTAR"])
+        self.assertEqual(enums["confianza_brecha"], ["CONFIABLE", "DUDOSO", "SIN_LEVANTAR"])
+        self.assertEqual(enums["estado_decision"],
+                         ["PENDIENTE", "A_INSPECCIONAR", "INSPECCIONADO", "A_FISCALIZAR", "DESCARTADO"])
+        ficha = {x["name"]: x for x in self.objects["brecha_ficha"]["fields"]}
+        self.assertEqual((ficha["categoria"]["enum"], ficha["confianza"]["enum"]), ("categoria_brecha", "confianza_brecha"))
+        for name in ("autoavaluo_declarado", "delta_autoavaluo", "delta_impuesto", "delta_arbitrios"):
+            self.assertEqual(ficha[name]["type"], "DECIMAL", name)
+        self.assertEqual((ficha["estimado"]["type"], ficha["supera_5_uit"]["type"]), ("BOOLEAN", "BOOLEAN"))
+        self.assertEqual(self.objects["brecha_ficha"]["indexes"],
+                         [["corte", "categoria"], ["corte", "confianza"], ["corte", "sector"], ["codigo_municipal"]])
+        corte = {x["name"]: x for x in self.objects["corte_brecha"]["fields"]}
+        self.assertEqual((corte["fecha"]["type"], corte["anio"]["type"], corte["cargado_en"]["type"]),
+                         ("DATE", "INTEGER", "DATETIME"))
+        decision = {x["name"]: x for x in self.objects["decision_brecha"]["fields"]}
+        self.assertEqual((decision["estado"]["enum"], decision["responsable"]["type"], decision["decidido_en"]["type"]),
+                         ("estado_decision", "EMAIL", "DATETIME"))
+        r = {x["name"]: x for x in self.model["relationships"]}["brecha_ficha_corte"]
+        self.assertEqual((r["source"], r["target"], r["fieldName"], r["required"]),
+                         ("brecha_ficha", "corte_brecha", "corte", True))
 
 
 if __name__ == "__main__":
