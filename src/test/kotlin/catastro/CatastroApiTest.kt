@@ -12,8 +12,9 @@ import java.io.File
 
 // shared base for the integration tests of the catastro API: applies the real model (model/model.json, as
 // model/apply.py does) and the real role (model/roles.json), and gives the http/record helpers every one of
-// them needs, over a service account signed in through core's REST, as srtm-backend will. the test db is
-// shared and kept between runs: every record carries a unique code
+// them needs. The base itself signs in as admin; cuentaDeServicio is a helper the subclasses call to sign in
+// as a service account, as srtm-backend will. the test db is shared and kept between runs: every record
+// carries a unique code
 abstract class CatastroApiTest : WasichaiIntegrationTest() {
     protected lateinit var admin: String
 

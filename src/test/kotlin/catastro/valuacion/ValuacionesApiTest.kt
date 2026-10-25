@@ -12,9 +12,9 @@ import tools.jackson.databind.JsonNode
 import java.io.File
 import java.math.BigDecimal
 
-// GET /api/catastro/valuaciones end to end: the real model (model/model.json, applied the way model/apply.py does)
-// and the real role (model/roles.json), a service account created and signed in over core's REST, as srtm-backend
-// will. the test db is shared and kept between runs: every record carries a unique code
+// GET /api/catastro/valuaciones end to end: the real model and role (model/model.json, model/roles.json) are
+// applied by CatastroApiTest's @BeforeEach; this test creates a service account and signs it in over core's
+// REST, as srtm-backend will. the test db is shared and kept between runs: every record carries a unique code
 class ValuacionesApiTest : CatastroApiTest() {
     @Test
     fun `la región de la organización elige el cuadro, y sin región no hay valuaciones`() {

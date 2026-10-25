@@ -123,17 +123,18 @@ yarn format:check                            # prettier: yaml y json, model.json
 ```
 
 **Qué son los tests de integración.** Las clases que heredan de `WasichaiIntegrationTest` (hoy `CatastroSmokeTest` y,
-a través de `CatastroApiTest`, `ValuacionesApiTest`), con el tag `integration`: `build` las excluye y `integrationTest`
-las corre. Cada una levanta la app entera (`CatastroApplication`, en un puerto aleatorio) contra un PostgreSQL con
-PostGIS (`postgis/postgis:18-3.6`, la propiedad `wasichai.test.db.image` de `build.gradle.kts`) y la llama por HTTP,
-como lo hace srtm-backend.
+a través de `CatastroApiTest`, `ValuacionesApiTest`, `TitularesApiTest` y `CambiosApiTest`), con el tag `integration`:
+`build` las excluye y `integrationTest` las corre. Cada una levanta la app entera (`CatastroApplication`, en un puerto
+aleatorio) contra un PostgreSQL con PostGIS (`postgis/postgis:18-3.6`, la propiedad `wasichai.test.db.image` de
+`build.gradle.kts`) y la llama por HTTP, como lo hace srtm-backend.
 
 - **`CatastroApiTest`** (`catastro`) es la base abstracta compartida de las pruebas de la API: aplica el modelo real
   (`model/model.json`, como `apply.py`) y el rol real (`model/roles.json`), deja la región en `SELVA` y da los
   ayudantes de HTTP y de registros (`registro`, `cuentaDeServicio`, `send`, `exchange`, `arbol`, `region`...) que
   cualquier prueba de la API de catastro necesita.
-- **`ValuacionesApiTest`** hereda de `CatastroApiTest`; crea una cuenta de servicio y pide las valuaciones con su
-  token, con sus propios ayudantes de fichas (`predio`, `piso`, `leerTodo`).
+- **`ValuacionesApiTest`**, **`TitularesApiTest`** y **`CambiosApiTest`** heredan de `CatastroApiTest`; cada una crea
+  su cuenta de servicio y llama al endpoint que prueba, con sus propios ayudantes de fichas (`predio`, `piso`,
+  `leerTodo`...).
 - **La base se comparte** entre todas las clases de una corrida y se conserva entre corridas: cada test crea sus
   propios registros, con códigos únicos, y no supone que la base está vacía.
 - **El motor y las tablas** se prueban sin base (`ValorizacionTest`, `ValorizacionCostaTest`, `TablasTest`...), con la
