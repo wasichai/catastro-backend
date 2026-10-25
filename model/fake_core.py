@@ -16,6 +16,9 @@ OBJECT = re.compile(r"^/api/objects/([a-z0-9_]+)$")
 ROLE = re.compile(r"^/api/roles/([A-Z0-9_]+)$")
 ROLE_PERMISSIONS = re.compile(r"^/api/roles/([A-Z0-9_]+)/permissions$")
 SERVICE_ACCOUNT = re.compile(r"^/api/service-accounts/([0-9a-f-]+)$")
+MAP_VIEWS = re.compile(r"^/api/gis/objects/([a-z0-9_]+)/map-views$")
+MAP_VIEW = re.compile(r"^/api/gis/objects/([a-z0-9_]+)/map-views/([a-z0-9_-]+)$")
+LAYER = re.compile(r"^/api/gis/layers/([a-z0-9_]+)/([a-z0-9_]+)$")
 
 
 def _meta(label, plural_label=None, description=None, enabled=True):
@@ -68,7 +71,7 @@ class FakeCore:
     def __init__(self, existing_objects=(), existing_relationships=(), fail_on_post_object=None,
                  fail_put=False, fail_put_status=500, login_response=None, fail_on_record=None, existing_fields=None,
                  fail_on_update=None, fail_on_delete=None, object_rules=None, fail_object_put=None, object_meta=None, fail_record_after=None,
-                 fail_on_role=None, fail_on_service_account=None, fail_on_record_body=None):
+                 fail_on_role=None, fail_on_service_account=None, fail_on_record_body=None, fail_on_layer=None):
         self.existing_objects = set(existing_objects)
         # object name -> its object-level rules ({"indexes", "appendOnly"}), as Core stores them; none by default
         self.object_rules = {n: dict((object_rules or {}).get(n, {})) for n in self.existing_objects}
@@ -91,6 +94,9 @@ class FakeCore:
         self.roles = {}  # role name -> {"name", "label", "permissions": [{"objectName", "action", "allowed"}]}
         self.fail_on_service_account = fail_on_service_account  # POST /api/service-accounts -> this status
         self.service_accounts = {}  # id -> ServiceAccountResponse without the secret
+        self.map_views = {}  # (object, name) -> MapViewResponse, as wasichai-gis answers it
+        self.layers = []  # (object, geometry, style) of every publish, in order
+        self.fail_on_layer = fail_on_layer  # POST /api/gis/layers/... -> this status (GeoServer down, say)
         self.requests = []
         self.reasons = []  # (method, path, X-Change-Reason header or None), one per request, parallel to requests
         self.server = ThreadingHTTPServer(("127.0.0.1", 0), FakeCoreHandler)
@@ -260,8 +266,41 @@ class FakeCore:
             account["enabled"] = body["enabled"]
         return 200, account
 
+    def _gis(self, method, path, body):
+        """wasichai-gis's map views (MapViewController) and layer publish (LayerController)."""
+        match = MAP_VIEWS.match(path)
+        if match and method == "POST":
+            key = (match.group(1), body["name"])
+            if key in self.map_views:
+                return 409, {"detail": f"Map view '{body['name']}' already exists"}
+            self.map_views[key] = {"id": str(uuid.uuid4()), "name": body["name"], "label": body.get("label") or key[0],
+                                   "objectName": key[0], "geometryName": body.get("geometryName") or "geom",
+                                   "style": body.get("style")}
+            return 201, self.map_views[key]
+        if match and method == "GET":
+            return 200, [v for (o, _), v in self.map_views.items() if o == match.group(1)]
+        match = MAP_VIEW.match(path)
+        if match:
+            view = self.map_views.get(match.groups())
+            if view is None:
+                return 404, {"detail": "no such map view"}
+            if method == "PUT":
+                view.update({"label": body.get("label") or view["label"],
+                             "geometryName": body.get("geometryName") or view["geometryName"],
+                             "style": body.get("style")})
+            return 200, view
+        match = LAYER.match(path)
+        if match and method == "POST":
+            if self.fail_on_layer:
+                return self.fail_on_layer, {"detail": "boom-layer"}
+            self.layers.append((*match.groups(), (body or {}).get("style")))
+            return 200, {"objectName": match.group(1), "geometryName": match.group(2), "published": True}
+        return 500, {"message": "boom"}
+
     def _script(self, method, full_path, body):
         path, _, query = full_path.partition("?")
+        if path.startswith("/api/gis/"):
+            return self._gis(method, path, body)
         if path == "/api/roles" or path.startswith("/api/roles/"):
             return self._roles(method, path, body)
         if path == "/api/service-accounts" or path.startswith("/api/service-accounts/"):

@@ -34,6 +34,10 @@ cuadra stays empty: the eje has no such column. The geometry goes to Core as Geo
 transforms it back to the column's 32718), as a MultiLineString; utm_to_wgs84 is the inverse transverse Mercator of
 UTM 18S, so no proj is needed.
 
+Each row also carries valor_m2 and anio_valor, the valor_m2 of its id_aranc's arancel of the current year (America/Lima;
+empty without one): the copy the map view aranceles_valor and the WMS layer colour by. catastro-backend keeps it
+current afterwards (every write of an arancel of that year, and POST /api/catastro/vias/valores on 1 January).
+
 Idempotent upsert by tramo_via.clave = "<ubigeo>|<fid>|<lado>": a row Core lacks is created, one whose attributes or
 geometry (beyond 1e-6 degrees, ~10 cm) differ is updated (PATCH), and a row of an eje in the file whose lado is no
 longer produced (AMBOS that is now IZQUIERDO and DERECHO, or the other way) is deleted. A row of an ubigeo in the file
@@ -58,6 +62,7 @@ import struct
 import sys
 import unicodedata
 import urllib.request
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -96,6 +101,9 @@ SIN_NOMBRE = {"SIN NOMBRE", "S N", "SN", "SIN NOMBRE S N"}
 # two endpoints closer than this (metres) are the same point when the parts of an eje are chained
 JOIN = 1e-3
 REVISION_COLUMNS = ["cod_via_eje", "fid_eje", "lado", "id_aranc", "asignacion"]
+ARANCEL = "arancel"
+# Peru keeps UTC-5 all year: no tz database needed for "the current year in America/Lima"
+LIMA = timezone(timedelta(hours=-5))
 
 
 class GpkgError(ValueError):
@@ -624,6 +632,25 @@ def _attributes(eje, lado, code, how):
 
 # ---- loading ----
 
+def anio_en_curso(ahora=None):
+    return (ahora or datetime.now(timezone.utc)).astimezone(LIMA).year
+
+
+def with_values(rows, aranceles, anio):
+    """`rows` with valor_m2 and anio_valor set from `aranceles` (Core's arancel records of `anio`): the valor_m2 of the
+    row's id_aranc that year, and the year with it; both empty without one."""
+    valores = {}
+    for record in aranceles:
+        a = record.get("attributes") or {}
+        if a.get("id_aranc") is not None and str(a.get("anio")) == str(anio) and a.get("valor_m2") is not None:
+            valores[a["id_aranc"]] = a["valor_m2"]
+    for attributes, _ in rows:
+        valor = valores.get(attributes["id_aranc"]) if attributes["id_aranc"] else None
+        attributes["valor_m2"] = valor
+        attributes["anio_valor"] = None if valor is None else anio
+    return rows
+
+
 def same_lines(a, b, tolerance=TOLERANCE):
     """Whether two MultiLineString geometries have the same parts and vertices, each within `tolerance` degrees."""
     if not a or not b or a.get("type") != b.get("type"):
@@ -807,6 +834,8 @@ def main(argv=None):
             print(f"error: --org expects the organization's id, and the account {args.email} is of the organization"
                   f" {organization or '(Core did not say)'}, not {args.org}; nothing was written", file=sys.stderr)
             return 2
+        anio = anio_en_curso()
+        rows = with_values(rows, client.list_all(ARANCEL, anio=anio), anio)
         todo = plan(client.list_all(OBJECT), rows, args.borrar_ausentes)
         summary = _summary(todo, args.borrar_ausentes)
         if args.dry_run:
@@ -820,6 +849,9 @@ def main(argv=None):
         print(f"error -> {e.status}\n{e.body}", file=sys.stderr)
         return 1
     print("done: " + summary.format(create="created", update="updated", delete="deleted"))
+    # a published layer keeps the classes of its publish (its SLD is a snapshot)
+    print("siguiente paso: python3 -I vistas_de_mapa.py, que vuelve a publicar las capas con las clases de estos datos"
+          " (README, «Vistas de mapa»)")
     return 0
 
 

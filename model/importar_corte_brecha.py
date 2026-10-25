@@ -15,6 +15,14 @@ srtm's code of the catastro item (its código municipal, else its CPU, else sect
 first among the fichas' codigo_municipal, then among their codigo_cpu, then their sector|manzana|lote; a key two
 fichas share matches neither.
 
+The copies for the map view (model/vistas_de_mapa.py) and the WMS layer of brecha_ficha: every ficha gets the estado
+of its decision_brecha (codigo_municipal|anio of the corte; PENDIENTE without one), and, when the corte is the most
+recent of the organization (by fecha, then clave), the lote_geom of its matched predio_catastral, so the map draws the
+fichas without a join. Then the fichas of the other cortes lose their lote_geom (--sin-geometria-anterior, the
+default; --con-geometria-anterior keeps it), so the map view shows only the latest corte. A corte loaded after a more
+recent one gets no lote at all. These copies leave GET /api/catastro/cambios as it was: it lists only predios,
+construcciones, obras and titulares.
+
 Idempotent upsert by clave: corte_brecha by <org>|<fecha>, brecha_ficha by <id of the corte>|<codigo_catastro>
 (<id of the corte>|id:<srtm's row id> when the row has no codigo_catastro, or shares it with another row of the
 corte). A row Core lacks is created, one that differs is updated (PATCH, a None clears), and an equal corte writes
@@ -25,7 +33,8 @@ code, no amount of a predio. --org refuses to write unless the account of --emai
 id, as import_vias.py). --dry-run reads Core and says what it would write, writing nothing.
 
 Run: python3 -I importar_corte_brecha.py (--corte DIR | --s3 s3://…/<org>/<fecha>) [--org <organization id>]
-             [--uit 5500] [--reemplazar] [--dry-run] [--workers 4]
+             [--uit 5500] [--reemplazar] [--sin-geometria-anterior | --con-geometria-anterior] [--dry-run]
+             [--workers 4]
 Exit: 0 ok, 1 Core refused something (only the status and the fields it names are printed), 2 the corte does not fit
       (format, sha256, extra or missing files, row counts, corrida, rows), fichas absent without --reemplazar, duckdb is missing,
       the S3 copy failed or --org is another organization.
@@ -52,7 +61,12 @@ if HERE not in sys.path:
 from core_client import Client, CoreError  # noqa: E402
 from tabular import LoadError, clean_text, load_enums, write_all  # noqa: E402
 
-CORTE, FICHA, PREDIO = "corte_brecha", "brecha_ficha", "predio_catastral"
+CORTE, FICHA, PREDIO, DECISION = "corte_brecha", "brecha_ficha", "predio_catastral", "decision_brecha"
+# the ficha's copy of its predio's lote (POLYGON, the srid of predio_catastral.lote_geom)
+LOTE = "lote_geom"
+PENDIENTE = "PENDIENTE"
+# a lote Core answers in 4326 after storing it in 32718 never comes back equal: within this it is the same
+TOLERANCIA = 1e-6
 MANIFIESTO = "manifiesto.json"
 # the manifest format srtm writes (herramientas/manifiesto.py FORMATO)
 FORMATO = 1
@@ -78,6 +92,11 @@ COLUMNAS_PREDIO = ("id", "codigo_catastro", "categoria", "confianza", "estimado"
 TOTALES = ("declarado", "catastro", "delta_impuesto", "delta_arbitrios")
 POR_CONFIANZA = {"delta_impuesto_confiable": "CONFIABLE", "delta_impuesto_dudoso": "DUDOSO",
                  "delta_impuesto_sin_levantar": "SIN_LEVANTAR"}
+
+
+# a published layer keeps the classes of its publish (its SLD is a snapshot): after new data it is published again
+RECORDATORIO = ("siguiente paso: python3 -I vistas_de_mapa.py, que vuelve a publicar las capas con las clases de"
+                " estos datos (README, «Vistas de mapa»)")
 
 
 class CorteError(ValueError):
@@ -273,8 +292,48 @@ def empatar(codigo_catastro, capas):
     return None
 
 
-def fichas(filas, corte_id, capas, uit, enums):
-    """The brecha_ficha attributes of every row, and the problems that keep them out (an unknown categoria)."""
+def lotes_de(predios):
+    """codigo_municipal -> the lote (a GeoJSON Polygon in 4326) of every predio that has both."""
+    lotes = {}
+    for predio in predios:
+        codigo = (predio.get("attributes") or {}).get("codigo_municipal")
+        lote = (predio.get("geometries") or {}).get(LOTE)
+        if codigo is not None and lote:
+            lotes[codigo] = lote
+    return lotes
+
+
+def estados_de(decisiones):
+    """codigo_municipal -> the estado of its decision_brecha (those of one year)."""
+    return {a.get("codigo_municipal"): a.get("estado") for a in ((d.get("attributes") or {}) for d in decisiones)
+            if a.get("codigo_municipal") and a.get("estado")}
+
+
+def mismo_lote(a, b, tolerancia=TOLERANCIA):
+    """Whether two Polygon geometries (or two absent ones) are the same: same rings, same vertices within
+    `tolerancia` degrees."""
+    if not a or not b:
+        return not a and not b
+    if a.get("type") != b.get("type"):
+        return False
+    anillos_a, anillos_b = a.get("coordinates") or [], b.get("coordinates") or []
+    if len(anillos_a) != len(anillos_b) or any(len(p) != len(q) for p, q in zip(anillos_a, anillos_b)):
+        return False
+    return all(abs(xa - xb) <= tolerancia and abs(ya - yb) <= tolerancia
+               for p, q in zip(anillos_a, anillos_b) for (xa, ya, *_), (xb, yb, *_) in zip(p, q))
+
+
+def es_el_mas_reciente(corte, cortes):
+    """Whether no other stored corte is more recent than `corte` by (fecha, clave), the API's order."""
+    propio = (str(corte["fecha"]), corte["clave"])
+    otros = ((str(a.get("fecha")), a.get("clave")) for a in ((c.get("attributes") or {}) for c in cortes)
+             if a.get("clave") != corte["clave"])
+    return all(otro < propio for otro in otros)
+
+
+def fichas(filas, corte_id, capas, uit, enums, estados=None):
+    """The brecha_ficha attributes of every row, and the problems that keep them out (an unknown categoria).
+    `estados`: codigo_municipal -> the estado of its decision of the corte's year (PENDIENTE without one)."""
     problemas = []
     repetidos = Counter(clean_text(f.get("codigo_catastro")) for f in filas)
     resultado = []
@@ -302,6 +361,7 @@ def fichas(filas, corte_id, capas, uit, enums):
             "estimado": None if fila.get("estimado") is None else bool(fila.get("estimado")),
             "supera_5_uit": None if uit is None or delta is None else abs(delta) > CINCO * uit,
         }
+        atributos["estado"] = (estados or {}).get(atributos["codigo_municipal"]) or PENDIENTE
         resultado.append(atributos)
     return resultado, problemas
 
@@ -358,19 +418,22 @@ def cambios(nuevo, guardado):
     return {k: v for k, v in nuevo.items() if not _igual(k, v, guardado.get(k))}
 
 
-def plan_fichas(filas, existentes, reemplazar):
-    """create, update [(id, n, changed attributes)], unchanged, absent (stored fichas the corte no longer has), the
-    deletes (absent ones with --reemplazar)."""
+def plan_fichas(filas, existentes, reemplazar, lotes=None):
+    """create [(n, attributes, geometries)], update [(id, n, changed attributes, geometries or None)], unchanged,
+    absent (stored fichas the corte no longer has), the deletes (absent ones with --reemplazar). `lotes`: the lote of
+    each of `filas`, in their order (None: none); a stored lote that differs is replaced, or cleared."""
     por_clave = {(r.get("attributes") or {}).get("clave"): r for r in existentes}
     crear, actualizar, iguales = [], [], 0
     for n, atributos in enumerate(filas, start=1):
+        lote = lotes[n - 1] if lotes is not None else None
         record = por_clave.get(atributos["clave"])
         if record is None:
-            crear.append((n, atributos))
+            crear.append((n, atributos, {LOTE: lote}))
             continue
         diferencia = cambios(atributos, record.get("attributes") or {})
-        if diferencia:
-            actualizar.append((record["id"], n, diferencia))
+        geometrias = None if mismo_lote(lote, (record.get("geometries") or {}).get(LOTE)) else {LOTE: lote}
+        if diferencia or geometrias:
+            actualizar.append((record["id"], n, diferencia, geometrias))
         else:
             iguales += 1
     claves = {a["clave"] for a in filas}
@@ -389,6 +452,11 @@ def _parse_args(argv):
     p.add_argument("--org", help="the organization id the account must belong to, or nothing is written")
     p.add_argument("--uit", help="the UIT of the year (S/), when the corte does not bring it in srtm_parametro")
     p.add_argument("--reemplazar", action="store_true", help="delete the fichas of the corte the corte no longer has")
+    anterior = p.add_mutually_exclusive_group()
+    anterior.add_argument("--sin-geometria-anterior", dest="sin_geometria_anterior", action="store_true", default=True,
+                          help="clear lote_geom on the fichas of the other cortes (the default): the map shows one corte")
+    anterior.add_argument("--con-geometria-anterior", dest="sin_geometria_anterior", action="store_false",
+                          help="leave lote_geom on the fichas of the other cortes")
     p.add_argument("--core", default=os.environ.get("WASICHAI_CORE", "http://localhost:8091"))
     p.add_argument("--email", default=os.environ.get("WASICHAI_EMAIL", "admin@wasichai.local"))
     p.add_argument("--password", default=os.environ.get("WASICHAI_PASSWORD", "admin"))
@@ -430,18 +498,28 @@ def cargar(args, carpeta):
     if args.org is not None and organization != args.org:
         raise CorteError(f"--org expects the organization's id, and the account {args.email} is of the organization"
                          f" {organization or '(Core did not say)'}, not {args.org}; nothing was written")
-    capas, ambiguas = indice_de_fichas(client.list_all(PREDIO))
-    guardados = client.list_all(CORTE, clave=corte["clave"])
-    guardado = guardados[0] if guardados else None
+    predios = client.list_all(PREDIO)
+    capas, ambiguas = indice_de_fichas(predios)
+    cortes = client.list_all(CORTE)
+    guardado = next((c for c in cortes if (c.get("attributes") or {}).get("clave") == corte["clave"]), None)
     corte_id = guardado["id"] if guardado else "<corte nuevo>"
-    nuevas, problemas = fichas(filas, corte_id, capas, uit, enums)
+    estados = estados_de(client.list_all(DECISION, anio=corte["anio"]))
+    nuevas, problemas = fichas(filas, corte_id, capas, uit, enums, estados)
     if problemas:
         for problema in problemas:
             print(f"problem: {problema}", file=sys.stderr)
         raise CorteError(f"{len(problemas)} filas no caben en el modelo: nothing was sent to Core")
     _report(nuevas, uit, ambiguas)
     existentes = client.list_all(FICHA, corte=guardado["id"]) if guardado else []
-    todo = plan_fichas(nuevas, existentes, args.reemplazar)
+    # the lotes go only on the most recent corte: the map view and the WMS layer draw one corte
+    reciente = es_el_mas_reciente(corte, cortes)
+    lotes = lotes_de(predios) if reciente else {}
+    con_lote = [lotes.get(f["codigo_municipal"]) for f in nuevas]
+    todo = plan_fichas(nuevas, existentes, args.reemplazar, con_lote)
+    # the fichas of the other cortes that still carry a lote
+    anteriores = ([r for c in cortes if c["id"] != corte_id for r in client.list_all(FICHA, corte=c["id"])
+                   if (r.get("geometries") or {}).get(LOTE)]
+                  if reciente and args.sin_geometria_anterior else [])
     cambio_corte = cambios(corte, guardado.get("attributes") or {}) if guardado else corte
     # a corte without cargado_en is one a load left half done: it is finished even if nothing else changed
     a_medias = guardado is not None and not (guardado.get("attributes") or {}).get("cargado_en")
@@ -457,8 +535,12 @@ def cargar(args, carpeta):
         print(resumen.format(create="to create", update="to update", delete="to delete"))
         raise CorteError(f"{len(todo['absent'])} fichas del corte guardado ya no vienen en el corte: --reemplazar las"
                          " borra; nothing was written")
+    lotes_resumen = (f"lotes: {sum(1 for g in con_lote if g)} fichas del corte con lote"
+                     + ("" if reciente else " (hay un corte más reciente: este no lleva lotes)")
+                     + f"; {len(anteriores)} fichas de cortes anteriores con lote {{clear}}")
     if args.dry_run:
         print(resumen.format(create="to create", update="to update", delete="to delete"))
+        print(lotes_resumen.format(clear="to clear"))
         return
     if escribe:
         # cargado_en goes last, after every ficha: until then the API does not show the corte, so a reader never sees
@@ -470,12 +552,16 @@ def cargar(args, carpeta):
                 atributos["clave"] = atributos["clave"].replace("<corte nuevo>", corte_id, 1)
         else:
             write_all(client, [("corte", 0, "PATCH", CORTE, corte_id, {**cambio_corte, "cargado_en": None})], 1, razon)
-        ops = ([(n, n, "POST", FICHA, None, a) for n, a in todo["create"]]
-               + [(n, n, "PATCH", FICHA, i, a) for i, n, a in todo["update"]]
+        ops = ([(n, n, "POST", FICHA, None, a, g) for n, a, g in todo["create"]]
+               + [(n, n, "PATCH", FICHA, i, a, g) for i, n, a, g in todo["update"]]
                + [(f"d{r['id']}", 0, "DELETE", FICHA, r["id"], None) for r in todo["delete"]])
         write_all(client, ops, args.workers, razon)
         write_all(client, [("corte", 0, "PATCH", CORTE, corte_id, {"cargado_en": _ahora()})], 1, razon)
+    # after the corte shows: the map is never left without a corte
+    write_all(client, [(r["id"], 0, "PATCH", FICHA, r["id"], {}, {LOTE: None}) for r in anteriores], args.workers, razon)
     print("done: " + resumen.format(create="created", update="updated", delete="deleted"))
+    print(lotes_resumen.format(clear="cleared"))
+    print(RECORDATORIO)
 
 
 def _campos(cuerpo):

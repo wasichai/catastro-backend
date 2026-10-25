@@ -132,10 +132,11 @@ El visor «Brechas» de catastro-ui es el consumidor: pinta las capas WMS como f
 lotes, con el `wmsTileUrl` de `@wasichai/gis` (la misma URL, en EPSG:3857). GeoServer corre en otro origen que el
 backend, así que en un despliegue real va detrás del mismo proxy (o con CORS habilitado).
 
-**Límite actual: sin estilo por atributo.** La capa sale con el estilo por defecto de GeoServer (un solo color).
-Colorear por un atributo (la brecha, el arancel) todavía no es posible; está en
-[wasichai-ui#86](https://github.com/wasichai/wasichai-ui/issues/86) y
-[wasichai#134](https://github.com/wasichai/wasichai/issues/134). Mientras tanto, esos mapas usan GeoJSON.
+**Capas con estilo por atributo.** Desde wasichai 1.5.0 una publicación puede llevar `{"style"}` y la capa sale con
+un SLD coloreado por un campo (ADR-072 de wasichai). `model/vistas_de_mapa.py` crea las vistas de mapa de aranceles y
+brechas y publica `tramo_via.geom` y `brecha_ficha.lote_geom` con su estilo (README, «Vistas de mapa»). El SLD guarda
+las clases de su publicación: se vuelve a correr después de cada carga de un corte y del recálculo anual de los
+valores de los tramos.
 
 ## 4. Iniciar el backend
 

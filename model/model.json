@@ -479,7 +479,7 @@
       "name": "tramo_via",
       "label": "Tramo de vía",
       "pluralLabel": "Tramos de vía",
-      "description": "Un frente de un tramo del eje vial con el código SAT de su arancel (id_aranc). El valor por m2 no se copia aquí: GET /api/catastro/vias/aranceles lo lee de arancel por id_aranc y año. Lo carga model/import_vias.py, una fila por frente: AMBOS, o IZQUIERDO y DERECHO cuando cada lado tiene su código (notas 2 y 3 del plano predial).",
+      "description": "Un frente de un tramo del eje vial con el código SAT de su arancel (id_aranc). GET /api/catastro/vias/aranceles lee el valor por m2 de arancel por id_aranc y año; valor_m2 y anio_valor son una copia del año en curso, solo para la vista de mapa y la capa WMS. Lo carga model/import_vias.py, una fila por frente: AMBOS, o IZQUIERDO y DERECHO cuando cada lado tiene su código (notas 2 y 3 del plano predial).",
       "indexes": [
         ["id_aranc"],
         ["cod_via_eje"]
@@ -563,6 +563,18 @@
           "geometryType": "MULTILINESTRING",
           "srid": 32718,
           "description": "El eje del tramo (UTM 18S). Un LineString se guarda como MultiLineString de una parte."
+        },
+        {
+          "name": "valor_m2",
+          "label": "Valor por m2 del año (S/)",
+          "type": "DECIMAL",
+          "description": "El valor_m2 del arancel de su id_aranc en anio_valor: una copia para la vista de mapa y la capa WMS. La mantiene el servidor al escribirse un arancel del año en curso; POST /api/catastro/vias/valores la recalcula. Vacío sin arancel ese año o sin id_aranc."
+        },
+        {
+          "name": "anio_valor",
+          "label": "Año del valor",
+          "type": "INTEGER",
+          "description": "El año de valor_m2 (el año en curso en America/Lima cuando se calculó). Vacío cuando valor_m2 lo está."
         }
       ]
     },
@@ -811,6 +823,21 @@
           "label": "Supera 5 UIT",
           "type": "BOOLEAN",
           "description": "|Δ autoavalúo| > 5 UIT del año, con la UIT del corte (srtm_parametro) o --uit. Vacío sin UIT o sin Δ autoavalúo."
+        },
+        {
+          "name": "estado",
+          "label": "Estado de la decisión",
+          "type": "ENUM",
+          "enum": "estado_decision",
+          "description": "Copia del estado de decision_brecha (codigo_municipal|anio del corte), PENDIENTE sin decisión: para la vista de mapa y la capa WMS. La escriben importar_corte_brecha.py y POST /api/catastro/brechas/decisiones (en el corte más reciente del año)."
+        },
+        {
+          "name": "lote_geom",
+          "label": "Lote",
+          "type": "GEOMETRY",
+          "geometryType": "POLYGON",
+          "srid": 32718,
+          "description": "Copia del lote del predio_catastral empatado (UTM 18S), solo en las fichas del corte más reciente: importar_corte_brecha.py la copia y la quita de los cortes anteriores, así la vista de mapa y la capa WMS muestran un solo corte."
         }
       ]
     },

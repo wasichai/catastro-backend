@@ -377,6 +377,46 @@ class BrechasApiTest : CatastroApiTest() {
     }
 
     @Test
+    fun `una decisión copia su estado en las fichas de su código del corte más reciente del año, y solo ahí`() {
+        cargarCorte("2026-09-30")
+        val viejo = idDelCorte
+        cargarCorte("2026-10-25")
+        val nuevo = idDelCorte
+        // the analista decides, and holds no UPDATE on brecha_ficha: the copy is the server's
+        val analista = cuentaDeServicio(listOf("CATASTRO_ANALISTA"), org)
+        val cuerpo = mapOf("codigos" to listOf("01-01-0001"), "anio" to 2026, "estado" to "A_FISCALIZAR")
+        send("POST", "/api/catastro/brechas/decisiones", cuerpo, HttpStatus.OK, analista)
+        assertEquals("A_FISCALIZAR", estadoDeFicha(nuevo, "01-01-0001"))
+        assertEquals(null, estadoDeFicha(nuevo, "01-01-0002"))
+        assertEquals(null, estadoDeFicha(viejo, "01-01-0001"))
+
+        decidir(listOf("01-01-0001", "01-01-0002"), "DESCARTADO", motivo = "sin mérito")
+        assertEquals("DESCARTADO", estadoDeFicha(nuevo, "01-01-0001"))
+        assertEquals("DESCARTADO", estadoDeFicha(nuevo, "01-01-0002"))
+        // a code that is no ficha is reported and copies nothing
+        decidir(listOf("no-existe"), "A_INSPECCIONAR")
+
+        // the generic api is still closed to the analista
+        val ficha = fichaDe(nuevo, "01-01-0001")["id"].asString()
+        val (status, respuesta) =
+            exchange("PATCH", "/api/objects/$BRECHA_FICHA/records/$ficha", mapOf("attributes" to mapOf("estado" to "PENDIENTE")), analista)
+        assertEquals(HttpStatus.FORBIDDEN, status, respuesta)
+        // and the loader, the admin through core, still writes a ficha
+        send("PATCH", "/api/objects/$BRECHA_FICHA/records/$ficha", mapOf("attributes" to mapOf("estado" to "A_FISCALIZAR")), HttpStatus.OK, org)
+        assertEquals("A_FISCALIZAR", estadoDeFicha(nuevo, "01-01-0001"))
+    }
+
+    private fun fichaDe(
+        corte: String,
+        codigo: String
+    ): JsonNode = arbol(send("GET", "/api/objects/$BRECHA_FICHA/records?corte=$corte&codigo_municipal=$codigo", null, HttpStatus.OK, org))["content"].single()
+
+    private fun estadoDeFicha(
+        corte: String,
+        codigo: String
+    ): String? = fichaDe(corte, codigo)["attributes"]["estado"]?.takeUnless { it.isNull }?.asString()
+
+    @Test
     fun `una decisión solo se escribe por la API`() {
         cargarCorte("2026-10-25")
         decidir(listOf("01-01-0001"), "A_INSPECCIONAR")
