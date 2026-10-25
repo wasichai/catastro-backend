@@ -24,7 +24,7 @@ Rules (wasichai/catastro-backend#10, contexto-comun.md «Ruling (#10)»):
   vínculos: vinculo_metodo matches the model's enum in any case (with _ or a space) or through --metodo TEXTO=ENUM;
           any other text exits 2. A row without cod_predio_rentas links nothing; an empty method links the code with
           an empty vinculo_metodo; a repeated code keeps its first row. Without --vinculos every ficha is loaded and
-          vinculo_metodo goes empty.
+          fichas.csv leaves the vinculo_metodo column out (ruling R11), so the upsert does not clear it.
 Every rule that drops or empties something is counted, so the operator sees what the delivery lost.
 
 The default columns are the libro's; --map-predio, --map-construccion, --map-titulares and --map-vinculos
@@ -114,6 +114,21 @@ def _positive(value):
 def _optional(row, mapping, field):
     """The cell of a column the sheet may lack (None then)."""
     return row.get(mapping[field].lower())
+
+
+def codigos_con_piso(filas, mapa):
+    """Codes with at least one construccion row whose nivel loads a piso (what pisos_de keeps): a row dropped for
+    lacking a digit or for being NIVEL 71/81 does not count towards PARCIAL/SIN_LEVANTAR."""
+    codigos = set()
+    for row in filas:
+        codigo = code_text(column_for(row, mapa, "codigo_municipal"))
+        if not codigo:
+            continue
+        digitos = DIGITOS.search(clean_text(column_for(row, mapa, "nivel")) or "")
+        if digitos is None or int(digitos.group()) in NIVELES_FUERA:
+            continue
+        codigos.add(codigo)
+    return codigos
 
 
 def fichas_de(predios, con_pisos, con_titulares, vinculos, mapa):
@@ -283,7 +298,9 @@ def _dentro_del_repositorio(path):
 
 
 def _escribir(path, columnas, filas):
-    with open(path, "w", encoding="utf-8", newline="") as f:
+    """Writes the csv with mode 0o600: it holds datos personales (Ley 29733)."""
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=columnas, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(filas)
@@ -357,17 +374,19 @@ def main(argv=None):
     def codigos_de(filas, mapa):
         return {c for c in (code_text(column_for(r, mapa, "codigo_municipal")) for r in filas) if c}
 
-    fichas, n_fichas = fichas_de(predios, codigos_de(construcciones, mapas["construccion"]),
+    fichas, n_fichas = fichas_de(predios, codigos_con_piso(construcciones, mapas["construccion"]),
                                  codigos_de(titular_filas, mapas["titulares"]), vinculos, mapas["predio"])
     codigos = {f["cod_pre"] for f in fichas}
     pisos, n_pisos = pisos_de(construcciones, codigos, mapas["construccion"], enums, args.anio_maximo)
     titulares, n_titulares = titulares_de(titular_filas, codigos, mapas["titulares"])
 
-    # a column the libro lacks is left out, so the upsert leaves that field as it is (README «Entregas»)
+    # a column the libro lacks, or vinculo_metodo without --vinculos, is left out, so the upsert leaves that field as
+    # it is (ruling R11, README «Entregas»)
     con_cuc = bool(predios) and mapas["predio"]["cuc"].lower() in predios[0]
+    columnas_fichas = [c for c in FICHAS_CSV if (c != "cuc" or con_cuc) and (c != "vinculo_metodo" or vinculos is not None)]
     try:
         os.makedirs(args.salida, exist_ok=True)
-        _escribir(os.path.join(args.salida, "fichas.csv"), [c for c in FICHAS_CSV if c != "cuc" or con_cuc], fichas)
+        _escribir(os.path.join(args.salida, "fichas.csv"), columnas_fichas, fichas)
         _escribir(os.path.join(args.salida, "pisos.csv"), PISOS_CSV, pisos)
         _escribir(os.path.join(args.salida, "titulares.csv"), TITULARES_CSV, titulares)
     except OSError as e:

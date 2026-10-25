@@ -44,7 +44,7 @@ yarn install && yarn format:check
 El modelo (`model/model.json`) y los cargadores son Python solo con la biblioteca estándar, con la forma de los de
 srtm-backend. Siete objetos: `predio_catastral` (llave `codigo_municipal`, igual a `predio.codigo` de srtm),
 `construccion`, `obra_complementaria` y `titular_catastral` (cuelgan de un predio; este último, datos personales de
-Ley 29733, ver [Fichas](#modelo-y-carga)), `arancel`, `configuracion_catastro` (la región de la organización, ver
+Ley 29733, ver [Modelo y carga](#modelo-y-carga)), `arancel`, `configuracion_catastro` (la región de la organización, ver
 abajo) y `entrega_catastral` (cada entrega del levantamiento, ver [Entregas](#entregas)). wasichai
 no tiene únicos compuestos, así que `arancel.clave` (`id_aranc|anio`) garantiza el par único. `codigo_vu` de una obra
 es `TIPO DE OBRA|número`, como `obra_categoria` de srtm (`model/data/obras_complementarias.csv`).
@@ -269,7 +269,9 @@ padrón de srtm, no el catastro. Las reglas son las de wasichai/catastro-backend
   fila de vínculo no se carga**. El método se lee contra el enum `vinculo_metodo` sin distinguir mayúsculas
   (`CODIGO_RENTAS`, `LLAVE_HU_MZ_LOTE`, `GEOMETRICO`, `MANUAL`), o con `--metodo TEXTO=ENUM` (repetible) para el texto
   que use el gpkg; un texto que no se lee sale con 2 y lo nombra. Un método vacío vincula el predio con
-  `vinculo_metodo` vacío. Sin `--vinculos` se cargan todas las fichas, con `vinculo_metodo` vacío.
+  `vinculo_metodo` vacío. Sin `--vinculos` se cargan todas las fichas, y `fichas.csv` no lleva la columna
+  `vinculo_metodo`: el convertidor nunca escribe vacía una columna que no leyó, así la entrega no borra el vínculo
+  que ya tuviera el predio (regla R11).
 
 Las columnas por defecto son las del libro; `--map-predio`, `--map-construccion`, `--map-titulares` y `--map-vinculos`
 `campo=columna` las cambian. Todas son obligatorias salvo `cuc_catastro` y `urbanizacion_catastro`: una hoja o una
@@ -666,7 +668,8 @@ Cada ítem trae siempre sus seis llaves:
 - `codigoMunicipal` es el del predio. Una construcción u obra lleva el de su predio, que se lee del audit log, así que
   sale aunque el predio ya se haya borrado. Es `null` si no se puede resolver, y srtm tiene que aceptarlo.
 - `campos` son los nombres de lo que cambió, nunca sus valores: en un alta, los campos que se llenaron; en un cambio,
-  los que cambiaron de valor; en una baja, ninguno.
+  los que cambiaron de valor; en una baja, ninguno. Un `UPDATE` de `predio_catastral` con `campos` vacío es un cambio
+  solo de geometría (`import_lotes.py --actualizar-geometria`); sin `--entrega`, ese cambio trae `entrega: null`.
 - `en` es el instante del cambio.
 - `entrega` es el código de la `entrega_catastral` que lo cargó (el `X-Change-Reason` del cargador). Es `null` si el
   cambio se hizo a mano o si su motivo no es una entrega.

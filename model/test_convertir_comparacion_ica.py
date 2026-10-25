@@ -313,13 +313,30 @@ class CliTests(unittest.TestCase):
         self.assertIn("predios_sin_vinculo: 1", out.splitlines())
         self.assertIn("vinculos: 2", out.splitlines())
 
-    def test_without_vinculos_every_ficha_is_loaded_with_an_empty_method(self):
+    def test_with_vinculos_a_row_with_an_empty_method_still_writes_an_empty_value(self):
+        vinculos = self.vinculos("cod_predio_rentas,vinculo_metodo\nS-0001,\nS-0003,geometrico\n")
+        code, _, err = self.convertir("--vinculos", vinculos)
+        self.assertEqual(code, 0, err)
+        fichas = self.leer("fichas.csv")
+        self.assertIn("vinculo_metodo", fichas[0])
+        self.assertEqual([(f["cod_pre"], f["vinculo_metodo"]) for f in fichas],
+                         [("S-0001", ""), ("S-0003", "GEOMETRICO")])
+
+    def test_a_ficha_whose_only_construccion_row_is_dropped_is_sin_levantar_not_parcial(self):
+        libro = escribir_libro(
+            self, [predio(cod="S-0004", area="0", urbanizacion=None)],
+            [construccion(cod="S-0004", nivel="NIVEL 71")])
+        code, _, err = self.convertir(libro=libro)
+        self.assertEqual(code, 0, err)
+        fichas = self.leer("fichas.csv")
+        self.assertEqual(fichas[0]["estado_levantamiento"], "SIN_LEVANTAR")
+
+    def test_without_vinculos_every_ficha_is_loaded_and_vinculo_metodo_is_left_out(self):
         code, _, err = self.convertir()
         self.assertEqual(code, 0, err)
         fichas = self.leer("fichas.csv")
-        self.assertEqual([(f["cod_pre"], f["vinculo_metodo"]) for f in fichas],
-                         [("S-0001", ""), ("S-0002", ""), ("S-0003", "")])
-        self.assertEqual(list(fichas[0]), FICHAS_CSV)
+        self.assertEqual([f["cod_pre"] for f in fichas], ["S-0001", "S-0002", "S-0003"])
+        self.assertEqual(list(fichas[0]), [c for c in FICHAS_CSV if c != "vinculo_metodo"])
         self.assertEqual(fichas[2]["estado_levantamiento"], "SIN_LEVANTAR")
 
     def test_a_method_alias_and_an_unknown_method(self):
@@ -352,6 +369,12 @@ class CliTests(unittest.TestCase):
                          [("S-0001", DOCUMENTO, NOMBRE), ("S-0002", "000000000", "LUIS SINTETICO")])
         self.assertEqual(list(titulares[0]), TITULARES_CSV)
 
+    def test_titulares_csv_is_written_with_mode_0600(self):
+        code, _, err = self.convertir()
+        self.assertEqual(code, 0, err)
+        modo = os.stat(os.path.join(self.salida, "titulares.csv")).st_mode
+        self.assertEqual(modo & 0o777, 0o600)
+
     def test_the_columns_can_be_mapped(self):
         libro = escribir_libro(self, [predio()], [construccion()], [titular()],
                                titulares_header=["COD_PREDIO", "TIPO_DOC", *TITULARES_HEADER[2:]])
@@ -375,7 +398,7 @@ class CliTests(unittest.TestCase):
         libro = escribir_libro(self, [predio()[:4]], predio_header=PREDIO_HEADER[:4])
         code, _, err = self.convertir(libro=libro)
         self.assertEqual(code, 0, err)
-        self.assertEqual(list(self.leer("fichas.csv")[0]), [c for c in FICHAS_CSV if c != "cuc"])
+        self.assertEqual(list(self.leer("fichas.csv")[0]), [c for c in FICHAS_CSV if c not in ("cuc", "vinculo_metodo")])
 
     def test_it_prints_counts_only(self):
         code, out, err = self.convertir("--vinculos", self.vinculos())
