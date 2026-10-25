@@ -393,6 +393,25 @@ class ValorizacionTest {
         assertEquals(bd("9100.00"), valorizada(insumos().copy(levantamiento = "COMPLETO")).autoavaluo)
     }
 
+    // --- tipo de predio (rústico, #27: sin tablas rústicas, sin valor)
+
+    @Test
+    fun `un predio rústico no se valoriza con el arancel urbano`() {
+        val v = sinValor(insumos().copy(tipoPredio = "RUSTICO"))
+        assertEquals("PREDIO_RUSTICO", v.llave)
+        assertEquals("PREDIO_RUSTICO", v.motivo)
+    }
+
+    @Test
+    fun `un predio urbano, o sin tipo, se valoriza como siempre`() {
+        assertEquals(bd("9100.00"), valorizada(insumos().copy(tipoPredio = "URBANO")).autoavaluo)
+    }
+
+    @Test
+    fun `sin levantar gana sobre rústico`() {
+        assertEquals("SIN_LEVANTAMIENTO", sinValor(insumos().copy(levantamiento = "SIN_LEVANTAR", tipoPredio = "RUSTICO")).llave)
+    }
+
     // --- obras complementarias
 
     @Test

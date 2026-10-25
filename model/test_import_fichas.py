@@ -212,6 +212,14 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(fichas[0][1]["codigo_referencia_catastral"], "110101-01-001-001")
         self.assertEqual(len(problems), 2, problems)
 
+    def test_tipo_predio_column(self):
+        rows = read_table(write_csv(self, "cod_pre,tipo_predio\nA,rustico\nB,\nC,AGRICOLA\n"))
+        fichas, problems = imf.fichas_from(rows, parse_map([], imf.FICHA_COLUMNS), ENUMS)
+        self.assertEqual(fichas[0][1]["tipo_predio"], "RUSTICO")
+        self.assertIsNone(fichas[1][1]["tipo_predio"])
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("tipo_predio", problems[0])
+
     def test_present_fields_reads_the_header(self):
         rows = read_table(write_csv(self, "cod_pre,uso\nA,\n"))
         self.assertEqual(imf.present_fields(rows, parse_map([], imf.FICHA_COLUMNS), ["uso", "lote"]), {"uso"})

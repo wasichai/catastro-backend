@@ -67,11 +67,14 @@ Se corren con `python3 -I`, porque leen archivos de afuera: así ni el directori
 `codigo_municipal`), `--obras` y `--titulares` (opcionales, mismo vínculo), en csv o xlsx. Las columnas por defecto
 salen del contrato de carga masiva del MEF (`cod_pre`, `cod_cpu`, `cod_sect`, `cod_mzn`, `cod_lote`, `id_aranc`,
 `area_terreno`, `longitud_frente`...); `--map`, `--map-pisos`, `--map-obras` y `--map-titulares` `campo=columna` las
-cambian. Cuatro columnas opcionales más, las cuatro vacías
+cambian. Cinco columnas opcionales más, las cinco vacías
 no se envían: `vinculo_metodo` (una opción del enum `vinculo_metodo`, sin distinguir mayúsculas: `CODIGO_RENTAS`,
 `LLAVE_HU_MZ_LOTE`, `GEOMETRICO` o `MANUAL`) dice cómo se vinculó la ficha con su predio de rentas; `vinculo_revisado`
 (`SI`/`NO`, igual que `techo_incluido`) si una persona ya revisó ese vínculo; `cuc` y `codigo_referencia_catastral`
-son los códigos del Sistema Nacional Integrado de Catastro (Ley 28294), tal cual vienen. Las siete categorías van en una columna
+son los códigos del Sistema Nacional Integrado de Catastro (Ley 28294), tal cual vienen; `tipo_predio` (una opción
+del enum `tipo_predio`, sin distinguir mayúsculas: `URBANO` o `RUSTICO`) dice si el predio es urbano o rústico.
+Mientras no haya tablas rústicas, un predio `RUSTICO` sale `SinValorizar` con motivo `PREDIO_RUSTICO` (ADR-004,
+ADR-005). Las siete categorías van en una columna
 `categorias` (`CCDCCDC`: muros y columnas, techos, pisos, puertas y ventanas, revestimientos, baños, instalaciones) o en
 siete columnas con el nombre del campo. La columna opcional `techo_incluido` (`SI`/`NO`, `S`/`N`, `TRUE`/`FALSE`,
 `1`/`0`, sin distinguir mayúsculas; vacía no se envía) marca los muros D de drywall que incluyen el techo (llamada 5 del
@@ -339,6 +342,7 @@ difieren en S/ 1 o menos y el resto son los niveles cuya depreciación no es la 
 |---|---|
 | `valuacion-v1` | Depreciación con la tabla del uso del predio (D1); VU sin redondeos intermedios en todas las regiones |
 | `valuacion-v2` | La `clasificacion` de cada construcción manda sobre el uso, y la costa redondea el VU al céntimo (arriba). Un predio de la selva sin `clasificacion`, como los de Perené, da la misma cifra que en v1 |
+| `valuacion-v3` | Un predio rústico (`tipo_predio`/`tipoPredio`) sale sin valor con `PREDIO_RUSTICO` hasta que haya aranceles rústicos; los urbanos no cambian |
 
 ## API para srtm
 
@@ -360,7 +364,7 @@ Authorization: Bearer <token de POST /api/auth/token>
 ```json
 {
   "anio": 2026,
-  "version": "valuacion-v2",
+  "version": "valuacion-v3",
   "region": "SELVA",
   "page": 0,
   "size": 200,
@@ -416,6 +420,7 @@ motivo no es una frase fija). Varios llevan un sufijo dinámico (`:dato`) que no
 | `llave` | Por qué |
 |---|---|
 | `SIN_LEVANTAMIENTO` | La ficha tiene `estado_levantamiento = SIN_LEVANTAR`: aún no se ha levantado en campo |
+| `PREDIO_RUSTICO` | El predio es rústico (`tipo_predio`/`tipoPredio` = `RUSTICO`): aún no hay aranceles rústicos con que valorizarlo |
 | `AREA_TERRENO_FALTANTE` | El predio no declara área de terreno |
 | `ARANCEL_FALTANTE` | La vía del predio no tiene arancel por m² para el año |
 | `PARAMETRO_FALTANTE:<clave>:<año>` | Las tablas no traen ese parámetro para ese año |
@@ -461,15 +466,18 @@ Content-Type: application/json
   "obras": [
     { "codigoVu": "MUROS PERIMETRICOS O CERCOS|1", "cantidad": 30, "anioConstruccion": 2016, "material": "CONCRETO", "estado": "BUENO" }
   ],
-  "codigoMunicipal": null
+  "codigoMunicipal": null,
+  "tipoPredio": null
 }
 ```
 
 - Los campos son los de `Insumos`, con los nombres y la ortografía de los enums del modelo (material, estado y
   `clasificacion`). Solo `anio` (1900 a 2100) es obligatorio, y `piso` en cada construcción. Lo que falta o viene `null`
   queda sin declarar: el predio sale con su `motivo`, nunca con un cero. Las letras (`muros`, `techos`, `puertas`) son
-  una sola mayúscula de la A a la J; `seccion`, un entero desde 1. Un campo que sobra, o de otro tipo, es un **422**
-  que lo nombra (`errors[0].field`, por ejemplo `construcciones[0].muros`).
+  una sola mayúscula de la A a la J; `seccion`, un entero desde 1. `tipoPredio` es `URBANO` o `RUSTICO`; un predio
+  `RUSTICO` sale con `PREDIO_RUSTICO` (ver Motivos), y un texto que no es ninguna de las dos es un **422** sobre
+  `tipoPredio`. Un campo que sobra, o de otro tipo, es un **422** que lo nombra (`errors[0].field`, por ejemplo
+  `construcciones[0].muros`).
 - Sin `arancelM2`, con `codigoMunicipal`, toma el arancel del año de esa ficha del catastro (`origenArancel` =
   `FICHA`). Si la ficha no existe o no tiene arancel, `ARANCEL_FALTANTE`. Solo se toma el arancel; lo demás es del
   cuerpo.
@@ -481,7 +489,7 @@ Content-Type: application/json
 ```json
 {
   "anio": 2026,
-  "version": "valuacion-v2",
+  "version": "valuacion-v3",
   "region": "SELVA",
   "codigoMunicipal": null,
   "arancelM2": 45.5,

@@ -46,7 +46,9 @@ data class PredioCatastral(
     val vinculoRevisado: Boolean? = null,
     // Sistema Nacional Integrado de Catastro (Ley 28294) codes, optional
     val cuc: String? = null,
-    val codigoReferenciaCatastral: String? = null
+    val codigoReferenciaCatastral: String? = null,
+    // URBANO or RUSTICO (model's enum tipo_predio); what Valorizacion.calcular reads as Insumos.tipoPredio
+    val tipoPredio: String? = null
 )
 
 // material and estado_conservacion come in the model's enum spelling (CONCRETO, MUY BUENO …), which is what
