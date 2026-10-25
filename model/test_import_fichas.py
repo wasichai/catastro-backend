@@ -27,6 +27,10 @@ PISOS = """cod_pre,piso,area_construida,anio_construccion,material,estado_conser
 OBRAS = """cod_pre,codigo_vu,cantidad,anio_construccion,material,estado_conservacion
 120302-0001,CERCOS METALICOS|88,42,1998,METAL,REGULAR
 """
+TITULARES = ("cod_pre,tipo_documento,numero_documento,nombre,porcentaje,condicion\n"
+            "120302-0001,DNI,00412345,ANA PEREZ QUISPE,50,PROPIETARIO\n"
+            "120302-0001,DNI,00412345,ana  perez quispe,50,PROPIETARIO\n"
+            "120302-0002,DNI,000000000,LUIS ROJAS,,POSEEDOR\n")
 
 
 class ParseTests(unittest.TestCase):
@@ -213,6 +217,65 @@ class ParseTests(unittest.TestCase):
         self.assertEqual(imf.present_fields(rows, parse_map([], imf.FICHA_COLUMNS), ["uso", "lote"]), {"uso"})
 
 
+class TitularParseTests(unittest.TestCase):
+    """titulares_from (Ley 29733): a problem or an aviso never names a document or a nombre, only codigo and row."""
+
+    def pm(self):
+        return parse_map([], imf.TITULAR_COLUMNS)
+
+    def test_the_document_goes_as_it_comes_and_fillers_go_empty(self):
+        rows = read_table(write_csv(self, TITULARES))
+        t, problems, avisos = imf.titulares_from(rows, self.pm(), {"120302-0001", "120302-0002"})
+        self.assertEqual(problems, [])
+        self.assertEqual(t[0][2]["numero_documento"], "00412345")
+        self.assertIsNone(t[-1][2]["numero_documento"])
+        self.assertIn("titulares 120302-0002 fila 4: documento de relleno, queda vacío", avisos)
+
+    def test_a_repeated_titular_loads_once_and_the_sum_is_reported(self):
+        rows = read_table(write_csv(self, TITULARES))
+        t, problems, avisos = imf.titulares_from(rows, self.pm(), {"120302-0001", "120302-0002"})
+        self.assertEqual(len([x for x in t if x[1] == "120302-0001"]), 1)
+        self.assertIn("titulares 120302-0001 fila 3: repetido, se carga una vez", avisos)
+        # rows as given: 50 + 50 = 100, not flagged
+        self.assertFalse([a for a in avisos if a.startswith("titulares 120302-0001: suman")])
+
+    def test_a_predio_at_200_percent_is_reported(self):
+        rows = read_table(write_csv(self, "cod_pre,numero_documento,nombre,porcentaje\n"
+                                          "A,1,UNO,100\nA,2,DOS,100\n"))
+        _, problems, avisos = imf.titulares_from(rows, self.pm(), {"A"})
+        self.assertEqual(problems, [])
+        self.assertIn("titulares A: suman 200 %", avisos)
+
+    def test_a_predio_whose_titulares_all_lack_porcentaje_is_not_reported(self):
+        rows = read_table(write_csv(self, "cod_pre,numero_documento,nombre\nA,1,UNO\nA,2,DOS\n"))
+        _, problems, avisos = imf.titulares_from(rows, self.pm(), {"A"})
+        self.assertEqual((problems, avisos), ([], []))
+
+    def test_the_report_never_prints_names_or_documents(self):
+        for text in (" ".join(imf.titulares_from(
+                read_table(write_csv(self, TITULARES)), self.pm(), {"120302-0001", "120302-0002"})[1]),
+                    " ".join(imf.titulares_from(
+                read_table(write_csv(self, TITULARES)), self.pm(), {"120302-0001", "120302-0002"})[2])):
+            for secreto in ("ANA", "PEREZ", "QUISPE", "00412345", "LUIS", "ROJAS"):
+                self.assertNotIn(secreto, text)
+
+    def test_a_titular_of_a_code_outside_the_fichas_is_a_problem(self):
+        rows = read_table(write_csv(self, "cod_pre,numero_documento,nombre\nZ,1,UNO\n"))
+        _, problems, _ = imf.titulares_from(rows, self.pm(), {"A"})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("not in the fichas", problems[0])
+
+    def test_an_unreadable_porcentaje_is_a_problem(self):
+        rows = read_table(write_csv(self, "cod_pre,numero_documento,nombre,porcentaje\nA,1,UNO,abc\n"))
+        _, problems, _ = imf.titulares_from(rows, self.pm(), {"A"})
+        self.assertEqual(len(problems), 1, problems)
+        self.assertIn("porcentaje", problems[0])
+
+    def test_missing_codigo_municipal_column_is_a_problem(self):
+        _, problems, _ = imf.titulares_from(read_table(write_csv(self, "x\n1\n")), self.pm(), {"A"})
+        self.assertEqual(len(problems), 1)
+
+
 class LoadTests(unittest.TestCase):
     def setUp(self):
         self.core = FakeCore()
@@ -231,7 +294,7 @@ class LoadTests(unittest.TestCase):
     def test_creates_predios_with_their_children(self):
         code, out, err = self.cli("--obras", self.obras)
         self.assertEqual(code, 0, err)
-        self.assertIn("done: 2 created, 0 skipped (3 construcciones, 1 obras)", out)
+        self.assertIn("done: 2 created, 0 skipped (3 construcciones, 1 obras, 0 titulares)", out)
         predios = {r["attributes"]["codigo_municipal"]: r for r in self.core.records["predio_catastral"]}
         piso = next(r for r in self.core.records["construccion"] if r["attributes"]["piso"] == "2")
         self.assertEqual(piso["attributes"]["predio"], predios["120302-0001"]["id"])
@@ -253,7 +316,7 @@ class LoadTests(unittest.TestCase):
                                 "120302-0001,5,CCDCCDC,,2\n")
         code, out, err = self.cli(pisos=pisos)
         self.assertEqual(code, 0, err)
-        self.assertIn("(2 construcciones, 0 obras)", out)
+        self.assertIn("(2 construcciones, 0 obras, 0 titulares)", out)
         primera, segunda = sorted((r["attributes"] for r in self.core.records["construccion"]),
                                   key=lambda a: a.get("seccion", 1))
         self.assertEqual((primera["piso"], primera["clasificacion"]), ("5", ENUMS["clasificacion"][0]))
@@ -261,7 +324,7 @@ class LoadTests(unittest.TestCase):
         self.assertEqual((segunda["piso"], segunda["seccion"]), ("5", 2))
         self.assertNotIn("clasificacion", segunda)
         code, out, _ = self.cli(pisos=pisos)
-        self.assertIn("(0 construcciones, 0 obras)", out)
+        self.assertIn("(0 construcciones, 0 obras, 0 titulares)", out)
         self.assertEqual(len(self.core.records["construccion"]), 2)
 
     def test_a_piso_core_has_without_seccion_is_seccion_1(self):
@@ -271,7 +334,7 @@ class LoadTests(unittest.TestCase):
         pisos = write_csv(self, "cod_pre,piso,seccion\n120302-0001,1,1\n120302-0001,1,2\n")
         code, out, err = self.cli(pisos=pisos)
         self.assertEqual(code, 0, err)
-        self.assertIn("(1 construcciones, 0 obras)", out)
+        self.assertIn("(1 construcciones, 0 obras, 0 titulares)", out)
         self.assertEqual(sorted(r["attributes"].get("seccion", 1) for r in self.core.records["construccion"]), [1, 2])
 
     def test_second_run_creates_nothing(self):
@@ -279,14 +342,14 @@ class LoadTests(unittest.TestCase):
         before = len(self.posts())
         code, out, _ = self.cli("--obras", self.obras)
         self.assertEqual(code, 0)
-        self.assertIn("done: 0 created, 2 skipped (0 construcciones, 0 obras)", out)
+        self.assertIn("done: 0 created, 2 skipped (0 construcciones, 0 obras, 0 titulares)", out)
         self.assertEqual(len(self.posts()), before)
 
     def test_an_existing_predio_without_children_gets_them(self):
         self.core.add_record("predio_catastral", {"codigo_municipal": "120302-0001"})
         code, out, err = self.cli()
         self.assertEqual(code, 0, err)
-        self.assertIn("done: 1 created, 1 skipped (3 construcciones, 0 obras)", out)
+        self.assertIn("done: 1 created, 1 skipped (3 construcciones, 0 obras, 0 titulares)", out)
 
     def test_a_failing_obras_step_is_completed_by_the_second_run(self):
         self.core.fail_on_record = "obra_complementaria"
@@ -297,11 +360,11 @@ class LoadTests(unittest.TestCase):
         self.core.fail_on_record = None
         code, out, err = self.cli("--obras", self.obras)
         self.assertEqual(code, 0, err)
-        self.assertIn("done: 0 created, 2 skipped (0 construcciones, 1 obras)", out)
+        self.assertIn("done: 0 created, 2 skipped (0 construcciones, 1 obras, 0 titulares)", out)
         self.assertEqual(len(self.core.records["construccion"]), 3)
         self.assertEqual(len(self.core.records["obra_complementaria"]), 1)
         code, out, _ = self.cli("--obras", self.obras)
-        self.assertIn("(0 construcciones, 0 obras)", out)
+        self.assertIn("(0 construcciones, 0 obras, 0 titulares)", out)
         self.assertEqual(len(self.core.records["obra_complementaria"]), 1)
 
     def test_a_pisos_step_failing_half_way_is_completed_by_the_second_run(self):
@@ -312,12 +375,12 @@ class LoadTests(unittest.TestCase):
         self.core.fail_record_after = {}
         code, out, err = self.cli("--obras", self.obras)
         self.assertEqual(code, 0, err)
-        self.assertIn("(2 construcciones, 1 obras)", out)
+        self.assertIn("(2 construcciones, 1 obras, 0 titulares)", out)
         keys = [(r["attributes"]["predio"], r["attributes"]["piso"]) for r in self.core.records["construccion"]]
         self.assertEqual(len(keys), 3)
         self.assertEqual(len(set(keys)), 3)  # no duplicates
         code, out, _ = self.cli("--obras", self.obras)
-        self.assertIn("(0 construcciones, 0 obras)", out)
+        self.assertIn("(0 construcciones, 0 obras, 0 titulares)", out)
         self.assertEqual(len(self.core.records["construccion"]), 3)
 
     def test_only_the_missing_children_of_an_existing_predio_are_created(self):
@@ -325,14 +388,14 @@ class LoadTests(unittest.TestCase):
         self.core.add_record("construccion", {"piso": "1", "predio": first["id"]})
         code, out, err = self.cli()
         self.assertEqual(code, 0, err)
-        self.assertIn("done: 1 created, 1 skipped (2 construcciones, 0 obras)", out)  # piso 2 here, piso 1 of the new one
+        self.assertIn("done: 1 created, 1 skipped (2 construcciones, 0 obras, 0 titulares)", out)  # piso 2 here, piso 1 of the new one
         self.assertEqual(len(self.core.records["construccion"]), 3)
 
     def test_a_relation_read_back_as_an_object_still_matches(self):
         first = self.core.add_record("predio_catastral", {"codigo_municipal": "120302-0001"})
         self.core.add_record("construccion", {"piso": "1", "predio": {"id": first["id"]}})
         code, out, _ = self.cli()
-        self.assertIn("(2 construcciones, 0 obras)", out)
+        self.assertIn("(2 construcciones, 0 obras, 0 titulares)", out)
 
     def test_a_repeated_obra_key_is_a_problem(self):
         dup = write_csv(self, OBRAS + OBRAS.split("\n", 1)[1])
@@ -382,6 +445,31 @@ class LoadTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertIn("--pisos", err)
         self.assertEqual(self.core.requests, [])
+
+    def test_titulares_hang_from_their_predio_and_carry_its_code(self):
+        titulares = write_csv(self, TITULARES)
+        code, out, err = self.cli("--titulares", titulares)
+        self.assertEqual(code, 0, err)
+        self.assertIn("(3 construcciones, 0 obras, 2 titulares)", out)  # the repeated ANA loads once
+        predio = next(r for r in self.core.records["predio_catastral"] if r["attributes"]["codigo_municipal"] == "120302-0001")
+        titular = next(r for r in self.core.records["titular_catastral"] if r["attributes"]["predio"] == predio["id"])
+        self.assertEqual(titular["attributes"]["codigo_municipal"], "120302-0001")
+
+    def test_a_second_run_creates_no_titular_again(self):
+        titulares = write_csv(self, TITULARES)
+        self.cli("--titulares", titulares)
+        before = len(self.core.records["titular_catastral"])
+        code, out, _ = self.cli("--titulares", titulares)
+        self.assertEqual(code, 0)
+        self.assertIn("(0 construcciones, 0 obras, 0 titulares)", out)
+        self.assertEqual(len(self.core.records["titular_catastral"]), before)
+
+    def test_the_report_never_prints_names_or_documents(self):
+        titulares = write_csv(self, TITULARES)
+        code, out, err = self.cli("--titulares", titulares)
+        self.assertEqual(code, 0, err)
+        for secreto in ("ANA", "PEREZ", "QUISPE", "00412345", "LUIS", "ROJAS"):
+            self.assertNotIn(secreto, out + err)
 
 
 class EntregaLoadTests(unittest.TestCase):
@@ -601,6 +689,38 @@ class EntregaLoadTests(unittest.TestCase):
             self.assertEqual(code, 2, argv)
             self.assertTrue(err, argv)
         self.assertEqual(self.core.requests, [])
+
+    def test_an_entrega_creates_titulares_then_patches_a_changed_one_and_deletes_none(self):
+        titulares = write_csv(self, "cod_pre,numero_documento,nombre,porcentaje,condicion\n"
+                                    "120302-0001,00412345,ANA PEREZ,50,PROPIETARIO\n")
+        code, out, err = self.entrega("--titulares", titulares)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(len(self.core.records["titular_catastral"]), 1)
+        changed = write_csv(self, "cod_pre,numero_documento,nombre,porcentaje,condicion\n"
+                                  "120302-0001,00412345,ANA PEREZ,80,PROPIETARIO\n")
+        code, out, err = self.cli("--titulares", changed, "--entrega", "E-2", "--fecha-corte", "2026-10-01",
+                                  "--fuente", "BARRIDO")
+        self.assertEqual(code, 0, err)
+        self.assertIn("cambio 120302-0001 titular fila 2: porcentaje", out)
+        titular = self.core.records["titular_catastral"][0]
+        self.assertEqual(titular["attributes"]["porcentaje"], "80")
+        self.assertEqual(len(self.core.records["titular_catastral"]), 1)  # patched, never deleted or duplicated
+        self.assertEqual([r for r in self.core.reasons if r[0] == "DELETE"], [])
+
+    def test_archivo_sha256_includes_the_titulares_file_last(self):
+        titulares = write_csv(self, "cod_pre,numero_documento,nombre\n120302-0001,1,UNO\n")
+        code, out, err = self.entrega("--obras", self.obras, "--titulares", titulares)
+        self.assertEqual(code, 0, err)
+        e = self.core.records["entrega_catastral"][0]
+        self.assertEqual(e["attributes"]["archivo_sha256"],
+                         ent.sha256_of([self.fichas, self.pisos, self.obras, titulares]))
+
+    def test_the_entrega_report_never_prints_names_or_documents(self):
+        titulares = write_csv(self, TITULARES)
+        code, out, err = self.entrega("--titulares", titulares)
+        self.assertEqual(code, 0, err)
+        for secreto in ("ANA", "PEREZ", "QUISPE", "00412345", "LUIS", "ROJAS"):
+            self.assertNotIn(secreto, out + err)
 
 
 if __name__ == "__main__":

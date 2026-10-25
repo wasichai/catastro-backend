@@ -13,6 +13,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 TYPES = ent.field_types(os.path.join(HERE, "model.json"))
 PISO_FIELDS = {"piso", "seccion", "area_construida", "anio_construccion", "material"}
 OBRA_FIELDS = {"codigo_vu", "cantidad", "anio_construccion", "material"}
+TITULAR_FIELDS = {"codigo_municipal", "tipo_documento", "numero_documento", "nombre", "porcentaje", "condicion"}
 
 
 def rec(codigo, **attrs):
@@ -29,8 +30,13 @@ def obra_rec(codigo, codigo_vu, anio, **attrs):
             "attributes": {"predio": f"p-{codigo}", "codigo_vu": codigo_vu, "anio_construccion": anio, **attrs}}
 
 
-def state(predios=(), construcciones=(), obras=()):
-    return ent.CoreState(list(predios), list(construcciones), list(obras), [])
+def titular_rec(codigo, numero_documento, nombre, **attrs):
+    return {"id": f"t-{codigo}-{numero_documento}-{nombre}",
+            "attributes": {"predio": f"p-{codigo}", "numero_documento": numero_documento, "nombre": nombre, **attrs}}
+
+
+def state(predios=(), construcciones=(), obras=(), titulares=()):
+    return ent.CoreState(list(predios), list(construcciones), list(obras), list(titulares))
 
 
 def ficha(codigo, fila=2, **attrs):
@@ -45,12 +51,17 @@ def obra(codigo, codigo_vu, anio, fila=2, **attrs):
     return fila, codigo, {"codigo_vu": codigo_vu, "anio_construccion": anio, **attrs}
 
 
-def plan_of(core, fichas=(), pisos=(), obras=(), present=(), with_pisos=True, piso_fields=PISO_FIELDS,
-            obra_fields=OBRA_FIELDS, **flags):
+def titular(codigo, numero_documento, nombre, fila=2, **attrs):
+    return fila, codigo, {"numero_documento": numero_documento, "nombre": nombre, **attrs}
+
+
+def plan_of(core, fichas=(), pisos=(), obras=(), titulares=None, present=(), with_pisos=True, piso_fields=PISO_FIELDS,
+            obra_fields=OBRA_FIELDS, titular_fields=TITULAR_FIELDS, **flags):
     present = ent.Present(set(present) | {"codigo_municipal"}, set(piso_fields), set(obra_fields) if obras else set(),
-                          set())
+                          set(titular_fields) if titulares is not None else set())
     return ent.plan_entrega(core, list(fichas), list(pisos), list(obras), present, TYPES, codigo="E-1",
-                            with_pisos=with_pisos, **flags)
+                            with_pisos=with_pisos, titulares=list(titulares) if titulares is not None else None,
+                            **flags)
 
 
 class CodigoAndShaTests(unittest.TestCase):
@@ -223,6 +234,68 @@ class ReadCoreTests(unittest.TestCase):
         self.assertEqual(([r["id"] for r in core.predios], [r["id"] for r in core.construcciones],
                           [r["id"] for r in core.obras], core.titulares),
                          (["predio_catastral"], ["construccion"], ["obra_complementaria"], []))
+
+    def test_read_core_lists_titulares_only_when_asked(self):
+        class Client:
+            def list_all(self, name):
+                return [{"id": name, "attributes": {}}]
+        self.assertEqual(ent.read_core(Client(), titulares=True).titulares, [{"id": "titular_catastral", "attributes": {}}])
+        self.assertEqual(ent.read_core(Client(), titulares=False).titulares, [])
+
+
+class TitularKeyTests(unittest.TestCase):
+    def test_the_key_is_predio_document_or_empty_and_collapsed_upper_cased_name(self):
+        self.assertEqual(ent.titular_key("p-1", {"numero_documento": "00412345", "nombre": "ana  perez"}),
+                         ("p-1", "00412345", "ANA PEREZ"))
+        self.assertEqual(ent.titular_key("p-1", {"numero_documento": None, "nombre": "Luis Rojas"}),
+                         ("p-1", "", "LUIS ROJAS"))
+
+
+class TitularPlanTests(unittest.TestCase):
+    """Titulares in the entrega plan: created and patched like any child, never deleted, and the lines never carry
+    a name or a document (Ley 29733 and c3's Review Focus)."""
+
+    def test_without_a_titulares_file_titulares_are_not_compared(self):
+        core = state(predios=[rec("A")], titulares=[titular_rec("A", "1", "ANA")])
+        plan = plan_of(core, fichas=[ficha("A")])
+        self.assertEqual((plan.lines[0], plan.child_ops), ("sin cambio A", []))
+
+    def test_a_missing_titular_of_an_existing_ficha_is_an_alta_without_a_value(self):
+        core = state(predios=[rec("A")])
+        plan = plan_of(core, fichas=[ficha("A")], titulares=[titular("A", "1", "ANA PEREZ", fila=7, condicion="PROPIETARIO")])
+        self.assertIn("cambio A titular fila 7: alta", plan.lines)
+        self.assertEqual([op[:4] for op in plan.child_ops], [(("A", "1", "ANA PEREZ"), 7, "POST", "titular_catastral")])
+        self.assertNotIn("ANA", " ".join(plan.lines))
+
+    def test_an_alta_ficha_brings_its_titulares_without_a_line(self):
+        plan = plan_of(state(), fichas=[ficha("A")], titulares=[titular("A", "1", "ANA")])
+        self.assertEqual(plan.lines, ["alta A", "entrega E-1: 1 altas, 0 cambios, 0 sin cambio, 0 ausentes"])
+        self.assertEqual(len(plan.child_ops), 1)
+
+    def test_a_changed_porcentaje_is_a_patch_naming_only_the_field(self):
+        core = state(predios=[rec("A")], titulares=[titular_rec("A", "1", "ANA", porcentaje=50)])
+        plan = plan_of(core, fichas=[ficha("A")], titulares=[titular("A", "1", "ANA", fila=9, porcentaje="100")])
+        self.assertIn("cambio A titular fila 9: porcentaje", plan.lines)
+        self.assertNotIn("50", " ".join(plan.lines))
+        self.assertNotIn("100", " ".join(plan.lines))
+        self.assertEqual(plan.child_ops, [(("A", "1", "ANA"), 9, "PATCH", "titular_catastral",
+                                          "t-A-1-ANA", {"porcentaje": "100"})])
+
+    def test_a_titular_core_has_and_the_file_lacks_is_kept_and_not_even_listed(self):
+        core = state(predios=[rec("A")], titulares=[titular_rec("A", "1", "ANA")])
+        plan = plan_of(core, fichas=[ficha("A")], titulares=[])
+        self.assertEqual((plan.lines[0], plan.child_ops), ("sin cambio A", []))
+        self.assertNotIn("ANA", " ".join(plan.lines))
+
+    def test_an_unchanged_titular_patches_nothing(self):
+        core = state(predios=[rec("A")], titulares=[titular_rec("A", "1", "ANA", condicion="PROPIETARIO")])
+        plan = plan_of(core, fichas=[ficha("A")], titulares=[titular("A", "1", "ANA", condicion="PROPIETARIO")])
+        self.assertEqual((plan.lines[0], plan.child_ops), ("sin cambio A", []))
+
+    def test_a_titular_only_change_makes_the_ficha_a_cambio_and_touched(self):
+        core = state(predios=[rec("A")], titulares=[titular_rec("A", "1", "ANA", porcentaje=50)])
+        plan = plan_of(core, fichas=[ficha("A")], titulares=[titular("A", "1", "ANA", porcentaje="100")])
+        self.assertEqual((plan.counts["cambios"], plan.touched), (1, {"A"}))
 
 
 if __name__ == "__main__":
