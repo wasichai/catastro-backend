@@ -111,7 +111,11 @@ class ValuacionesService(
             loteGeom = p.loteGeom,
             estadoLevantamiento = p.estadoLevantamiento,
             fechaLevantamiento = p.fechaLevantamiento,
-            entrega = p.entrega?.let { entregas[it]?.codigo }
+            entrega = p.entrega?.let { entregas[it]?.codigo },
+            vinculoMetodo = p.vinculoMetodo,
+            vinculoRevisado = p.vinculoRevisado,
+            cuc = p.cuc,
+            codigoReferenciaCatastral = p.codigoReferenciaCatastral
         )
     }
 
