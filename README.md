@@ -239,6 +239,57 @@ python3 -I import_fichas.py --fichas fichas.csv --pisos pisos.csv --obras obras.
 # revisado el reporte, la misma línea sin --dry-run
 ```
 
+### Ica: el libro de comparación
+
+Ica entregó su catastro como un **libro de comparación** (xlsx, versión 3): predio, construcción y titulares, cada uno
+del lado de rentas y del lado de catastro, más un gpkg con los lotes. `convertir_comparacion_ica.py` lo convierte en los
+tres archivos de una entrega (`fichas.csv`, `pisos.csv` y `titulares.csv`) para `import_fichas.py --entrega`. Solo lee
+las hojas de catastro (`predio_catastro`, `construccion_catastro` y `titulares_catastro`): el lado de rentas es el
+padrón de srtm, no el catastro. Las reglas son las de wasichai/catastro-backend#10:
+
+- **Fichas.** Un predio sin `codigo_unidad_catastro` o sin `cod_predio_rentas` no se carga. Si `cod_predio_rentas` se
+  repite, queda la primera ficha que se puede cargar. Sector, manzana y lote son las partes 4.ª, 5.ª y 6.ª de la unidad
+  catastral partida en `-`, que también va tal cual a `codigo_referencia_catastral`; `cuc` sale de `cuc_catastro`. Un
+  área de 0 o menos queda vacía, nunca con el área de rentas.
+- **Estado del levantamiento.** `SIN_LEVANTAR` si el área queda vacía y el predio no tiene construcción, ni titular,
+  ni urbanización (las fichas vacías del libro); `PARCIAL` si el área queda vacía pero tiene alguna de esas tres;
+  `COMPLETO` si tiene área. `fecha_levantamiento` queda vacía: el libro no la trae.
+- **Uso y arancel.** `uso` e `id_aranc` van como columnas presentes y vacías, así el upsert borra las estimaciones que
+  hubiera ([Entregas](#entregas), ADR-013). El arancel es el de srtm (ADR-012) y una ficha sin uso queda sin uso: el
+  motor da el motivo.
+- **Pisos.** El primer número del nivel es el piso; un nivel sin número y los `NIVEL 71`/`81` no se cargan. Un nivel
+  repetido en un predio se carga como secciones 1, 2… en el orden de la hoja, y una construcción compartida va a cada
+  predio. Quedan vacíos los años fuera de 1900–2026 (`--anio-maximo` mueve el último), el área de 0 o menos, las
+  letras fuera de A–J y un material o estado que no se lee; material `1`/`2`/`3` es `CONCRETO`/`LADRILLO`/`ADOBE` y
+  estado `1` a `4` es `MUY BUENO`/`BUENO`/`REGULAR`/`MALO` (una opción del modelo también pasa).
+- **Titulares.** Solo los de una ficha que se carga, con cada valor tal cual viene: el documento de relleno
+  (`000000000`) lo vacía `import_fichas.py`, que lo reporta por fila.
+- **Vínculo con rentas.** Sale del gpkg de lotes, exportado a csv con una fila por lote: `cod_predio_rentas` y
+  `vinculo_metodo` (código de rentas en el lote, llave HU-Mz-Lote-vía o geometría). Con `--vinculos`, **un predio sin
+  fila de vínculo no se carga**. El método se lee contra el enum `vinculo_metodo` sin distinguir mayúsculas
+  (`CODIGO_RENTAS`, `LLAVE_HU_MZ_LOTE`, `GEOMETRICO`, `MANUAL`), o con `--metodo TEXTO=ENUM` (repetible) para el texto
+  que use el gpkg; un texto que no se lee sale con 2 y lo nombra. Un método vacío vincula el predio con
+  `vinculo_metodo` vacío. Sin `--vinculos` se cargan todas las fichas, con `vinculo_metodo` vacío.
+
+Las columnas por defecto son las del libro; `--map-predio`, `--map-construccion`, `--map-titulares` y `--map-vinculos`
+`campo=columna` las cambian. Todas son obligatorias salvo `cuc_catastro` y `urbanizacion_catastro`: una hoja o una
+columna que falta sale con 2 y la nombra, sin escribir nada. Sin `cuc_catastro`, `fichas.csv` no lleva la columna
+`cuc`, y la entrega no toca el que hubiera.
+
+**La salida va fuera del repositorio.** Los titulares son datos personales (Ley 29733): `--salida` dentro del
+repositorio (también por un enlace) sale con 2, y el comando solo imprime conteos, líneas `<clave>: <n>` con lo que
+sale y con cada regla que descarta o vacía algo, nunca un nombre o un documento.
+
+```sh
+ogr2ogr -f CSV vinculos.csv <lotes>.gpkg <capa> -select cod_predio_rentas,vinculo_metodo
+python3 -I convertir_comparacion_ica.py --libro comparacion_v3.xlsx --vinculos vinculos.csv --salida ~/ica/entrega
+python3 -I import_fichas.py --fichas ~/ica/entrega/fichas.csv --pisos ~/ica/entrega/pisos.csv \
+  --titulares ~/ica/entrega/titulares.csv --entrega ICA-2026-10 --fecha-corte 2026-10-24 --fuente BARRIDO --dry-run
+# revisado el reporte, la misma línea sin --dry-run
+```
+
+Volver a cargar el VPS de pruebas de Ica con esta salida es una operación a mano, fuera de este repositorio.
+
 ## Región de la organización
 
 Los valores unitarios de edificación y de obras complementarias de la R.M. N.° 277-2025-VIVIENDA son distintos por
