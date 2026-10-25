@@ -22,7 +22,9 @@ data class Valuaciones(
 // not valued; then motivo (for a person) and llave (to group by) say why. areaConstruida is Σ the pisos' declared
 // areas (0 when nothing is built). loteGeom is the lote's GeoJSON geometry in EPSG:4326, or null. estadoLevantamiento
 // and fechaLevantamiento are the ficha's own fields; entrega is the codigo of its entrega_catastral (null without
-// one). the three are always written, null without data, like motivo and llave
+// one). vinculoMetodo, vinculoRevisado, cuc and codigoReferenciaCatastral are the ficha's own fields too (ADR-007:
+// an aditive change for srtm's brecha con confianza, wasichai/srtm-backend#204). all seven are always written, null
+// without data, like motivo and llave
 @JsonInclude(JsonInclude.Include.ALWAYS)
 data class ItemValuacion(
     val codigoMunicipal: String?,
@@ -43,7 +45,11 @@ data class ItemValuacion(
     val loteGeom: Map<String, Any?>?,
     val estadoLevantamiento: String?,
     val fechaLevantamiento: String?,
-    val entrega: String?
+    val entrega: String?,
+    val vinculoMetodo: String?,
+    val vinculoRevisado: Boolean?,
+    val cuc: String?,
+    val codigoReferenciaCatastral: String?
 )
 
 // the answer of POST /api/catastro/valuacion: one predio's insumos valued as GET /valuaciones values a ficha, plus how

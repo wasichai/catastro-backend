@@ -1,6 +1,7 @@
 package catastro.valuacion
 
 import org.junit.jupiter.api.Assertions.assertEquals
+import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertNotNull
 import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -219,6 +220,39 @@ class ValuacionesApiTest : WasichaiIntegrationTest() {
         val otroItem = items.getValue("$marca-2")
         listOf("estadoLevantamiento", "fechaLevantamiento", "entrega").forEach {
             assertTrue(otroItem.has(it) && otroItem[it].isNull, "$it: $otroItem")
+        }
+    }
+
+    @Test
+    fun `el vínculo y los códigos del SNIC llegan a srtm, nulos sin dato`() {
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        val marca = uniqueName("t21").uppercase()
+        val idAranc = "$marca-A"
+        registro(ARANCEL, mapOf("clave" to "$idAranc|2026", "id_aranc" to idAranc, "anio" to 2026, "valor_m2" to 45.50))
+        val cuc = uniqueName("C")
+        val codigoReferencia = uniqueName("R")
+        predio(
+            "$marca-1",
+            idAranc,
+            mapOf(
+                "vinculo_metodo" to "GEOMETRICO",
+                "vinculo_revisado" to false,
+                "cuc" to cuc,
+                "codigo_referencia_catastral" to codigoReferencia
+            )
+        )
+        predio("$marca-2", idAranc)
+
+        val items = leerTodo(srtm, 500).associateBy { it["codigoMunicipal"].asString() }
+        val con = items.getValue("$marca-1")
+        assertEquals("GEOMETRICO", con["vinculoMetodo"].asString())
+        assertFalse(con["vinculoRevisado"].asBoolean())
+        assertEquals(cuc, con["cuc"].asString())
+        assertEquals(codigoReferencia, con["codigoReferenciaCatastral"].asString())
+
+        val sin = items.getValue("$marca-2")
+        for (campo in listOf("vinculoMetodo", "vinculoRevisado", "cuc", "codigoReferenciaCatastral")) {
+            assertTrue(sin.has(campo) && sin[campo].isNull, "$campo: $sin")
         }
     }
 
