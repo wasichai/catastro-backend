@@ -67,11 +67,14 @@ Se corren con `python3 -I`, porque leen archivos de afuera: así ni el directori
 `codigo_municipal`), `--obras` y `--titulares` (opcionales, mismo vínculo), en csv o xlsx. Las columnas por defecto
 salen del contrato de carga masiva del MEF (`cod_pre`, `cod_cpu`, `cod_sect`, `cod_mzn`, `cod_lote`, `id_aranc`,
 `area_terreno`, `longitud_frente`...); `--map`, `--map-pisos`, `--map-obras` y `--map-titulares` `campo=columna` las
-cambian. Cuatro columnas opcionales más, las cuatro vacías
+cambian. Cinco columnas opcionales más, las cinco vacías
 no se envían: `vinculo_metodo` (una opción del enum `vinculo_metodo`, sin distinguir mayúsculas: `CODIGO_RENTAS`,
 `LLAVE_HU_MZ_LOTE`, `GEOMETRICO` o `MANUAL`) dice cómo se vinculó la ficha con su predio de rentas; `vinculo_revisado`
 (`SI`/`NO`, igual que `techo_incluido`) si una persona ya revisó ese vínculo; `cuc` y `codigo_referencia_catastral`
-son los códigos del Sistema Nacional Integrado de Catastro (Ley 28294), tal cual vienen. Las siete categorías van en una columna
+son los códigos del Sistema Nacional Integrado de Catastro (Ley 28294), tal cual vienen; `tipo_predio` (una opción
+del enum `tipo_predio`, sin distinguir mayúsculas: `URBANO` o `RUSTICO`) dice si el predio es urbano o rústico.
+Mientras no haya tablas rústicas, un predio `RUSTICO` sale `SinValorizar` con motivo `PREDIO_RUSTICO` (ADR-004,
+ADR-005). Las siete categorías van en una columna
 `categorias` (`CCDCCDC`: muros y columnas, techos, pisos, puertas y ventanas, revestimientos, baños, instalaciones) o en
 siete columnas con el nombre del campo. La columna opcional `techo_incluido` (`SI`/`NO`, `S`/`N`, `TRUE`/`FALSE`,
 `1`/`0`, sin distinguir mayúsculas; vacía no se envía) marca los muros D de drywall que incluyen el techo (llamada 5 del
