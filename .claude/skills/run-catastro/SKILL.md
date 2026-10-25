@@ -1,45 +1,63 @@
 ---
 name: run-catastro
-description: Levantar catastro-backend (Spring, puerto 8091) y catastro-ui (Vite, puerto 5181) en local contra el PostGIS que corre en el VPS, y comprobar que responden.
+description: Levantar, correr, parar y probar catastro-backend (Spring, 8091) junto con catastro-ui (Vite, 5181) en local, y sacar capturas de la UI con login. Usar cuando pidan iniciar/arrancar el backend o el front, hacer un smoke test de la API, entrar a la UI o tomar un screenshot.
 ---
 
-# Levantar backend y frontend
+# Correr catastro-backend + catastro-ui
 
-Docker no es local: `DOCKER_HOST=unix:///tmp/docker.sock` es el socket del VPS (`vmd194233.contaboserver.net`) reenviado
-por SSH. `docker compose up -d` crea el contenedor allá, y el `127.0.0.1:5434` del `compose.yml` es el loopback del VPS,
-no el de la Mac. Sin un túnel para el 5434, `bootRun` falla con `Connection to localhost:5434 refused` (Flyway, bean
-`wasichaiMigrations`), aunque `docker ps` muestre el contenedor `healthy`.
+Todo pasa por `.claude/skills/run-catastro/driver.sh` (las rutas son relativas a `catastro-backend/`): levanta PostGIS,
+el backend y el front, prueba la API con `curl` y maneja la UI con Playwright sobre el Google Chrome instalado. La UI
+está en `../catastro-ui`.
 
-## 1. Base de datos
+Login de desarrollo: `admin@wasichai.local` / `admin` (seed con `WASICHAI_SEED_DEV=true`, el valor por defecto).
 
-```sh
-docker compose up -d   # catastro-postgres; si ya dice Running, está bien
-nc -z localhost 5434 || /usr/bin/ssh -fN -i ~/.ssh/vps_jorge -o IdentitiesOnly=yes -o BatchMode=yes \
-  -o ServerAliveInterval=30 -o ServerAliveCountMax=3 -o ExitOnForwardFailure=yes \
-  -L 5434:localhost:5434 jorge@vmd194233.contaboserver.net
-nc -z localhost 5434   # tiene que conectar antes de seguir
-```
-
-Si `DOCKER_HOST` no está definido (Docker local de verdad), el túnel sobra: el 5434 ya está en la Mac.
-
-## 2. Backend y frontend
-
-Los dos en background, con el log en un archivo:
+## Run (agent path)
 
 ```sh
-./gradlew bootRun > backend.log 2>&1                 # desde catastro-backend
-(cd ../catastro-ui && yarn dev > frontend.log 2>&1)  # Vite en 5181, proxy de /api al 8091 (WASICHAI_API_URL)
+.claude/skills/run-catastro/driver.sh up       # postgis + túnel si hace falta, bootRun y yarn dev en background (~10 s)
+.claude/skills/run-catastro/driver.sh smoke    # health, ui, 401 sin sesión, login, permisos y objetos con el token
+.claude/skills/run-catastro/driver.sh ui       # login en el navegador, capturas de Inicio y de Mapas
+.claude/skills/run-catastro/driver.sh ui Objetos   # otra pantalla: el texto del link en el menú
+.claude/skills/run-catastro/driver.sh down     # para 8091 y 5181 (postgis y el túnel quedan)
 ```
 
-El backend está listo cuando `backend.log` tiene `Started CatastroApplicationKt`; si dice `Application run failed`,
-mira el primer `Caused by`. Vite está listo con `ready in` y `Local: http://localhost:5181/`.
+Cada paso imprime `ok …` o `FAIL …` y sale con un código distinto de 0 si falla. `up` no relanza lo que ya escucha.
 
-## 3. Comprobar
+| qué      | dónde                                                                                 |
+| -------- | ------------------------------------------------------------------------------------- |
+| logs     | `/tmp/catastro-run/backend.log`, `/tmp/catastro-run/frontend.log`                     |
+| capturas | `/tmp/catastro-run/shots/inicio.png` y `<link>.png`                                   |
+| errores  | `ui` sale con 1 si hubo errores de consola, `pageerror` o respuestas ≥ 400 (con la url) |
+
+`ui` usa `npx -y -p playwright@1.60.0` y `channel: 'chrome'`, así que no descarga Chromium. Mira las capturas: el
+menú lateral con «Catastro Perené» y la tarjeta de 5 objetos indican que el login y la API funcionan.
+
+## Run (human path)
 
 ```sh
-curl -s http://localhost:8091/actuator/health                  # {"status":"UP",...}
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:5181/      # 200
-curl -s -o /dev/null -w '%{http_code}\n' http://localhost:5181/api/  # 401: el proxy llega al backend, sin sesión
+docker compose up -d && ./gradlew bootRun        # http://localhost:8091
+cd ../catastro-ui && yarn dev                    # http://localhost:5181, proxy de /api al 8091
 ```
 
-Usuario de desarrollo: `admin@wasichai.local` / `admin` (seed con `WASICHAI_SEED_DEV=true`, el valor por defecto).
+Sin el túnel de abajo, `bootRun` no llega a la base.
+
+## Gotchas
+
+- **Docker está en el VPS, no en la Mac.** `DOCKER_HOST=unix:///tmp/docker.sock` es el socket de
+  `vmd194233.contaboserver.net` reenviado por SSH. El `127.0.0.1:5434` de `compose.yml` es el loopback del VPS: `docker ps`
+  muestra `catastro-postgres` como `healthy`, pero en la Mac nada escucha en el 5434. `up` abre
+  `ssh -fN -L 5434:localhost:5434` con `~/.ssh/vps_jorge` (ese `ssh` no se reconecta; si se cae, `up` lo vuelve a abrir).
+- **`down` y `up` seguidos.** El Gradle de un `bootRun` matado sigue vivo unos segundos y escribe `BUILD FAILED … exit
+  value 143` en el log que tiene abierto. Si `up` solo truncara el log, leería ese fallo como propio; por eso lo borra
+  antes de arrancar.
+- **favicon.ico da 404**: la UI no tiene favicon y `ui` lo ignora. Chrome registra los 404 en la consola sin la url
+  («Failed to load resource»), así que `ui` los reporta desde las respuestas.
+- **El mapa muestra «0 entidades» y está centrado en Lima**: la base de desarrollo no tiene lotes cargados (ver
+  `import_lotes.py` en el README).
+
+## Troubleshooting
+
+- **`Connection to localhost:5434 refused`** (Flyway, bean `wasichaiMigrations`, `Application run failed`): falta el
+  túnel. `driver.sh up` lo abre; a mano, el `ssh -fN -L 5434:…` de arriba.
+- **`FAIL backend` con `exit value 143`** en el log: es el `bootRun` anterior, que todavía estaba muriendo. Vuelve a
+  correr `driver.sh up`.
