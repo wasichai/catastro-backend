@@ -72,7 +72,8 @@ class BrechasController(
     ): ResponseEntity<ByteArray> {
         conocidos(params, FILTROS + "orden")
         val (clave, cuerpo) = brechas.csv(corte(params), filtro(params), orden(params))
-        val disposicion = ContentDisposition.attachment().filename("brechas-$clave.csv").build()
+        // the clave's "|" is no character of a file name; a slug that is not ascii also goes as filename*
+        val disposicion = ContentDisposition.attachment().filename("brechas-${clave.replace('|', '_')}.csv", StandardCharsets.UTF_8).build()
         return ResponseEntity
             .ok()
             .contentType(MediaType("text", "csv", StandardCharsets.UTF_8))
@@ -98,8 +99,10 @@ class BrechasController(
         cuerpo.keys.firstOrNull { it !in CAMPOS_DECISION }?.let { throw invalido(it, "no existe en este cuerpo") }
         val codigos =
             (cuerpo["codigos"] as? List<*>)
-                ?.map { (it as? String)?.trim()?.takeIf(String::isNotEmpty) ?: throw invalido("codigos", "debe ser una lista de códigos no vacíos") }
-                ?.distinct()
+                ?.map {
+                    (it as? String)?.trim()?.takeIf { c -> c.isNotEmpty() && c.length <= LARGO_CODIGO }
+                        ?: throw invalido("codigos", "debe ser una lista de códigos de 1 a $LARGO_CODIGO caracteres")
+                }?.distinct()
                 ?: throw invalido("codigos", "debe ser una lista de códigos municipales")
         if (codigos.isEmpty() || codigos.size > MAXIMO_DECISIONES) throw invalido("codigos", "debe traer entre 1 y $MAXIMO_DECISIONES códigos")
         val anio =
@@ -119,7 +122,9 @@ class BrechasController(
         campo: String
     ): String? {
         val valor = cuerpo[campo] ?: return null
-        return (valor as? String ?: throw invalido(campo, "debe ser texto")).trim().ifEmpty { null }
+        val texto = (valor as? String ?: throw invalido(campo, "debe ser texto")).trim()
+        if (texto.length > LARGO_TEXTO) throw invalido(campo, "no puede pasar de $LARGO_TEXTO caracteres")
+        return texto.ifEmpty { null }
     }
 
     private fun conocidos(
@@ -190,6 +195,8 @@ class BrechasController(
         const val TAMANO = 50
         const val TAMANO_MAXIMO = 500
         const val MAXIMO_DECISIONES = 500
+        const val LARGO_CODIGO = 64
+        const val LARGO_TEXTO = 2000
         val ANIOS = 1900..2100
     }
 }

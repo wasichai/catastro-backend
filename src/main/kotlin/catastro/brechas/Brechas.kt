@@ -153,7 +153,8 @@ data class FilaFicha(
             motivo,
             supera5Uit,
             estado,
-            responsable,
+            // who decided, without the domain of the email: the csv carries no personal data
+            responsable?.substringBefore('@'),
             nota,
             decididoEn,
             conGeometria
@@ -207,7 +208,9 @@ data class Kpis(
     val omisosEstimado: BigDecimal,
     @get:JsonProperty("supera_5_uit") val supera5Uit: Int,
     val pendientes: Int,
-    val conGeometria: Int
+    val conGeometria: Int,
+    // fichas without codigo_municipal: they cannot be decided, so they are not pendientes
+    val sinFicha: Int
 )
 
 @JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
@@ -331,7 +334,8 @@ internal fun fila(
 
 // the panel in one pass over every ficha of the corte: the kpis, the counts by categoria, confianza and estado (every
 // option of the model, also those without fichas; a confianza left empty by a corte older than srtm-backend#204 as a
-// clave null, only when there is one) and the 10 sectores of largest Δ impuesto
+// clave null, only when there is one) and the 10 sectores of largest Δ impuesto. pendientes and por_estado count only
+// the fichas that can be decided (with codigo_municipal); sin_ficha counts the others
 internal fun panel(vista: Vista): Panel {
     var delta = BigDecimal.ZERO
     var confiable = BigDecimal.ZERO
@@ -339,6 +343,7 @@ internal fun panel(vista: Vista): Panel {
     var supera = 0
     var pendientes = 0
     var conGeometria = 0
+    var sinFicha = 0
     val categorias = linkedMapOf<String?, Acumulado>().apply { CATEGORIAS.forEach { put(it, Acumulado()) } }
     val confianzas = linkedMapOf<String?, Acumulado>().apply { CONFIANZAS.forEach { put(it, Acumulado()) } }
     val estados = linkedMapOf<String, Int>().apply { ESTADOS.forEach { put(it, 0) } }
@@ -349,17 +354,21 @@ internal fun panel(vista: Vista): Panel {
         if (fila.confianza == CONFIABLE) confiable += d
         if (fila.categoria == OMISO) omisos += d
         if (fila.supera5Uit == true) supera++
-        if (fila.estado == PENDIENTE) pendientes++
+        if (fila.codigoMunicipal == null) {
+            sinFicha++
+        } else if (fila.estado == PENDIENTE) {
+            pendientes++
+        }
         if (fila.conGeometria) conGeometria++
         categorias.getOrPut(fila.categoria) { Acumulado() }.suma(d)
         confianzas.getOrPut(fila.confianza) { Acumulado() }.suma(d)
-        estados.merge(fila.estado, 1, Int::plus)
+        if (fila.codigoMunicipal != null) estados.merge(fila.estado, 1, Int::plus)
         fila.sector?.let { sectores.getOrPut(it) { Acumulado() }.suma(d) }
     }
     val corte = vista.corte
     return Panel(
         corte = CorteDelPanel(corte.clave, corte.fecha, corte.anio, corte.corrida),
-        kpis = Kpis(vista.filas.size, delta.limpio(), confiable.limpio(), omisos.limpio(), supera, pendientes, conGeometria),
+        kpis = Kpis(vista.filas.size, delta.limpio(), confiable.limpio(), omisos.limpio(), supera, pendientes, conGeometria, sinFicha),
         porCategoria = categorias.map { (clave, a) -> Cuenta(clave, a.fichas, a.delta.limpio()) },
         porConfianza = confianzas.filter { (clave, a) -> clave != null || a.fichas > 0 }.map { (clave, a) -> Cuenta(clave, a.fichas, a.delta.limpio()) },
         porEstado = estados.map { (clave, n) -> CuentaDeEstado(clave, n) },
@@ -387,6 +396,8 @@ private class Acumulado {
 // exponent notation (100, not 1E+2)
 internal fun BigDecimal.limpio(): BigDecimal = stripTrailingZeros().let { if (it.scale() < 0) it.setScale(0) else it }
 
+private val FORMULA = setOf('=', '+', '-', '@', '\t', '\r')
+
 // rfc 4180 with a utf-8 bom, so a spreadsheet opens the accents right: a header, then one line per row, crlf
 internal fun csv(filas: List<FilaFicha>): ByteArray {
     val texto = StringBuilder("\uFEFF")
@@ -402,7 +413,10 @@ private fun celda(valor: Any?): String {
         when (valor) {
             null -> ""
             is BigDecimal -> valor.toPlainString()
-            else -> valor.toString()
+            is Boolean -> valor.toString()
+            // a text a spreadsheet would take for a formula (=, +, -, @, a tab or a carriage return first: csv
+            // injection) goes with a leading quote; numbers and booleans never do, so a Δ of -120.5 stays a number
+            else -> valor.toString().let { if (it.isNotEmpty() && it[0] in FORMULA) "'$it" else it }
         }
     return if (texto.any { it == ',' || it == '"' || it == '\n' || it == '\r' }) "\"${texto.replace("\"", "\"\"")}\"" else texto
 }

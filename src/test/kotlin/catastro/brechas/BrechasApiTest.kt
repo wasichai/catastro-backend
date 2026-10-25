@@ -7,17 +7,22 @@ import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.BeforeEach
 import org.junit.jupiter.api.Test
+import org.springframework.beans.factory.annotation.Autowired
 import org.springframework.http.HttpHeaders
 import org.springframework.http.HttpStatus
 import org.springframework.http.MediaType
 import tools.jackson.databind.JsonNode
 import java.math.BigDecimal
+import java.util.concurrent.CompletableFuture
 
 // /api/catastro/brechas end to end, with the real model and roles (CatastroApiTest). each test has an organization to
 // itself (organizacionNueva), so "the most recent corte" and "no corte at all" are its own; every corte and ficha is
 // fictitious and made here, as importar_corte_brecha.py would leave them. a clave goes raw in a uri: WebTestClient's
 // template encodes its "|"
 class BrechasApiTest : CatastroApiTest() {
+    @Autowired
+    private lateinit var servicio: BrechasService
+
     private lateinit var org: String
     private lateinit var email: String
 
@@ -45,7 +50,9 @@ class BrechasApiTest : CatastroApiTest() {
         numero("620.5", kpis["delta_impuesto_confiable"])
         numero("80", kpis["omisos_estimado"])
         assertEquals(2, kpis["supera_5_uit"].asInt())
-        assertEquals(5, kpis["pendientes"].asInt())
+        // P1, P2 and P3 have a ficha, and P1 is decided; P4, P5 and P6 have none
+        assertEquals(2, kpis["pendientes"].asInt())
+        assertEquals(3, kpis["sin_ficha"].asInt())
         assertEquals(2, kpis["con_geometria"].asInt())
 
         val categorias = panel["por_categoria"].lista().associateBy { it["clave"].asString() }
@@ -58,7 +65,7 @@ class BrechasApiTest : CatastroApiTest() {
         assertEquals(2, confianzas.getValue("DUDOSO")["fichas"].asInt())
         assertEquals(1, confianzas.getValue("SIN_LEVANTAR")["fichas"].asInt())
         val estados = panel["por_estado"].lista().associate { it["clave"].asString() to it["fichas"].asInt() }
-        assertEquals(mapOf("PENDIENTE" to 5, "A_INSPECCIONAR" to 0, "INSPECCIONADO" to 0, "A_FISCALIZAR" to 1, "DESCARTADO" to 0), estados)
+        assertEquals(mapOf("PENDIENTE" to 2, "A_INSPECCIONAR" to 0, "INSPECCIONADO" to 0, "A_FISCALIZAR" to 1, "DESCARTADO" to 0), estados)
         val sectores = panel["top_sectores"].lista()
         assertEquals(listOf("01", "03", "02"), sectores.map { it["sector"].asString() })
         assertEquals(2, sectores[0]["fichas"].asInt())
@@ -156,6 +163,12 @@ class BrechasApiTest : CatastroApiTest() {
     @Test
     fun `los lotes son solo los de las fichas empatadas con geometría`() {
         cargarCorte("2026-10-25")
+        // a second ficha of 01-01-0001 in the corte: one Feature, which says it has two
+        registro(
+            BRECHA_FICHA,
+            mapOf("corte" to idDelCorte, "clave" to "$idDelCorte|P1b", "codigo_predio" to "P1b", "codigo_municipal" to "01-01-0001", "categoria" to "COINCIDE"),
+            token = org
+        )
         val coleccion = arbol(send("GET", "/api/catastro/brechas/lotes", null, HttpStatus.OK, org))
         assertEquals("FeatureCollection", coleccion["type"].asString())
         val features = coleccion["features"].lista().associateBy { it["id"].asString() }
@@ -166,9 +179,11 @@ class BrechasApiTest : CatastroApiTest() {
         assertEquals(LOTE[0][0], f["geometry"]["coordinates"][0][0][0].asDouble(), 1e-6)
         val p = f["properties"]
         assertEquals(
-            listOf("codigo_municipal", "codigo_catastro", "categoria", "confianza", "delta_impuesto", "estado", "supera_5_uit"),
+            listOf("codigo_municipal", "codigo_catastro", "categoria", "confianza", "delta_impuesto", "estado", "supera_5_uit", "fichas"),
             p.properties().map { it.key }
         )
+        assertEquals(2, p["fichas"].asInt())
+        assertEquals(1, features.getValue("01-01-0002")["properties"]["fichas"].asInt())
         assertEquals("1-1-1", p["codigo_catastro"].asString())
         assertEquals("SUBVALUADO", p["categoria"].asString())
         assertEquals("PENDIENTE", p["estado"].asString())
@@ -286,7 +301,7 @@ class BrechasApiTest : CatastroApiTest() {
         assertTrue(tipo.isCompatibleWith(MediaType.parseMediaType("text/csv")), tipo.toString())
         val disposicion = resultado.responseHeaders.contentDisposition
         assertEquals("attachment", disposicion.type)
-        assertEquals("brechas-ica-prueba|2026-10-25.csv", disposicion.filename)
+        assertEquals("brechas-ica-prueba_2026-10-25.csv", disposicion.filename)
         val bytes = resultado.responseBody!!
         assertEquals(listOf(0xEF, 0xBB, 0xBF), bytes.take(3).map { it.toInt() and 0xFF })
         val lineas = String(bytes, Charsets.UTF_8).removePrefix("\uFEFF").split("\r\n").filter { it.isNotEmpty() }
@@ -315,6 +330,130 @@ class BrechasApiTest : CatastroApiTest() {
             assertEquals(HttpStatus.NOT_FOUND, status, "$ruta: $cuerpo")
             assertEquals("No hay cortes de brecha cargados", arbol(cuerpo)["message"].asString(), cuerpo)
         }
+    }
+
+    @Test
+    fun `un corte a medio cargar no se ve`() {
+        cargarCorte("2026-09-30")
+        // importar_corte_brecha.py writes cargado_en last: until then the corte is not shown
+        registro(CORTE_BRECHA, mapOf("clave" to "ica-prueba|2026-10-25", "org_slug" to "ica-prueba", "fecha" to "2026-10-25", "anio" to 2026), token = org)
+        val panel = arbol(send("GET", "/api/catastro/brechas/panel", null, HttpStatus.OK, org))
+        assertEquals("ica-prueba|2026-09-30", panel["corte"]["clave"].asString())
+        val cortes = arbol(send("GET", "/api/catastro/brechas/cortes", null, HttpStatus.OK, org)).lista()
+        assertEquals(listOf("ica-prueba|2026-09-30"), cortes.map { it["clave"].asString() })
+        assertEquals(HttpStatus.NOT_FOUND, exchange("GET", "/api/catastro/brechas/panel?corte=ica-prueba|2026-10-25", null, org).first)
+    }
+
+    @Test
+    fun `un corte se lee una vez, una decisión no lo relee y una recarga sí`() {
+        cargarCorte("2026-10-25")
+        val antes = servicio.basesLeidas.get()
+        // the page asks for these at once: one read of the corte
+        val respuestas =
+            listOf("panel", "fichas", "lotes", "panel")
+                .map { ruta -> CompletableFuture.supplyAsync { exchange("GET", "/api/catastro/brechas/$ruta", null, org).first } }
+                .map { it.get() }
+        assertEquals(List(4) { HttpStatus.OK }, respuestas)
+        assertEquals(antes + 1, servicio.basesLeidas.get())
+
+        decidir(listOf("01-01-0001"), "A_FISCALIZAR")
+        val panel = arbol(send("GET", "/api/catastro/brechas/panel", null, HttpStatus.OK, org))
+        assertEquals(1, panel["por_estado"].lista().single { it["clave"].asString() == "A_FISCALIZAR" }["fichas"].asInt())
+        assertEquals(antes + 1, servicio.basesLeidas.get())
+
+        // a ficha changed in core shows only once the corte says it was reloaded (a new cargado_en)
+        val p1 = arbol(send("GET", "/api/objects/$BRECHA_FICHA/records?clave=$idDelCorte|P1", null, HttpStatus.OK, org))["content"][0]["id"].asString()
+        send("PATCH", "/api/objects/$BRECHA_FICHA/records/$p1", mapOf("attributes" to mapOf("delta_impuesto" to "600")), HttpStatus.OK, org)
+        numero("670.5", arbol(send("GET", "/api/catastro/brechas/panel", null, HttpStatus.OK, org))["kpis"]["delta_impuesto"])
+        send(
+            "PATCH",
+            "/api/objects/$CORTE_BRECHA/records/$idDelCorte",
+            mapOf("attributes" to mapOf("cargado_en" to "2026-10-26T08:00:00Z")),
+            HttpStatus.OK,
+            org
+        )
+        numero("770.5", arbol(send("GET", "/api/catastro/brechas/panel", null, HttpStatus.OK, org))["kpis"]["delta_impuesto"])
+        assertEquals(antes + 2, servicio.basesLeidas.get())
+    }
+
+    @Test
+    fun `una decisión solo se escribe por la API`() {
+        cargarCorte("2026-10-25")
+        decidir(listOf("01-01-0001"), "A_INSPECCIONAR")
+        val id = arbol(send("GET", "/api/objects/$DECISION_BRECHA/records?clave=01-01-0001|2026", null, HttpStatus.OK, org))["content"][0]["id"].asString()
+        val analista = cuentaDeServicio(listOf("CATASTRO_ANALISTA"), org)
+        val directa = mapOf("attributes" to mapOf("clave" to "01-01-0002|2026", "codigo_municipal" to "01-01-0002", "anio" to 2026, "estado" to "DESCARTADO"))
+        val cambio = mapOf("attributes" to mapOf("responsable" to "otro@x.test"))
+        for (token in listOf(analista, org)) {
+            assertEquals(HttpStatus.FORBIDDEN, exchange("POST", "/api/objects/$DECISION_BRECHA/records", directa, token).first)
+            assertEquals(HttpStatus.FORBIDDEN, exchange("PATCH", "/api/objects/$DECISION_BRECHA/records/$id", cambio, token).first)
+        }
+        assertEquals(HttpStatus.FORBIDDEN, exchange("DELETE", "/api/objects/$DECISION_BRECHA/records/$id", null, org).first)
+        val guardada = arbol(send("GET", "/api/objects/$DECISION_BRECHA/records/$id", null, HttpStatus.OK, org))["attributes"]
+        assertEquals(email, guardada["responsable"].asString())
+    }
+
+    @Test
+    fun `el csv neutraliza fórmulas y deja los números`() {
+        cargarCorte("2026-10-25")
+        decidir(listOf("01-01-0003"), "A_INSPECCIONAR", nota = "=HYPERLINK(\"http://x\",\"clic\")")
+        val texto =
+            client
+                .get()
+                .uri("/api/catastro/brechas/fichas.csv?sector=02")
+                .header(HttpHeaders.AUTHORIZATION, org)
+                .exchange()
+                .expectBody(String::class.java)
+                .returnResult()
+                .responseBody!!
+        val fila = texto.split("\r\n")[1]
+        assertTrue(fila.contains(",\"'=HYPERLINK(\"\"http://x\"\",\"\"clic\"\")\","), fila)
+        // a negative Δ stays a number
+        assertTrue(fila.contains(",-30,"), fila)
+        // who decided, without the domain of the email
+        assertTrue(fila.contains("," + email.substringBefore('@') + ","), fila)
+        assertFalse(fila.contains(email), fila)
+    }
+
+    @Test
+    fun `los textos largos, los códigos largos y un año sin corte son 400`() {
+        cargarCorte("2026-10-25")
+        for ((cuerpo, campo) in listOf(
+            mapOf("codigos" to listOf("01-01-0001"), "anio" to 2026, "estado" to "PENDIENTE", "nota" to "x".repeat(2001)) to "nota",
+            mapOf("codigos" to listOf("01-01-0001"), "anio" to 2026, "estado" to "DESCARTADO", "motivo_descarte" to "x".repeat(2001)) to "motivo_descarte",
+            mapOf("codigos" to listOf("C".repeat(65)), "anio" to 2026, "estado" to "PENDIENTE") to "codigos",
+            mapOf("codigos" to listOf("01-01-0001"), "anio" to 2030, "estado" to "PENDIENTE") to "anio"
+        )) {
+            val (status, respuesta) = exchange("POST", "/api/catastro/brechas/decisiones", cuerpo, org)
+            assertEquals(HttpStatus.BAD_REQUEST, status, respuesta)
+            assertEquals(campo, arbol(respuesta)["errors"][0]["field"].asString(), respuesta)
+        }
+        val largo = mapOf("codigos" to listOf("01-01-0001"), "anio" to 2026, "estado" to "PENDIENTE", "nota" to "x".repeat(2000))
+        assertEquals(HttpStatus.OK, exchange("POST", "/api/catastro/brechas/decisiones", largo, org).first)
+    }
+
+    @Test
+    fun `sin READ sobre las decisiones 403, y con UPDATE pero sin CREATE no escribe nada`() {
+        cargarCorte("2026-10-25")
+        val lee = mapOf(BRECHA_FICHA to listOf("READ"), CORTE_BRECHA to listOf("READ"), PREDIO_CATASTRAL to listOf("READ"))
+        val sinDecisiones = cuentaDeServicio(listOf(rol("BR_SIN_DECISIONES", lee)), org)
+        assertEquals(HttpStatus.FORBIDDEN, exchange("GET", "/api/catastro/brechas/panel", null, sinDecisiones).first)
+
+        val actualiza = cuentaDeServicio(listOf(rol("BR_SOLO_ACTUALIZA", lee + (DECISION_BRECHA to listOf("READ", "UPDATE")))), org)
+        val cuerpo = mapOf("codigos" to listOf("01-01-0001", "01-01-0002"), "anio" to 2026, "estado" to "A_FISCALIZAR")
+        assertEquals(HttpStatus.FORBIDDEN, exchange("POST", "/api/catastro/brechas/decisiones", cuerpo, actualiza).first)
+        assertEquals(0, arbol(send("GET", "/api/objects/$DECISION_BRECHA/records", null, HttpStatus.OK, org))["content"].size())
+    }
+
+    // a role of the organization with these permissions: its name
+    private fun rol(
+        nombre: String,
+        permisos: Map<String, List<String>>
+    ): String {
+        send("POST", "/api/roles", mapOf("name" to nombre, "label" to nombre), HttpStatus.CREATED, org)
+        val lista = permisos.flatMap { (objeto, acciones) -> acciones.map { mapOf("objectName" to objeto, "action" to it) } }
+        send("PUT", "/api/roles/$nombre/permissions", mapOf("permissions" to lista), HttpStatus.OK, org)
+        return nombre
     }
 
     // a corte of ica-prueba as importar_corte_brecha.py leaves it, with six fichas (two matched with a lote, one
@@ -364,8 +503,12 @@ class BrechasApiTest : CatastroApiTest() {
         for (atributos in fichas) {
             registro(BRECHA_FICHA, atributos + mapOf("corte" to corte, "clave" to "$corte|${atributos["codigo_predio"]}"), token = org)
         }
+        idDelCorte = corte
         return clave
     }
+
+    // the id of the last corte cargarCorte made
+    private lateinit var idDelCorte: String
 
     private var predios = false
 

@@ -974,7 +974,14 @@ El dashboard «Brechas» de catastro-ui muestra la brecha de recaudación de los
 - **Permisos.** Sin token, **401**. Cada ruta exige `READ` sobre `brecha_ficha` (si no, **403**) y lee como quien
   llama, así que también necesita `READ` sobre `corte_brecha`, `decision_brecha` y `predio_catastral`. El rol
   `CATASTRO_LECTOR` alcanza para leer. `POST /decisiones` exige además `UPDATE` sobre `decision_brecha` (si no,
-  **403**), y crear una decisión, `CREATE`: los da `CATASTRO_ANALISTA`.
+  **403**), y crear una decisión, `CREATE`: los da `CATASTRO_ANALISTA`. **Es la única puerta**: un
+  `RecordWriteGuard` (`DecisionesSoloPorLaApi`) rechaza con 403 cualquier otra escritura de `decision_brecha` (la API
+  genérica de registros, el admin, automatizaciones), así que `responsable`, `decidido_en`, `corte_origen` y el motivo
+  de un descarte los pone siempre este endpoint. El endpoint marca sus escrituras con un elemento del contexto de la
+  corrutina, el mecanismo de wasichai para las reglas propias de una app (ADR-040); `RecordService.asPlatform` no sirve
+  aquí porque wasichai lo prohíbe dentro de una petición.
+- **Cortes completos.** Solo se ven los cortes con `cargado_en`, que el cargador escribe al final: un corte a medio
+  cargar no aparece en `/cortes` ni es el corte por omisión.
 - **El corte.** `corte` es la clave del corte (`<org>|<fecha>`). Sin él, se usa el más reciente por fecha. Si no hay
   ningún corte, `/panel`, `/fichas`, `/lotes` y `/fichas.csv` responden **404**
   `{"message": "No hay cortes de brecha cargados"}`. Una clave que no existe también da 404, con su propio mensaje.
@@ -987,7 +994,8 @@ El dashboard «Brechas» de catastro-ui muestra la brecha de recaudación de los
 - `GET /panel?corte=`:
   - `corte`: `{clave, fecha, anio, corrida}`;
   - `kpis`: `{fichas, delta_impuesto, delta_impuesto_confiable, omisos_estimado, supera_5_uit, pendientes,
-    con_geometria}`;
+    con_geometria, sin_ficha}`. `pendientes` y `por_estado` cuentan solo las fichas que se pueden decidir (con
+    `codigo_municipal`); `sin_ficha`, las otras;
   - `por_categoria`, `por_confianza`: `[{clave, fichas, delta_impuesto}]`, una entrada por cada opción del modelo,
     incluso las que no tienen fichas. Las fichas sin confianza (un corte anterior a srtm-backend#204) van con
     `clave: null`;
@@ -1009,16 +1017,18 @@ El dashboard «Brechas» de catastro-ui muestra la brecha de recaudación de los
 - `GET /lotes?…`: los mismos filtros, sin `page` ni `size` (`orden` se acepta, pero no cambia nada). Responde un
   `FeatureCollection` en EPSG:4326 con un `Feature` por `codigo_municipal` (`id`):
   - el `lote_geom` de su ficha;
-  - en `properties`: `codigo_municipal`, `codigo_catastro`, `categoria`, `confianza`, `delta_impuesto`, `estado` y
-    `supera_5_uit`.
+  - en `properties`: `codigo_municipal`, `codigo_catastro`, `categoria`, `confianza`, `delta_impuesto`, `estado`,
+    `supera_5_uit` y `fichas` (cuántas fichas del corte comparten ese código; el Feature es el de la de mayor Δ).
 
-  Solo entran las fichas empatadas que tienen lote. Las geometrías se leen en lotes de 200 códigos
-  (`Registros.conCampoEn`).
+  Solo entran las fichas empatadas que tienen lote. Las geometrías salen de la caché del corte.
 - `GET /fichas.csv?…`: los mismos filtros y `orden`. Devuelve `text/csv` en UTF-8 con BOM, con las columnas de la fila
-  en el mismo orden y en `Content-Disposition` `attachment; filename="brechas-<corte>.csv"`. No lleva datos
-  personales: no lee `titular_catastral`.
+  en el mismo orden, en un archivo `brechas-<org>_<fecha>.csv` (`Content-Disposition`, también como `filename*`). No
+  lleva datos personales: no lee `titular_catastral` y `responsable` va sin el dominio del correo. Un texto que empieza
+  con `=`, `+`, `-`, `@`, tabulador o retorno va precedido de `'` (inyección en la hoja de cálculo); los números no.
 - `POST /decisiones` con `{codigos: [codigo_municipal…], anio, estado, nota?, motivo_descarte?}` decide en lote, de 1
-  a 500 códigos. Por cada código crea o actualiza su `decision_brecha` (clave `<codigo>|<anio>`).
+  a 500 códigos de hasta 64 caracteres, 8 a la vez. Por cada código crea o actualiza su `decision_brecha` (clave
+  `<codigo>|<anio>`). `anio` tiene que ser el de un corte cargado, y `nota` y `motivo_descarte` no pasan de 2000
+  caracteres (si no, 400 en el campo). Un rol con `UPDATE` pero sin `CREATE` recibe 403 antes de escribir nada.
   - Lo fija el servidor: `responsable` (el email de quien llama), `decidido_en` (ahora) y `corte_origen` (el corte
     más reciente).
   - `DESCARTADO` sin `motivo_descarte` es un 400 con `field: motivo_descarte`; otro estado borra el motivo.
@@ -1027,19 +1037,20 @@ El dashboard «Brechas» de catastro-ui muestra la brecha de recaudación de los
   - Responde `{actualizadas, creadas, errores: [{codigo, error}]}`.
 
 **Cómo se lee un corte.** Un corte de Ica tiene unas 25 000 fichas, y los filtros (varias opciones, |Δ|, el estado de
-otra tabla) no se pueden expresar con los filtros de igualdad del Core. Por eso el corte se lee una sola vez y entero:
+otra tabla) no se pueden expresar con los filtros de igualdad del Core. Por eso se guarda en memoria, en dos partes que
+cambian a ritmos distintos:
 
-1. sus fichas, en una pasada keyset (`Registros.todas`, por `clave`);
-2. las decisiones de su año, en otra pasada;
-3. qué fichas tienen lote, en lotes de 200 códigos.
+- **la base del corte**: sus fichas (una pasada keyset por `clave`) y el lote de cada una (lotes de 200 códigos, 4 a la
+  vez), que da a la vez `con_geometria` y las geometrías de `/lotes`. Solo cambia cuando el corte se recarga, así que se
+  guarda **2 minutos** con la llave organización, roles de quien llama (un campo que un rol no puede leer nunca le
+  llega a otro), id del corte y `cargado_en`;
+- **las decisiones del año**: pocas filas, una pasada, guardadas **15 segundos** con la llave organización, roles, año
+  y una generación que cada `POST /decisiones` avanza. Una decisión se ve al momento en esta instancia sin releer la
+  base; una tomada en otra instancia, en 15 segundos como mucho.
 
-Con eso se arma una vista en memoria que `/panel` (en una sola pasada), `/fichas`, `/lotes` y `/fichas.csv` filtran y
-ordenan.
-
-La vista se guarda **2 minutos** en una caché propia de la instancia. La llave es la organización, los roles de quien
-llama (así un campo que un rol no puede leer nunca le llega a otro), el id del corte y su `cargado_en` (un corte que se
-vuelve a cargar se lee de nuevo). Una decisión borra las vistas de su organización, así que su estado se ve al momento.
-Una decisión tomada en otra instancia aparece aquí en 2 minutos como mucho.
+Cada parte se lee una sola vez por llave aunque lleguen varias peticiones a la vez (la página pide `/panel`, `/fichas`
+y `/lotes` juntas): la primera lanza la lectura y las demás la esperan. Cada petición une las dos partes en su vista
+(una pasada sobre las fichas, sin leer nada) y `/panel` la cuenta en una sola pasada.
 
 ## Decisiones normativas
 

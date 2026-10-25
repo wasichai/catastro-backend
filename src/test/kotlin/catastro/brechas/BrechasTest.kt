@@ -68,7 +68,10 @@ class BrechasTest {
         assertEquals(BigDecimal("100.5"), p.kpis.deltaImpuestoConfiable)
         assertEquals(BigDecimal("-200"), p.kpis.omisosEstimado)
         assertEquals(1, p.kpis.supera5Uit)
-        assertEquals(2, p.kpis.pendientes)
+        // c has no codigo_municipal: it cannot be decided
+        assertEquals(1, p.kpis.pendientes)
+        assertEquals(1, p.kpis.sinFicha)
+        assertEquals(1, p.porEstado.single { it.clave == PENDIENTE }.fichas)
         assertEquals(2, p.kpis.conGeometria)
         assertEquals(CATEGORIAS, p.porCategoria.map { it.clave })
         // a ficha without confianza is its own entry, after the model's three
@@ -94,5 +97,13 @@ class BrechasTest {
         val conComa = filas[0].copy(nota = "uno, \"dos\"")
         assertTrue(String(csv(listOf(conComa)), Charsets.UTF_8).contains(",\"uno, \"\"dos\"\"\","))
         assertFalse(texto.contains("null"))
+        // a formula is neutralized, a negative number is not
+        val formula = filas[1].copy(nota = "+cmd", motivo = "@SUM(A1)", responsable = "ana@muni.test")
+        val linea = String(csv(listOf(formula)), Charsets.UTF_8).split("\r\n")[1]
+        assertTrue(linea.contains(",'+cmd,"), linea)
+        assertTrue(linea.contains(",'@SUM(A1),"), linea)
+        assertTrue(linea.contains(",-200,"), linea)
+        assertTrue(linea.contains(",ana,"), linea)
+        assertFalse(linea.contains("muni.test"), linea)
     }
 }
