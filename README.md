@@ -604,6 +604,49 @@ python3 -I vistas_de_mapa.py --org <id de la organización> [--sin-capas]   # --
 
 Sale con 0, con 1 si el Core rechaza algo (GeoServer caído, por ejemplo) y con 2 si `--org` es otra organización.
 
+### WMS protegido
+
+GeoServer sirve el WMS sin autenticación y no sabe de organizaciones: entrega cualquier capa que se le pida. Por eso
+**GeoServer nunca se expone** (sin puerto en el host en un despliegue, ni en `0.0.0.0` en ninguno): el navegador lo
+alcanza solo por el nginx de catastro-ui, y ese nginx autoriza cada pedido con catastro-backend antes de pasarlo
+(`auth_request`). La plantilla del nginx está en [docs/deploy/nginx-catastro-ui.conf](docs/deploy/nginx-catastro-ui.conf)
+y es la única fuente: el README de catastro-ui apunta aquí.
+
+`GET /api/catastro/wms/autorizar` es el endpoint del `auth_request`. Lee el Bearer del navegador como cualquier otro
+endpoint y la uri original del pedido en `X-Original-URI` (`$request_uri`). Responde:
+
+- **204** solo si el usuario está autenticado y cada capa que nombra el pedido es de su organización y tiene READ
+  sobre su objeto. Las capas se leen de `layers`, `query_layers`, `layer`, `typeName` y `typeNames`, listas con comas,
+  sin distinguir mayúsculas en el nombre del parámetro (`LAYERS`, `Layers`...); un parámetro repetido cuenta entero.
+  Una capa es de la organización cuando su nombre, `<objeto>__<prefijo>__<geometría>` (con o sin `catastro:`), lleva
+  como prefijo los 8 primeros dígitos hex del `organizationId` del usuario, y además `<objeto>` es un objeto de esa
+  organización con esa geometría.
+- **401** sin token o con uno malo (lo responde core).
+- **403** en todo lo demás: una capa de otra organización (basta una en la lista), sin READ sobre el objeto de una
+  capa, sin capas, sin `X-Original-URI`, o un pedido que no es `GetMap`, `GetFeatureInfo` ni `GetLegendGraphic` de
+  WMS. Un parámetro que no conoce también es un 403, en particular `sld`, `sld_body` (un SLD nombra sus propias capas,
+  y `sld=` hace que GeoServer lea una url), `cql_filter`, `filter` y `featureid` (un filtro CQL puede consultar otra
+  capa); un estilo (`styles`, `style`) va vacío o es el de una de sus capas. nginx convierte cualquier otro código en un
+  500, así que el endpoint solo responde esos tres.
+
+**GetCapabilities está bloqueado** (403): lista los nombres de las capas de todas las organizaciones del workspace
+(y con ellos los prefijos de sus `organizationId`). catastro-ui no lo usa: pide `GetMap` con el nombre que le da
+`GET /api/gis/layers`. Tampoco pasa el WFS: devuelve los atributos de las filas sin los permisos por campo de core.
+
+La plantilla:
+
+- solo deja pasar a GeoServer `/geoserver/[<workspace>/](wms|ows|gwc/service/wms)` (la ruta entera) y solo con `GET`
+  (el endpoint lee la uri, no un cuerpo); el resto de `/geoserver/` (la administración web, REST, WFS) es un 404;
+- borra el `Authorization` antes de GeoServer, que nunca ve el token;
+- marca las teselas `Cache-Control: private`: son de quien las pidió, y una caché compartida no las guarda.
+
+Cada tesela es una llamada al endpoint (la definición del objeto sale de la caché de metadatos de core). catastro-ui
+manda el Bearer en cada tesela con el `transformRequest` de sus mapas; las páginas propias de `@wasichai/gis` (la vista
+previa de `/gis/layers`) no lo mandan y sus teselas WMS salen 401 (ver el README de catastro-ui).
+
+Sin puerto de GeoServer en el host, `vistas_de_mapa.py` no llega al WFS para revisar las columnas de una capa: avisa,
+y `--recrear-capas` la rehace sin mirarlo (ver «Vistas de mapa»).
+
 ## Región de la organización
 
 Los valores unitarios de edificación y de obras complementarias de la R.M. N.° 277-2025-VIVIENDA son distintos por

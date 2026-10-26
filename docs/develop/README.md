@@ -129,8 +129,10 @@ pide por tesela, en EPSG:3857:
 ```
 
 El visor «Brechas» de catastro-ui es el consumidor: pinta las capas WMS como fuente ráster de MapLibre bajo los
-lotes, con el `wmsTileUrl` de `@wasichai/gis` (la misma URL, en EPSG:3857). GeoServer corre en otro origen que el
-backend, así que en un despliegue real va detrás del mismo proxy (o con CORS habilitado).
+lotes, con el `wmsTileUrl` de `@wasichai/gis` (la misma URL, en EPSG:3857). En un despliegue real GeoServer no se
+expone: el navegador lo pide a `/geoserver/` del origen de la UI, y su nginx autoriza cada pedido con
+`GET /api/catastro/wms/autorizar` (README, «WMS protegido»; plantilla en `docs/deploy/nginx-catastro-ui.conf`). El
+puerto `127.0.0.1:8085` de `compose.yml` es solo para desarrollo.
 
 **Capas con estilo por atributo.** Desde wasichai 1.5.0 una publicación puede llevar `{"style"}` y la capa sale con
 un SLD coloreado por un campo (ADR-072 de wasichai). `model/vistas_de_mapa.py` crea las vistas de mapa de aranceles y
