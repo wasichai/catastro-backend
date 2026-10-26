@@ -18,8 +18,8 @@ Para forzar una versión, `release-please-config.json` trae `"release-as": "X.Y.
 ese PR de release**; si no, cada PR siguiente volvería a proponer la misma versión.
 
 - **0.1.0** (wasichai/catastro-backend#1): el manifest partía de `0.0.0` y la config traía `"release-as": "0.1.0"`.
-- **1.0.0**: la config trae `"release-as": "1.0.0"`. El PR de release que abra release-please propone exactamente
-  1.0.0; al mezclarlo, quitar `release-as`.
+- **1.0.0** (wasichai/catastro-backend#22, 2026-10-26): la config traía `"release-as": "1.0.0"`; se quitó después de
+  mezclar ese PR. Desde aquí release-please calcula la versión de los commits.
 
 `release-as` no basta: release-please solo abre el PR si hay algo para el CHANGELOG desde el último release
 (`No user facing commits found ... - skipping`). Por eso `changelog-sections` muestra también `docs:` (las guías y los
