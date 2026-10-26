@@ -45,17 +45,27 @@ longer produced (AMBOS that is now IZQUIERDO and DERECHO, or the other way) is d
 whose fid the file does not have (a re-exported eje) is only counted, and deleted with --borrar-ausentes; a row of
 another ubigeo is never touched. Only counts are printed; --revision writes cod_via_eje, fid_eje, lado, id_aranc and
 asignacion of every row to a csv outside the repository (no personal data). Among the counts, «nombres del padron
-sin eje» are the padrón's urban names no tramo has: how much of the padrón the eje covers. --org refuses to write
+sin eje» are the padrón's urban names no tramo has (after the aliases): how much of the padrón the eje covers.
+
+Aliases (reviewed by a person, never automatic: the fuzzy proposals measured on Ica's real data lowered the codes with
+a tramo). --proponer-alias OUT.csv writes, offline (no Core, no writes), for each urban SAT name that matches no eje
+name the closest eje name (difflib, cutoff 0.6) with its similarity and an empty `aceptar`; OUT must be outside the
+repository. The municipality marks `aceptar` (si, sí, s, x, 1, true) and may correct the target in `nombre_eje`, which
+wins over `nombre_eje_propuesto`; --alias CSV reads only the accepted rows and, before the matching, a padrón name
+equal to an alias's `nombre_sat` (both normalized) becomes the eje's name, for NOMBRE_UNICO and CERCANIA alike (a code
+so named is no urbanización code for LOTES). An eje name the gpkg lacks, or a SAT name aliased to two names, is an
+input error (exit 2, every problem listed). --org refuses to write
 unless the account of --email belongs to that organization (its id). --dry-run reads Core and says what it would write, writing nothing.
 
 Run: python3 -I import_vias.py --gpkg ica.gpkg --padron-xlsx PADRON.xlsx [--revision /tmp/revision.csv]
              [--org <organization id>] [--borrar-ausentes] [--distancia 30] [--sin-lotes] [--dry-run]
-             [--workers 4]
+             [--workers 4] [--alias alias.csv] [--proponer-alias propuestas.csv]
 Exit: 0 ok, 1 Core refused something, 2 the files do not fit (every problem is listed, nothing is sent), --org is
-      another organization, or --revision points into the repository.
+      another organization, or --revision or --proponer-alias points into the repository.
 """
 import argparse
 import csv
+import difflib
 import math
 import os
 import sqlite3
@@ -102,6 +112,9 @@ CANON = {"PROLONGACION": "PROL", "AVENIDA": "AV", "AVDA": "AV", "JIRON": "JR", "
 SIN_NOMBRE = {"SIN NOMBRE", "S N", "SN", "SIN NOMBRE S N"}
 # two endpoints closer than this (metres) are the same point when the parts of an eje are chained
 JOIN = 1e-3
+ALIAS_COLUMNS = ["nombre_sat", "nombre_eje_propuesto", "similitud", "aceptar", "nombre_eje"]
+ACEPTADO = {"si", "sí", "s", "x", "1", "true"}
+CUTOFF = 0.6
 REVISION_COLUMNS = ["cod_via_eje", "fid_eje", "lado", "id_aranc", "asignacion"]
 ARANCEL = "arancel"
 # "the current year" is Lima's, as catastro-backend's (catastro.vias.LIMA)
@@ -382,8 +395,10 @@ def normalize(name):
     return None if not text or text in SIN_NOMBRE else text
 
 
-def read_padron(rows):
-    """(codes by normalized name, predios by code, urban codes, problems) of the urbanos of the padrón."""
+def read_padron(rows, aliases=None, applied=None):
+    """(codes by normalized name, predios by code, urban codes, problems) of the urbanos of the padrón. `aliases`
+    ({normalized SAT name: normalized eje name}) renames the padrón's names before they are grouped; the SAT names
+    that renamed some row are added to `applied`, when given."""
     problems = [f"sheet {PADRON_SHEET}: no column {c}" for c in PADRON_COLUMNS if rows and c not in rows[0]]
     if problems:
         return {}, {}, set(), problems
@@ -399,9 +414,76 @@ def read_padron(rows):
         if predio:
             predios.setdefault(code, set()).add(predio)
         name = normalize(row.get("nombre_de_la_via"))
+        if name and aliases and name in aliases:
+            if applied is not None:
+                applied.add(name)
+            name = aliases[name]
         if name:
             by_name.setdefault(name, set()).add(code)
     return by_name, predios, codes, problems
+
+
+def _is_yes(value):
+    return (value or "").strip().lower() in ACEPTADO
+
+
+def read_aliases(path):
+    """({normalized SAT name: normalized eje name}, problems) of the accepted rows of the alias csv. A row counts when
+    `aceptar` is yes; its target is `nombre_eje` when filled, else `nombre_eje_propuesto`. A row with no target, a name
+    that normalizes to nothing, or a SAT name aliased to two different eje names is a problem."""
+    with open(path, encoding="utf-8-sig", newline="") as f:
+        text = f.read()
+    first = text.split("\n", 1)[0]
+    reader = csv.DictReader(text.splitlines(), delimiter=";" if first.count(";") > first.count(",") else ",")
+    header = [(c or "").strip().lower() for c in reader.fieldnames or []]
+    problems = [f"{path}: no column {c}" for c in ("nombre_sat", "aceptar") if c not in header]
+    if "nombre_eje" not in header and "nombre_eje_propuesto" not in header:
+        problems.append(f"{path}: no column nombre_eje_propuesto")
+    if problems:
+        return {}, problems
+    aliases, seen = {}, {}
+    for n, raw in enumerate(reader, start=2):
+        row = {(k or "").strip().lower(): v for k, v in raw.items()}
+        if not _is_yes(row.get("aceptar")):
+            continue
+        sat = normalize(row.get("nombre_sat"))
+        target = normalize(row.get("nombre_eje")) or normalize(row.get("nombre_eje_propuesto"))
+        if sat is None or target is None:
+            problems.append(f"{path} row {n}: an accepted alias needs a nombre_sat and an eje name")
+            continue
+        if sat in aliases and aliases[sat] != target:
+            problems.append(f"{path} row {n}: «{sat}» is aliased to «{target}" + f"» and, in row {seen[sat]}, to"
+                            f" «{aliases[sat]}»")
+            continue
+        aliases.setdefault(sat, target)
+        seen.setdefault(sat, n)
+    return aliases, problems
+
+
+def unknown_targets(aliases, eje_names):
+    """The problems of the aliases whose eje name the gpkg lacks."""
+    return [f"alias «{sat}»: the eje has no name «{target}»" for sat, target in sorted(aliases.items())
+            if target not in eje_names]
+
+
+def propose_aliases(by_name, eje_names):
+    """[(SAT name, closest eje name or None, similarity or None)] for the padrón names no eje has, sorted. The closest
+    is difflib's best match over the eje's names with cutoff CUTOFF."""
+    pool = sorted(eje_names)
+    out = []
+    for name in sorted(set(by_name) - set(eje_names)):
+        close = difflib.get_close_matches(name, pool, n=1, cutoff=CUTOFF)
+        out.append((name, close[0], difflib.SequenceMatcher(None, close[0], name).ratio()) if close
+                   else (name, None, None))
+    return out
+
+
+def write_proposals(path, proposals):
+    with open(path, "w", encoding="utf-8", newline="") as f:
+        out = csv.writer(f)
+        out.writerow(ALIAS_COLUMNS)
+        for sat, eje_name, ratio in proposals:
+            out.writerow([sat, eje_name or "", "" if ratio is None else f"{ratio:.3f}", "", ""])
 
 
 # ---- assignment ----
@@ -771,6 +853,10 @@ def _parse_args(argv):
     p.add_argument("--distancia", type=float, default=DISTANCIA, help="metres from a lote to its tramo (default 30)")
     p.add_argument("--sin-lotes", action="store_true",
                    help="leave out the LOTES pass (an urbanizacion's code by the votes of its lotes)")
+    p.add_argument("--alias", help="csv of reviewed aliases (nombre_sat, nombre_eje_propuesto, similitud, aceptar[, nombre_eje])"
+                                   ": a SAT name the municipality accepted as an eje's")
+    p.add_argument("--proponer-alias", help="write a csv of the closest eje name of each SAT name no eje has, outside the"
+                                            " repo, and stop: offline, no Core")
     p.add_argument("--core", default=os.environ.get("WASICHAI_CORE", "http://localhost:8091"))
     p.add_argument("--email", default=os.environ.get("WASICHAI_EMAIL", "admin@wasichai.local"))
     p.add_argument("--password", default=os.environ.get("WASICHAI_PASSWORD", "admin"))
@@ -779,7 +865,7 @@ def _parse_args(argv):
     return p.parse_args(argv)
 
 
-def _report(stats, vinculos):
+def _report(stats, vinculos, alias=(0, 0)):
     how = stats["por_asignacion"]
     by = ", ".join(f"{name} {'sin la columna' if vinculos[key] is None else vinculos[key]}"
                    for key, name in ((LOTE_PREDIOS, f"{LOTES}.{LOTE_PREDIOS}"),
@@ -797,6 +883,8 @@ def _report(stats, vinculos):
     print(f"codigos sin tramo: {stats['sin_tramo']}")
     print(f"codigos sin lotes: {stats['sin_lotes']}")
     print(f"codigos con lotes lejanos: {stats['lejanos']}")
+    print(f"alias aceptados: {alias[0]}")
+    print(f"alias aplicados: {alias[1]}")
     print(f"nombres del padron sin eje: {stats['nombres_sin_eje']}")
 
 
@@ -813,18 +901,37 @@ def main(argv=None):
     if args.revision and _inside_repo(args.revision):
         print(f"error: --revision {args.revision} is inside the repository; write it elsewhere", file=sys.stderr)
         return 2
+    if args.proponer_alias and _inside_repo(args.proponer_alias):
+        print(f"error: --proponer-alias {args.proponer_alias} is inside the repository; write it elsewhere",
+              file=sys.stderr)
+        return 2
+    applied = set()
     try:
         ejes, centroids, lote_of, vinculos, problems = read_gpkg(args.gpkg)
-        by_name, predios, _, found = read_padron(read_table(args.padron_xlsx, sheet=PADRON_SHEET))
+        aliases = {}
+        if args.alias:
+            aliases, found = read_aliases(args.alias)
+            problems += found
+        padron = read_table(args.padron_xlsx, sheet=PADRON_SHEET)
+        by_name, predios, _, found = read_padron(padron, aliases, applied)
     except (sqlite3.Error, *INPUT_ERRORS) as e:
         print(f"input: {e}", file=sys.stderr)
         return 2
     problems += found
+    eje_names = set(filter(None, (normalize(e["nom_via"]) for e in ejes)))
+    if not problems:
+        problems += unknown_targets(aliases, eje_names)
     if problems:
         report_problems(problems)
         return 2
+    if args.proponer_alias:
+        proposals = propose_aliases(by_name, eje_names)
+        write_proposals(args.proponer_alias, proposals)
+        print(f"proposals: {len(proposals)} names of the padron no eje has, "
+              f"{sum(1 for _, e, _ in proposals if e)} with a proposal (aceptar left empty)")
+        return 0
     rows, stats = assign(ejes, by_name, predios, centroids, lote_of, args.distancia, por_lotes=not args.sin_lotes)
-    _report(stats, vinculos)
+    _report(stats, vinculos, (len(aliases), len(applied)))
     if args.revision:
         write_revision(args.revision, rows)
         print(f"revision: {len(rows)} rows")

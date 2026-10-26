@@ -520,6 +520,144 @@ class LotesCliTests(unittest.TestCase):
         self.assertEqual(self.tramos()["110101|1|AMBOS"], "LOTES")
 
 
+class AliasTests(unittest.TestCase):
+    """--alias and --proponer-alias. The SAT's «CA. LOS PINOS» is spelled «LOS PINOZ» and «SOL DE ICA XXII ETAPA» is an
+    urbanización; the eje has «1» (its internal street), «CA. LAS ROSAS» and «CA. LOS PINOS»."""
+
+    EJES = [eje(1, "1", "001", gp(wkb_line(east(0)))), eje(2, "CA. LAS ROSAS", "002", gp(wkb_line(east(1)))),
+            eje(3, "CA. LOS PINOS", "003", gp(wkb_line(east(2))))]
+    LOTES = {"U1": (x_of(0, 30), 8445012.0), "U2": (x_of(0, 70), 8445012.0), "R1": (x_of(1, 50), 8445012.0),
+             "P1": (x_of(5, 50), 8445012.0)}
+    PADRON = [["PU1", "U", "SOL DE ICA XXII ETAPA", "1"], ["PU2", "U", "SOL DE ICA XXII ETAPA", "1"],
+              ["PR1", "R", "CA. LAS ROSAS", "1"], ["PP1", "P", "JR. LOS PINOZ", "1"]]
+
+    def setUp(self):
+        self.core = FakeCore()
+        self.addCleanup(self.core.stop)
+        self.gpkg = write_gpkg(self, ejes=self.EJES, lotes=self.LOTES, padron_predial=None,
+                               lote_predios={"U1": "PU1", "U2": "PU2", "R1": "PR1", "P1": "PP1"})
+        self.padron = write_padron(self, rows=self.PADRON, header=PADRON_HEADER[:4])
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def csv(self, rows, name="alias.csv", header=("nombre_sat", "nombre_eje_propuesto", "similitud", "aceptar")):
+        path = os.path.join(self.tmp.name, name)
+        with open(path, "w", encoding="utf-8", newline="") as f:
+            out = csv.writer(f)
+            out.writerow(header)
+            out.writerows(rows)
+        return path
+
+    def cli(self, *extra):
+        return run(iv.main, ["--gpkg", self.gpkg, "--padron-xlsx", self.padron, "--core", self.core.base_url, *extra])
+
+    def tramos(self):
+        return {r["attributes"]["clave"]: (r["attributes"].get("id_aranc"), r["attributes"].get("asignacion"))
+                for r in self.core.records.get("tramo_via", [])}
+
+    def test_without_alias_the_misspelled_name_has_no_eje(self):
+        code, out, err = self.cli()
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.tramos()["110101|3|AMBOS"], (None, "SIN_ARANCEL"))
+        self.assertIn("alias aceptados: 0\nalias aplicados: 0\nnombres del padron sin eje: 2", out)
+
+    def test_an_accepted_alias_is_applied_and_one_not_accepted_is_not(self):
+        path = self.csv([["JR. LOS PINOZ", "CA. LOS PINOS", "0.9", "Sí"], ["otra", "CA. LAS ROSAS", "0.7", ""],
+                         ["otra mas", "CA. LAS ROSAS", "0.7", "no"]])
+        code, out, err = self.cli("--alias", path)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.tramos()["110101|3|AMBOS"], ("P", "NOMBRE_UNICO"))
+        self.assertIn("alias aceptados: 1\nalias aplicados: 1\nnombres del padron sin eje: 1", out)
+
+    def test_every_yes_spelling_counts_and_an_alias_no_row_matches_is_not_applied(self):
+        rows = [[n, "CA. LAS ROSAS", "", a] for n, a in zip("abcdefg", ["si", "SÍ", "s", "X", "1", "True", "TRUE"])]
+        code, out, err = self.cli("--alias", self.csv(rows), "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("alias aceptados: 7\nalias aplicados: 0", out)
+
+    def test_nombre_eje_wins_over_the_proposal(self):
+        path = self.csv([["JR. LOS PINOZ", "CA. LAS ROSAS", "0.4", "x", "AV. Los Pinos"]],
+                        header=("nombre_sat", "nombre_eje_propuesto", "similitud", "aceptar", "nombre_eje"))
+        code, out, err = self.cli("--alias", path)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.tramos()["110101|3|AMBOS"], ("P", "NOMBRE_UNICO"))
+
+    def test_an_eje_name_the_gpkg_lacks_exits_2_listing_every_problem(self):
+        path = self.csv([["JR. LOS PINOZ", "CA. NO EXISTE", "0.9", "x"], ["SOL DE ICA XXII ETAPA", "CA. TAMPOCO", "", "x"]])
+        code, _, err = self.cli("--alias", path)
+        self.assertEqual(code, 2)
+        self.assertIn("NO EXISTE", err)
+        self.assertIn("TAMPOCO", err)
+        self.assertEqual(self.core.requests, [])
+
+    def test_the_same_sat_name_with_two_targets_exits_2_and_the_same_target_twice_is_fine(self):
+        path = self.csv([["JR. LOS PINOZ", "CA. LOS PINOS", "", "x"], ["Jr Los Pinoz", "CA. LAS ROSAS", "", "x"]])
+        code, _, err = self.cli("--alias", path)
+        self.assertEqual(code, 2)
+        self.assertIn("LOS PINOZ", err)
+        self.assertEqual(self.core.requests, [])
+        path = self.csv([["JR. LOS PINOZ", "CA. LOS PINOS", "", "x"], ["Jr Los Pinoz", "AV. LOS PINOS", "", "x"]])
+        code, out, err = self.cli("--alias", path, "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("alias aceptados: 1", out)
+
+    def test_an_accepted_row_without_an_eje_name_exits_2(self):
+        code, _, err = self.cli("--alias", self.csv([["JR. LOS PINOZ", "", "", "x"]]))
+        self.assertEqual(code, 2)
+        self.assertIn("needs a nombre_sat and an eje name", err)
+
+    def test_a_semicolon_csv_with_a_bom_reads(self):
+        path = os.path.join(self.tmp.name, "excel.csv")
+        with open(path, "w", encoding="utf-8-sig", newline="") as f:
+            f.write("nombre_sat;nombre_eje_propuesto;similitud;aceptar\nJR. LOS PINOZ;CA. LOS PINOS;0,9;si\n")
+        code, out, err = self.cli("--alias", path, "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("alias aplicados: 1", out)
+
+    def test_an_aliased_urbanizacion_name_stops_voting_as_lotes(self):
+        code, out, err = self.cli("--dry-run")
+        self.assertIn("codigos de urbanizacion: 2", out)
+        self.assertIn("LOTES 1", out)
+        # U is now the name of «1», an eje's: not an urbanización code, so the tramo goes by name
+        path = self.csv([["SOL DE ICA XXII ETAPA", "1", "", "x"]])
+        code, out, err = self.cli("--alias", path)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.tramos()["110101|1|AMBOS"], ("U", "NOMBRE_UNICO"))
+        self.assertIn("codigos de urbanizacion: 1", out)
+        self.assertIn("LOTES 0", out)
+
+    def test_proponer_alias_writes_the_closest_name_offline(self):
+        out_path = os.path.join(self.tmp.name, "propuestas.csv")
+        code, out, err = self.cli("--proponer-alias", out_path)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.core.requests, [])
+        with open(out_path, encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+        self.assertEqual([r["nombre_sat"] for r in rows], ["LOS PINOZ", "SOL DE ICA XXII ETAPA"])
+        pinoz, urb = rows
+        self.assertEqual((pinoz["nombre_eje_propuesto"], pinoz["aceptar"]), ("LOS PINOS", ""))
+        self.assertGreaterEqual(float(pinoz["similitud"]), 0.6)
+        self.assertEqual((urb["nombre_eje_propuesto"], urb["similitud"], urb["aceptar"]), ("", "", ""))
+        # a proposal fed back unaccepted changes nothing
+        code, out, err = self.cli("--alias", out_path, "--dry-run")
+        self.assertIn("alias aceptados: 0", out)
+
+    def test_proponer_alias_may_not_write_into_the_repository(self):
+        inside = os.path.join(iv.HERE, "propuestas-no.csv")
+        code, _, err = self.cli("--proponer-alias", inside)
+        self.assertEqual(code, 2)
+        self.assertIn("inside the repository", err)
+        self.assertFalse(os.path.exists(inside))
+
+    def test_dry_run_with_alias_writes_nothing(self):
+        path = self.csv([["JR. LOS PINOZ", "CA. LOS PINOS", "0.9", "x"]])
+        code, out, err = self.cli("--alias", path, "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertIn("3 to create", out)
+        self.assertEqual([r for r in self.core.requests if r[0] != "GET" and "records" in r[1]], [])
+        self.assertNotIn("tramo_via", self.core.records)
+
+
 class CliTests(unittest.TestCase):
     def setUp(self):
         self.core = FakeCore()
@@ -540,7 +678,7 @@ class CliTests(unittest.TestCase):
         code, out, err = self.cli()
         self.assertEqual(code, 0, err)
         self.assertIn("tramos: 9 (NOMBRE_UNICO 3, CERCANIA 3, LOTES 0, SIN_ARANCEL 3)", out)
-        self.assertIn("codigos con lotes lejanos: 1\nnombres del padron sin eje: 1", out)
+        self.assertIn("codigos con lotes lejanos: 1\nalias aceptados: 0\nalias aplicados: 0\nnombres del padron sin eje: 1", out)
         self.assertIn("lotes vinculados a predios: 6 (cf_lotes_pol.cod_predio_padron 2,"
                       " padron_predial.id_lote_p_vinculado 4)", out)
         self.assertIn("done: 9 created, 0 updated, 0 deleted, 0 unchanged, 0 absent from the file kept (--borrar-ausentes deletes them),"

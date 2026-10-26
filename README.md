@@ -198,6 +198,30 @@ de vía (notas 2 y 3), así que cada tramo se asigna así:
 4. si nada se cumple (varios códigos y ningún lote cerca, un nombre sin código o un tramo «SIN NOMBRE»):
    `SIN_ARANCEL`, una fila `AMBOS` sin `id_aranc`.
 
+**Alias de nombres de vía** (`--proponer-alias`, `--alias`). Muchos nombres del padrón (`nombre_de_la_via`) no
+coinciden con ningún nombre del eje por una errata o por otra grafía, y su código queda sin tramo (el informe lo cuenta
+en «nombres del padron sin eje»). El flujo es en tres pasos, con una persona en medio:
+
+1. `python3 -I import_vias.py --gpkg ica.gpkg --padron-xlsx PADRON.xlsx --proponer-alias /ruta/fuera/del/repo/propuestas.csv`
+   escribe, para cada nombre urbano del padrón sin eje, el nombre de eje más parecido (`difflib.get_close_matches`,
+   umbral 0,6) y su `similitud`. Corre sin conexión: no usa el Core ni escribe nada. La ruta debe quedar fuera del
+   repositorio, como `--revision`. Las columnas son `nombre_sat`, `nombre_eje_propuesto`, `similitud`, `aceptar`
+   (vacía) y `nombre_eje` (vacía);
+2. la municipalidad revisa el csv y marca `aceptar` con `si`, `sí`, `s`, `x`, `1` o `true` (sin distinguir mayúsculas)
+   en los que son la misma calle. Si la propuesta no sirve pero conoce el nombre correcto, lo escribe en `nombre_eje`,
+   que gana sobre `nombre_eje_propuesto`. Las filas sin marcar se ignoran;
+3. `python3 -I import_vias.py ... --alias propuestas.csv` lee solo las filas aceptadas y, antes de asignar, cambia el
+   nombre del padrón por el del eje (ambos con la misma normalización de siempre). Vale para `NOMBRE_UNICO` y
+   `CERCANIA`, y un código cuyo nombre se cambió deja de ser un código de urbanización para la pasada por lotes. Sale
+   con 2, listando todo, si un nombre de eje no está en el gpkg o si un mismo nombre del SAT tiene dos destinos
+   distintos. El informe suma «alias aceptados», «alias aplicados» (los que cambiaron alguna fila del padrón) y
+   «nombres del padron sin eje», contado ya con los alias.
+
+**Los alias no se aplican solos** porque la coincidencia aproximada se equivoca: medida con los datos de Ica,
+aceptar todas las propuestas sin revisarlas bajó los códigos con tramo de 267 a 197. Un nombre parecido suele ser otra
+calle (JR. LIMA y JR. LIMAC), y asignarla le pone a un predio el arancel de otra vía. Ver
+[wasichai/catastro-backend#47](https://github.com/wasichai/catastro-backend/issues/47).
+
 Cada fila lleva también `valor_m2` y `anio_valor`: el `valor_m2` del arancel de su `id_aranc` del año en curso
 (America/Lima), vacíos los dos sin arancel ese año o sin `id_aranc`. Es una **copia** para la vista de mapa
 `aranceles_valor` y la capa WMS (ver [Vistas de mapa](#vistas-de-mapa)); el mapa de catastro-ui sigue leyendo el valor
