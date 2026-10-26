@@ -894,7 +894,10 @@ Authorization: Bearer <token de POST /api/auth/token>
       "vinculoMetodo": null,
       "vinculoRevisado": null,
       "cuc": null,
-      "codigoReferenciaCatastral": null
+      "codigoReferenciaCatastral": null,
+      "construcciones": [
+        { "piso": 1, "seccion": 1, "areaConstruida": 100.0 }
+      ]
     }
   ]
 }
@@ -914,6 +917,13 @@ Catastro (Ley 28294). Las siete son `null` sin dato, nunca ausentes. Estas cuatr
 cambio es aditivo ([ADR-007](docs/adr/0007-srtm-lee-con-una-cuenta-de-servicio.md)). Una ficha `SIN_LEVANTAR` no se
 valoriza: su `llave` y su `motivo` son `SIN_LEVANTAMIENTO` (ver Motivos), y no hace falta pedirle área, arancel ni
 construcciones.
+
+`construcciones` trae una entrada por cada construcción del predio (`[]` si no tiene), en el orden en que las lee el
+motor: por el piso de la ficha como texto (`10` antes que `2`) y, dentro de un piso, por sección. `piso` es el
+número de piso, o `null` cuando el piso de la ficha no es un número (`S1`, un sótano); srtm empareja los pisos por
+número. Un mismo `piso` puede repetirse: una entrada por sección, o dos fichas de piso como `1` y `01`. `seccion` vacía en la ficha vale `1`, como en
+el motor. `areaConstruida` es la declarada, o `null` sin dato; la del ítem es la suma de estas. También es una llave
+nueva y aditiva (ADR-007), para los reportes de áreas por nivel de srtm (wasichai/srtm-backend#247).
 
 **Motivos** (`llave` de un predio sin valor; `motivo` es la misma frase para una persona, o el mismo código cuando el
 motivo no es una frase fija). Varios llevan un sufijo dinámico (`:dato`) que no está en esta tabla:

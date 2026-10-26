@@ -116,7 +116,8 @@ class ValuacionesService(
             vinculoMetodo = p.vinculoMetodo,
             vinculoRevisado = p.vinculoRevisado,
             cuc = p.cuc,
-            codigoReferenciaCatastral = p.codigoReferenciaCatastral
+            codigoReferenciaCatastral = p.codigoReferenciaCatastral,
+            construcciones = pisos.map { ConstruccionDelItem(it.piso?.trim()?.toIntOrNull(), it.seccion ?: 1, it.areaConstruida) }
         )
     }
 

@@ -178,6 +178,45 @@ class ValuacionesApiTest : CatastroApiTest() {
     }
 
     @Test
+    fun `cada ítem trae sus construcciones con piso, sección y área, y una lista vacía sin ellas`() {
+        val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
+        val marca = uniqueName("c70").uppercase()
+        val conPisos = predio("$marca-1", null)
+        piso(conPisos, "2", "CONCRETO", "BUENO", area = 40)
+        piso(conPisos, "1", "CONCRETO", "BUENO", area = 120, seccion = 2)
+        piso(conPisos, "1", "CONCRETO", "BUENO", area = 80)
+        // a piso that is not a number (a sótano) keeps its área and sección, with a null piso: nothing to pair it by
+        piso(conPisos, "S1", "CONCRETO", "BUENO", area = 30)
+        predio("$marca-2", null)
+
+        val items = leerTodo(srtm, 500).associateBy { it["codigoMunicipal"].asString() }
+        val a = items.getValue("$marca-1")
+        // aditivo: the predio's total stays as it was
+        numero("270", a["areaConstruida"])
+        val construcciones = a["construcciones"].toList()
+        for (c in construcciones) {
+            assertEquals(setOf("piso", "seccion", "areaConstruida"), c.propertyNames().toSet(), c.toString())
+            assertTrue(c["seccion"].isInt, c.toString())
+            assertTrue(c["piso"].isNull || c["piso"].isInt, c.toString())
+        }
+        // by piso (as the engine reads them), a piso's secciones by number, an empty seccion as 1
+        assertEquals(
+            listOf(Triple(1, 1, "80"), Triple(1, 2, "120"), Triple(2, 1, "40"), Triple(null, 1, "30")),
+            construcciones.map { c ->
+                Triple(
+                    c["piso"].takeUnless { it.isNull }?.intValue(),
+                    c["seccion"].intValue(),
+                    c["areaConstruida"].decimalValue().stripTrailingZeros().toPlainString()
+                )
+            }
+        )
+
+        val b = items.getValue("$marca-2")
+        assertTrue(b["construcciones"].isArray, b.toString())
+        assertEquals(0, b["construcciones"].size())
+    }
+
+    @Test
     fun `una ficha sin levantar dice su estado, su fecha y su entrega, y no tiene valor`() {
         val srtm = cuentaDeServicio(listOf("SRTM_LECTOR"))
         val marca = uniqueName("t20").uppercase()
