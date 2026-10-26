@@ -919,8 +919,9 @@ valoriza: su `llave` y su `motivo` son `SIN_LEVANTAMIENTO` (ver Motivos), y no h
 construcciones.
 
 `construcciones` trae una entrada por cada construcción del predio (`[]` si no tiene), en el orden en que las lee el
-motor: por piso y, dentro de un piso, por sección. `piso` es el número de piso, o `null` cuando el piso de la ficha
-no es un número (`S1`, un sótano); srtm empareja los pisos por número. `seccion` vacía en la ficha vale `1`, como en
+motor: por el piso de la ficha como texto (`10` antes que `2`) y, dentro de un piso, por sección. `piso` es el
+número de piso, o `null` cuando el piso de la ficha no es un número (`S1`, un sótano); srtm empareja los pisos por
+número. Un mismo `piso` puede repetirse: una entrada por sección, o dos fichas de piso como `1` y `01`. `seccion` vacía en la ficha vale `1`, como en
 el motor. `areaConstruida` es la declarada, o `null` sin dato; la del ítem es la suma de estas. También es una llave
 nueva y aditiva (ADR-007), para los reportes de áreas por nivel de srtm (wasichai/srtm-backend#247).
 
