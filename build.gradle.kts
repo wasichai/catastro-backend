@@ -25,7 +25,7 @@ plugins {
 group = "catastro"
 description = "catastro-backend: valorización catastral (autoavalúo) de Perené on wasichai"
 
-val wasichaiVersion = "1.5.0"
+val wasichaiVersion = "1.6.0"
 
 dependencies {
     implementation(platform("wasichai:wasichai-bom:$wasichaiVersion"))
