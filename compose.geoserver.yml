@@ -1,0 +1,61 @@
+# GeoServer: publishes predio_catastral.lote_geom, tramo_via.geom and brecha_ficha.lote_geom as WMS layers
+# (wasichai-gis). optional: nothing else needs it. GeoServer serves anonymously and knows nothing of organizations, so
+# it is never reachable but through catastro-ui's nginx and catastro-core (README, «WMS protegido»). it is a file of its
+# own because compose checks the `:?` of its password even for a profile that is off:
+#
+#   docker compose -f compose.yml -f compose.geoserver.yml --profile geoserver up -d        # safe: no port
+#   docker compose -f compose.yml -f compose.geoserver.yml --profile geoserver-local up -d  # UNSAFE, dev machine only
+#
+# `geoserver` is only on the internal network catastro-geoserver (no route out, no port on the host): the deployment's
+# catastro-core and catastro-ui nginx join it (`docker network connect catastro-geoserver <container>`).
+# `geoserver-local` is for a backend running on this machine (./gradlew bootRun), which cannot join a docker network:
+# it publishes 127.0.0.1:8085, and anyone on the host reads every organization's layers there. never on a server.
+# run one or the other, not both: they share the data volume
+
+x-geoserver: &geoserver
+  image: docker.osgeo.org/geoserver:2.28.6
+  environment:
+    # from develop/.env, never committed; same value as the one the server uses. without it compose refuses to
+    # start: GeoServer would fall back to its public default password (geoserver), and with it REST and the admin
+    GEOSERVER_ADMIN_USER: ${WASICHAI_GEOSERVER_USERNAME:-admin}
+    GEOSERVER_ADMIN_PASSWORD: ${WASICHAI_GEOSERVER_PASSWORD:?WASICHAI_GEOSERVER_PASSWORD is required (develop/.env)}
+    SKIP_DEMO_DATA: 'true'
+  volumes:
+    - geoserver-data:/opt/geoserver_data
+  depends_on:
+    postgres:
+      condition: service_healthy
+  healthcheck:
+    test: ['CMD-SHELL', 'curl -fsu "$$GEOSERVER_ADMIN_USER:$$GEOSERVER_ADMIN_PASSWORD" http://localhost:8080/geoserver/rest/about/version.json']
+    interval: 10s
+    timeout: 5s
+    retries: 30
+    start_period: 30s
+
+services:
+  # it reaches postgis by the service name `postgres` on the internal network, not by localhost
+  postgres:
+    networks: [default, geoserver]
+
+  geoserver:
+    <<: *geoserver
+    container_name: catastro-geoserver
+    profiles: ['geoserver']
+    networks: [geoserver]
+
+  geoserver-local:
+    <<: *geoserver
+    container_name: catastro-geoserver-local
+    profiles: ['geoserver-local']
+    networks: [default, geoserver]
+    ports:
+      # 8085, never 8080/8081 (other apps). loopback only, like postgres
+      - '127.0.0.1:${CATASTRO_GEOSERVER_PORT:-8085}:8080'
+
+networks:
+  geoserver:
+    name: catastro-geoserver
+    internal: true
+
+volumes:
+  geoserver-data:
