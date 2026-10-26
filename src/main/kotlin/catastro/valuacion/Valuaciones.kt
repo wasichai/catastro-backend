@@ -24,7 +24,8 @@ data class Valuaciones(
 // and fechaLevantamiento are the ficha's own fields; entrega is the codigo of its entrega_catastral (null without
 // one). vinculoMetodo, vinculoRevisado, cuc and codigoReferenciaCatastral are the ficha's own fields too (ADR-007:
 // an aditive change for srtm's brecha con confianza, wasichai/srtm-backend#204). all seven are always written, null
-// without data, like motivo and llave
+// without data, like motivo and llave. construcciones is each construccion of the predio, [] without one (ADR-007, an
+// aditive change for srtm's reportes, wasichai/srtm-backend#247)
 @JsonInclude(JsonInclude.Include.ALWAYS)
 data class ItemValuacion(
     val codigoMunicipal: String?,
@@ -49,7 +50,18 @@ data class ItemValuacion(
     val vinculoMetodo: String?,
     val vinculoRevisado: Boolean?,
     val cuc: String?,
-    val codigoReferenciaCatastral: String?
+    val codigoReferenciaCatastral: String?,
+    val construcciones: List<ConstruccionDelItem>
+)
+
+// one construccion of an item, in the engine's order (by piso, then seccion). piso is the floor's number, or null when
+// the ficha's piso is not one (S1, a sótano): srtm pairs pisos by number. seccion null in the ficha is 1, as the engine
+// reads it. areaConstruida is the declared one, null without it
+@JsonInclude(JsonInclude.Include.ALWAYS)
+data class ConstruccionDelItem(
+    val piso: Int?,
+    val seccion: Int,
+    val areaConstruida: BigDecimal?
 )
 
 // the answer of POST /api/catastro/valuacion: one predio's insumos valued as GET /valuaciones values a ficha, plus how

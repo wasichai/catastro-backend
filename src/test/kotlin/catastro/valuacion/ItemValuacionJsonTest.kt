@@ -39,7 +39,8 @@ class ItemValuacionJsonTest {
         vinculoMetodo = vinculoMetodo,
         vinculoRevisado = vinculoRevisado,
         cuc = cuc,
-        codigoReferenciaCatastral = codigoReferenciaCatastral
+        codigoReferenciaCatastral = codigoReferenciaCatastral,
+        construcciones = emptyList()
     )
 
     @Test
