@@ -1,7 +1,7 @@
 # catastro-backend
 
 Valorización catastral de los predios de una municipalidad (hoy Perené, ubigeo 120302, en la selva; Ica, en la
-costa), sobre el framework [wasichai](https://github.com/wasichai/wasichai) 1.5.0.
+costa), sobre el framework [wasichai](https://github.com/wasichai/wasichai) 1.6.0.
 
 Valoriza cada predio del levantamiento catastral (autoavalúo por predio y año) con aranceles, valores unitarios y
 depreciación, para que srtm-backend calcule la brecha de recaudación contra el padrón declarado. **No calcula
@@ -635,6 +635,12 @@ GeoServer sirve el WMS sin autenticación y no sabe de organizaciones: entrega c
 alcanza solo por el nginx de catastro-ui, y ese nginx autoriza cada pedido con catastro-backend antes de pasarlo
 (`auth_request`). La plantilla del nginx está en [docs/deploy/nginx-catastro-ui.conf](docs/deploy/nginx-catastro-ui.conf)
 y es la única fuente: el README de catastro-ui apunta aquí.
+
+Las url WMS que la API entrega al navegador (`/api/gis/services`, `/api/gis/layers`) salen de
+`WASICHAI_GIS_GEOSERVER_PUBLIC_URL` (wasichai 1.6.0). En un despliegue va `/geoserver`, relativa: las teselas se
+piden al origen de catastro-ui y pasan por este proxy. Sin ella serían la url interna de GeoServer, que el navegador
+no alcanza. catastro-ui pone el token de la sesión en esas teselas (`gisModule({ wmsAuth: true })` para las páginas de
+gis y `transformRequest` para sus mapas propios).
 
 `GET /api/catastro/wms/autorizar` es el endpoint del `auth_request`. Lee el Bearer del navegador como cualquier otro
 endpoint y la uri original del pedido en `X-Original-URI` (`$request_uri`). Deja pasar **solo lo que piden los mapas de

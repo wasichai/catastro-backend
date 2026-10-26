@@ -13,7 +13,7 @@ el motor y la API están en el [README principal](../../README.md); las decision
 | Node y yarn | >= 26 | prettier y commitlint (`yarn install` instala el hook de husky) |
 | GDAL (`ogr2ogr`) | cualquiera | solo para sacar aranceles y lotes de la geodatabase del catastro |
 
-Las librerías de wasichai (`wasichai:wasichai-bom:1.5.0` y sus starters) se resuelven así, en este orden:
+Las librerías de wasichai (`wasichai:wasichai-bom:1.6.0` y sus starters) se resuelven así, en este orden:
 
 1. **GitHub Packages**. Pide un token aunque sea para leer. En `~/.gradle/gradle.properties`:
    ```properties
@@ -50,6 +50,7 @@ set -a; source develop/.env; set +a
 | `WASICHAI_JWT_REVOCATION` / `WASICHAI_LOGIN_LIMIT` | comentadas (`false`) | encenderlas en un despliegue real |
 | `WASICHAI_GEOSERVER_ENABLED` | `true` en el ejemplo (`false` sin variable) | solo para publicar capas WMS; los lotes salen de PostGIS sin él (ver 3.1) |
 | `WASICHAI_GEOSERVER_URL` / `_USERNAME` / `_PASSWORD` | `http://localhost:8085/geoserver` / `admin` / la tuya | el REST de GeoServer y su administrador. La clave no tiene valor por defecto |
+| `WASICHAI_GIS_GEOSERVER_PUBLIC_URL` | vacío (igual que la anterior) | cómo llega el navegador a GeoServer: las url WMS de `/api/gis/services` y `/api/gis/layers`. En un despliegue, `/geoserver`, para que las teselas pasen por el proxy protegido de catastro-ui (wasichai 1.6.0) |
 | `WASICHAI_GEOSERVER_WORKSPACE` | `catastro` | workspace de las capas (se crea solo) |
 | `WASICHAI_GEOSERVER_DS_HOST` / `_PORT` / `_DATABASE` / `_USERNAME` / `_PASSWORD` | `postgres` / `5432` / `catastro` / `catastro` / `catastro` | cómo llega *GeoServer* a PostGIS (desde su contenedor, no desde tu máquina) |
 | `CATASTRO_GEOSERVER_PORT` | `8085` | puerto que publica `geoserver-local` (`compose.geoserver.yml`), en `127.0.0.1`; solo desarrollo |

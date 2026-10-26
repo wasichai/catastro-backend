@@ -40,6 +40,9 @@ wasichai:
       # without GeoServer the lotes are served straight from PostGIS; only publishing WMS layers needs it
       enabled: ${WASICHAI_GEOSERVER_ENABLED:false}
       url: ${WASICHAI_GEOSERVER_URL:http://localhost:8085/geoserver}
+      # how a browser reaches geoserver: relative (/geoserver) so wms tiles go through catastro-ui's protected proxy
+      # (docs/deploy/nginx-catastro-ui.conf). blank: the same as url, which is internal in a deployment
+      public-url: ${WASICHAI_GIS_GEOSERVER_PUBLIC_URL:}
       username: ${WASICHAI_GEOSERVER_USERNAME:admin}
       # no default password: with GeoServer enabled it comes from the environment (compose.yml sets the same one)
       password: ${WASICHAI_GEOSERVER_PASSWORD:}
