@@ -81,37 +81,75 @@ class AutorizacionWmsApiTest : CatastroApiTest() {
         val p = prefijo(admin)
         val tramo = "tramo_via__${p}__geom"
         val ajena = "tramo_via__0000000a__geom"
-        for (uri in listOf(
-            "/geoserver/catastro/wms?REQUEST=GetMap&LAYERS=$tramo",
-            "/geoserver/catastro/wms?Request=getmap&Layers=catastro:$tramo",
-            "/geoserver/wms?request=GETMAP&layers=catastro%3A$tramo",
-            "/geoserver/gwc/service/wms?SERVICE=wms&REQUEST=GetMap&LAYERS=catastro:$tramo&TILED=true",
-            "/geoserver/catastro/wms?request=GetFeatureInfo&layers=$tramo&QUERY_LAYERS=$tramo&info_format=application/json&x=1&y=1",
-            "/geoserver/catastro/ows?service=WMS&request=GetLegendGraphic&LAYER=$tramo&format=image/png"
-        )) {
+        val base = "/geoserver/catastro/wms?SERVICE=wms&Request=GETMAP&FORMAT=image/png&WIDTH=256&Height=256&BBOX=1,2,3,4"
+        for (uri in listOf("$base&LAYERS=$tramo", "$base&Layers=catastro:$tramo", "$base&layers=catastro%3A$tramo&TILED=true")) {
             assertEquals(HttpStatus.NO_CONTENT, estado(uri, admin), uri)
         }
         // another organization's layer is caught in any casing and any of the parameters that name a layer
-        for (uri in listOf(
-            "/geoserver/catastro/wms?request=GetMap&layers=$tramo&LAYERS=$ajena",
-            "/geoserver/catastro/wms?request=GetMap&Layers=$tramo,$ajena",
-            "/geoserver/catastro/wms?request=GetFeatureInfo&layers=$tramo&Query_Layers=$ajena",
-            "/geoserver/catastro/wms?request=GetMap&layers=$tramo&TYPENAME=$ajena",
-            "/geoserver/catastro/wms?request=GetLegendGraphic&Layer=$ajena"
-        )) {
+        for (uri in listOf("$base&layers=$tramo&LAYERS=$ajena", "$base&Layers=$tramo,$ajena", "$base&layers=$tramo&TYPENAME=$ajena")) {
             assertEquals(HttpStatus.FORBIDDEN, estado(uri, admin), uri)
         }
     }
 
     @Test
-    fun `sin capas, GetCapabilities, o sin X-Original-URI, 403`() {
-        assertEquals(HttpStatus.FORBIDDEN, estado("/geoserver/catastro/wms?request=GetMap", admin))
+    fun `sin capas, GetCapabilities, GetFeatureInfo, un formato que no es imagen, o sin X-Original-URI, 403`() {
+        val p = prefijo(admin)
+        val tramo = "catastro:tramo_via__${p}__geom"
+        assertEquals(HttpStatus.FORBIDDEN, estado(getMap(), admin))
         assertEquals(HttpStatus.FORBIDDEN, estado("/geoserver/catastro/wms?service=WMS&request=GetCapabilities", admin))
-        assertEquals(HttpStatus.FORBIDDEN, estado("/geoserver/ows?service=WFS&request=GetFeature&typeName=catastro:tramo_via__${prefijo(admin)}__geom", admin))
+        assertEquals(
+            HttpStatus.FORBIDDEN,
+            estado(getMap(tramo).replace("request=GetMap", "request=GetFeatureInfo") + "&query_layers=$tramo&x=0&y=0&info_format=application/json", admin)
+        )
+        assertEquals(HttpStatus.FORBIDDEN, estado(getMap(tramo).replace("format=image/png", "format=application/vnd.google-earth.kml%2Bxml"), admin))
+        assertEquals(HttpStatus.FORBIDDEN, estado(getMap(tramo).replace("width=256", "width=4096"), admin))
+        assertEquals(HttpStatus.FORBIDDEN, estado("/geoserver/ows?service=WFS&request=GetFeature&typeName=$tramo", admin))
         assertEquals(HttpStatus.FORBIDDEN, exchange("GET", ruta, null, admin).first)
         // a name that looks like one of its layers but is not a geometry of an object it has
-        val p = prefijo(admin)
         assertEquals(HttpStatus.FORBIDDEN, estado(getMap("catastro:tramo_via__${p}__clave"), admin))
         assertEquals(HttpStatus.FORBIDDEN, estado(getMap("catastro:no_existe__${p}__geom"), admin))
+    }
+
+    // a role of this organization with READ on tramo_via, and the Bearer of a service account holding only it
+    private fun conRol(
+        ownRecordsOnly: Boolean = false,
+        prefijoDelRol: String = "WMS_",
+        camposOcultos: List<String> = emptyList()
+    ): String {
+        val rol = uniqueName(prefijoDelRol).uppercase()
+        send("POST", "/api/roles", mapOf("name" to rol, "label" to rol, "ownRecordsOnly" to ownRecordsOnly), HttpStatus.CREATED, admin)
+        send("PUT", "/api/roles/$rol/permissions", mapOf("permissions" to listOf(mapOf("objectName" to "tramo_via", "action" to "READ"))), HttpStatus.OK, admin)
+        if (camposOcultos.isNotEmpty()) {
+            val campos = camposOcultos.map { mapOf("objectName" to "tramo_via", "fieldName" to it, "read" to false, "write" to false) }
+            send("PUT", "/api/roles/$rol/field-permissions", mapOf("fields" to campos), HttpStatus.OK, admin)
+        }
+        return cuentaDeServicio(listOf(rol))
+    }
+
+    @Test
+    fun `un usuario que no lee todas las filas o todos los campos no recibe teselas`() {
+        val tramo = getMap("catastro:tramo_via__${prefijo(admin)}__geom")
+        // the same role with no rule passes: what refuses is the rule
+        assertEquals(HttpStatus.NO_CONTENT, estado(tramo, conRol()))
+        assertEquals(HttpStatus.FORBIDDEN, estado(tramo, conRol(ownRecordsOnly = true)), "owner filter")
+        assertEquals(HttpStatus.FORBIDDEN, estado(tramo, conRol(camposOcultos = listOf("nom_via"))), "field rule")
+        assertEquals(HttpStatus.FORBIDDEN, estado(tramo, conRol(prefijoDelRol = AlcanceDePrueba.MARCA)), "read scope")
+    }
+
+    @Test
+    fun `un objeto con una máscara de lectura no se sirve por WMS, ni al administrador`() {
+        val (otra, _) = organizacionNueva()
+        val objeto = MascaraDePrueba.OBJETO
+        val geometria = mapOf("name" to "geom", "label" to "Geometría", "type" to "GEOMETRY", "geometryType" to "POLYGON", "srid" to 4326)
+        send(
+            "POST",
+            "/api/objects",
+            mapOf("name" to objeto, "label" to "Enmascarada", "pluralLabel" to "Enmascaradas", "fields" to listOf(geometria)),
+            HttpStatus.CREATED,
+            otra
+        )
+        val p = prefijo(otra)
+        assertEquals(HttpStatus.FORBIDDEN, estado(getMap("catastro:${objeto}__${p}__geom"), otra))
+        assertEquals(HttpStatus.NO_CONTENT, estado(getMap("catastro:tramo_via__${p}__geom"), otra))
     }
 }

@@ -52,7 +52,7 @@ set -a; source develop/.env; set +a
 | `WASICHAI_GEOSERVER_URL` / `_USERNAME` / `_PASSWORD` | `http://localhost:8085/geoserver` / `admin` / la tuya | el REST de GeoServer y su administrador. La clave no tiene valor por defecto |
 | `WASICHAI_GEOSERVER_WORKSPACE` | `catastro` | workspace de las capas (se crea solo) |
 | `WASICHAI_GEOSERVER_DS_HOST` / `_PORT` / `_DATABASE` / `_USERNAME` / `_PASSWORD` | `postgres` / `5432` / `catastro` / `catastro` / `catastro` | cómo llega *GeoServer* a PostGIS (desde su contenedor, no desde tu máquina) |
-| `CATASTRO_GEOSERVER_PORT` | `8085` | puerto que publica `compose.yml` para GeoServer, en `127.0.0.1` |
+| `CATASTRO_GEOSERVER_PORT` | `8085` | puerto que publica `geoserver-local` (`compose.geoserver.yml`), en `127.0.0.1`; solo desarrollo |
 | `WASICHAI_CORE` | `http://localhost:8091` | URL que usan los scripts de `model/` |
 | `WASICHAI_EMAIL` / `WASICHAI_PASSWORD` | el admin de desarrollo | login de esos scripts |
 | `WASICHAI_TEST_DB_*` | comentadas | solo para tests de integración contra una base externa (ver 6) |
@@ -87,19 +87,25 @@ Publicar capas WMS (`/api/gis/layers`) necesita GeoServer; todo lo demás, inclu
 ```bash
 # en develop/.env: WASICHAI_GEOSERVER_ENABLED=true y WASICHAI_GEOSERVER_PASSWORD=<una clave tuya>
 set -a; source develop/.env; set +a
-docker compose --profile geoserver up -d         # postgis + docker.osgeo.org/geoserver:2.28.6 en 127.0.0.1:8085
-docker compose ps                                # geoserver tarda ~1 min en salir healthy
+# solo en tu máquina: geoserver-local publica 127.0.0.1:8085 para el backend de ./gradlew bootRun
+docker compose -f compose.yml -f compose.geoserver.yml --profile geoserver-local up -d
+docker compose -f compose.yml -f compose.geoserver.yml ps   # geoserver tarda ~1 min en salir healthy
 curl -u "admin:$WASICHAI_GEOSERVER_PASSWORD" http://localhost:8085/geoserver/rest/about/version.json
 ```
 
-- `docker compose up -d` a secas sigue levantando solo PostGIS: GeoServer va en el perfil `geoserver`.
-- La clave sale de `develop/.env` y nunca se versiona. Con la variable vacía GeoServer usa su clave pública por
-  defecto (`geoserver`): cárgala siempre antes de levantarlo. Sin datos de demostración (`SKIP_DEMO_DATA=true`).
+- `docker compose up -d` a secas sigue levantando solo PostGIS: GeoServer está en `compose.geoserver.yml`, aparte para
+  que su guarda de la clave no lo frene.
+- **`geoserver-local` no es seguro fuera de una máquina de desarrollo**: GeoServer sirve sin autenticación y quien
+  llegue a ese puerto lee las capas de todas las organizaciones. En un servidor va el perfil `geoserver`, sin puerto y
+  solo en la red interna `catastro-geoserver` (README, «WMS protegido»). No levantes los dos: comparten el volumen.
+- La clave sale de `develop/.env` y nunca se versiona. Sin ella compose no arranca (`${WASICHAI_GEOSERVER_PASSWORD:?}`):
+  GeoServer usaría su clave pública por defecto (`geoserver`). Sin datos de demostración (`SKIP_DEMO_DATA=true`).
 - Los datos de GeoServer (workspaces, capas) viven en el volumen `geoserver-data`; `docker compose down -v` los borra.
 - GeoServer llega a PostGIS por el nombre del servicio (`postgres:5432`), no por `localhost:5434`: por eso los
   `WASICHAI_GEOSERVER_DS_*` valen distinto de los `WASICHAI_DB_*`. En el CI y en otros despliegues se ajustan a
   donde corra esa base.
-- Con un Docker remoto, el puerto 8085 queda en el loopback del servidor: otro túnel, `ssh -N -L 8085:localhost:8085`.
+- Con un Docker remoto, el puerto 8085 de `geoserver-local` queda en el loopback del servidor: otro túnel,
+  `ssh -N -L 8085:localhost:8085`. Vale para un Docker de pruebas, nunca para uno con datos reales.
 
 **Publicar las capas.** Con el backend corriendo (ver 4) y el modelo aplicado (ver 5). Publicar exige el permiso
 `MANAGE_METADATA`; el admin de desarrollo lo tiene.
@@ -132,7 +138,7 @@ El visor «Brechas» de catastro-ui es el consumidor: pinta las capas WMS como f
 lotes, con el `wmsTileUrl` de `@wasichai/gis` (la misma URL, en EPSG:3857). En un despliegue real GeoServer no se
 expone: el navegador lo pide a `/geoserver/` del origen de la UI, y su nginx autoriza cada pedido con
 `GET /api/catastro/wms/autorizar` (README, «WMS protegido»; plantilla en `docs/deploy/nginx-catastro-ui.conf`). El
-puerto `127.0.0.1:8085` de `compose.yml` es solo para desarrollo.
+puerto `127.0.0.1:8085` de `geoserver-local` es solo para desarrollo.
 
 **Capas con estilo por atributo.** Desde wasichai 1.5.0 una publicación puede llevar `{"style"}` y la capa sale con
 un SLD coloreado por un campo (ADR-072 de wasichai). `model/vistas_de_mapa.py` crea las vistas de mapa de aranceles y

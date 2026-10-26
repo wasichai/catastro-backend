@@ -24,7 +24,7 @@ impuestos**: el impuesto predial es de srtm-backend.
 ```sh
 cp develop/example.env develop/.env && set -a && source develop/.env && set +a   # opcional: los valores por defecto
 docker compose up -d      # postgis en 127.0.0.1:5434 (CATASTRO_PG_PORT)
-# GeoServer (solo para publicar capas WMS): docker compose --profile geoserver up -d, ver docs/develop/README.md 3.1
+# GeoServer (solo para publicar capas WMS): compose.geoserver.yml, ver docs/develop/README.md 3.1
 ./gradlew bootRun         # http://localhost:8091
 ```
 
@@ -607,42 +607,105 @@ Sale con 0, con 1 si el Core rechaza algo (GeoServer caído, por ejemplo) y con 
 ### WMS protegido
 
 GeoServer sirve el WMS sin autenticación y no sabe de organizaciones: entrega cualquier capa que se le pida. Por eso
-**GeoServer nunca se expone** (sin puerto en el host en un despliegue, ni en `0.0.0.0` en ninguno): el navegador lo
+**GeoServer nunca se expone** (sin puerto en el host, ni en `0.0.0.0` ni en `127.0.0.1` de un servidor): el navegador lo
 alcanza solo por el nginx de catastro-ui, y ese nginx autoriza cada pedido con catastro-backend antes de pasarlo
 (`auth_request`). La plantilla del nginx está en [docs/deploy/nginx-catastro-ui.conf](docs/deploy/nginx-catastro-ui.conf)
 y es la única fuente: el README de catastro-ui apunta aquí.
 
 `GET /api/catastro/wms/autorizar` es el endpoint del `auth_request`. Lee el Bearer del navegador como cualquier otro
-endpoint y la uri original del pedido en `X-Original-URI` (`$request_uri`). Responde:
+endpoint y la uri original del pedido en `X-Original-URI` (`$request_uri`). Deja pasar **solo lo que piden los mapas de
+catastro-ui**, un `GetMap` ráster:
 
-- **204** solo si el usuario está autenticado y cada capa que nombra el pedido es de su organización y tiene READ
-  sobre su objeto. Las capas se leen de `layers`, `query_layers`, `layer`, `typeName` y `typeNames`, listas con comas,
-  sin distinguir mayúsculas en el nombre del parámetro (`LAYERS`, `Layers`...); un parámetro repetido cuenta entero.
-  Una capa es de la organización cuando su nombre, `<objeto>__<prefijo>__<geometría>` (con o sin `catastro:`), lleva
-  como prefijo los 8 primeros dígitos hex del `organizationId` del usuario, y además `<objeto>` es un objeto de esa
-  organización con esa geometría.
-- **401** sin token o con uno malo (lo responde core).
-- **403** en todo lo demás: una capa de otra organización (basta una en la lista), sin READ sobre el objeto de una
-  capa, sin capas, sin `X-Original-URI`, o un pedido que no es `GetMap`, `GetFeatureInfo` ni `GetLegendGraphic` de
-  WMS. Un parámetro que no conoce también es un 403, en particular `sld`, `sld_body` (un SLD nombra sus propias capas,
-  y `sld=` hace que GeoServer lea una url), `cql_filter`, `filter` y `featureid` (un filtro CQL puede consultar otra
-  capa); un estilo (`styles`, `style`) va vacío o es el de una de sus capas. nginx convierte cualquier otro código en un
-  500, así que el endpoint solo responde esos tres.
+- la ruta es exactamente `/geoserver/catastro/wms` (el workspace de `WASICHAI_GEOSERVER_WORKSPACE`), con un único
+  `service=WMS` y un único `request=GetMap`;
+- `format` es uno solo de `image/png`, `image/png8`, `image/jpeg` o `image/webp`; `width` y `height` van de 1 a 2048;
+  de `format_options` solo pasan `dpi` y `antialias`;
+- nombra de 1 a 10 capas en `layers` (o `typeName`, `typeNames`), listas con comas, sin distinguir mayúsculas en el
+  nombre del parámetro (`LAYERS`, `Layers`...); un parámetro repetido cuenta entero. Un estilo (`styles`) va vacío o es
+  el de una de sus capas;
+- cada capa es de la organización: su nombre, `<objeto>__<prefijo>__<geometría>` (con o sin `catastro:`), lleva como
+  prefijo los 8 primeros dígitos hex del `organizationId` del usuario, y `<objeto>` es un objeto de esa organización con
+  esa geometría;
+- el usuario tiene READ sobre el objeto de cada capa **y lo lee entero**. Una tesela dibuja todas las filas de la capa y
+  las colorea por un atributo, así que no puede respetar una regla que esconde filas o campos. Por eso un usuario con
+  alguna de estas reglas no recibe teselas (403): un filtro de dueño (`ownRecordsOnly`), un alcance de lectura de la app
+  (ADR-048 de wasichai), un campo del objeto que no puede leer, o una máscara de lectura (ADR-065). Ese usuario ve los
+  lotes y los tramos por la API, en GeoJSON, que sí aplica sus reglas.
 
-**GetCapabilities está bloqueado** (403): lista los nombres de las capas de todas las organizaciones del workspace
-(y con ellos los prefijos de sus `organizationId`). catastro-ui no lo usa: pide `GetMap` con el nombre que le da
-`GET /api/gis/layers`. Tampoco pasa el WFS: devuelve los atributos de las filas sin los permisos por campo de core.
+Responde **204** si todo eso se cumple, **401** sin token o con uno malo (lo responde core) y **403** en todo lo demás.
+nginx convierte cualquier otro código en un 500, así que el endpoint solo responde esos tres. Todo lo que no está en la
+lista es un 403:
+
+- `GetCapabilities`: lista los nombres de las capas de todas las organizaciones del workspace, y con ellos los prefijos
+  de sus `organizationId`;
+- `GetFeatureInfo`, `GetLegendGraphic` y los formatos vectoriales o de texto (KML, UTFGrid, GeoRSS, SVG, PDF, HTML):
+  devuelven los atributos de las filas sin los permisos por campo de core;
+- `sld`, `sld_body` (un SLD nombra sus propias capas, y `sld=` hace que GeoServer lea una url), `cql_filter`, `filter`,
+  `featureid` (un filtro CQL puede consultar otra capa), `feature_count`, `exceptions` y cualquier parámetro que no
+  conozca;
+- el WFS, el WCS, el WMTS, el GWC y los servicios globales (`/geoserver/wms`, `/geoserver/ows`).
 
 La plantilla:
 
-- solo deja pasar a GeoServer `/geoserver/[<workspace>/](wms|ows|gwc/service/wms)` (la ruta entera) y solo con `GET`
-  (el endpoint lee la uri, no un cuerpo); el resto de `/geoserver/` (la administración web, REST, WFS) es un 404;
-- borra el `Authorization` antes de GeoServer, que nunca ve el token;
-- marca las teselas `Cache-Control: private`: son de quien las pidió, y una caché compartida no las guarda.
+- solo deja pasar a GeoServer `location = /geoserver/catastro/wms`, y solo con `GET` (el endpoint lee la uri, no un
+  cuerpo); el resto de `/geoserver/` (la administración web, REST, WFS, GWC) es un 404;
+- borra el `Authorization`, las cookies y el cuerpo antes de GeoServer, que nunca ve el token, y esconde su
+  `Set-Cookie`;
+- le pide a GeoServer los errores dibujados en la imagen (`exceptions=application/vnd.ogc.se_inimage`), y lo que no sea
+  una imagen sale como `application/octet-stream`, con `X-Content-Type-Options: nosniff` y un
+  `Content-Security-Policy: sandbox`: nada de lo que conteste GeoServer corre en el origen de la UI;
+- marca las teselas `Cache-Control: private, no-store` y esconde su `Expires`: ni el navegador ni una caché compartida
+  las guardan, así que después de un logout, de un token vencido o de un permiso retirado no se ven desde una caché.
+  Cada tesela vuelve a GeoServer (el GWC no está en el camino); si eso pesa, `private, max-age=60` deja al navegador
+  repetir una tesela un minuto, a cambio de que se vea ese minuto después de perder el acceso;
+- **recuerda la autorización 60 s**. Solo un 204, con la clave del token más la uri entera menos su `bbox`, que es lo
+  único que cambia de una tesela a otra y lo único que la autorización no lee. Así un mapa cuesta una llamada al backend
+  por capa y no una por tesela. El precio: **un token revocado, o un READ retirado, sigue recibiendo teselas hasta
+  60 s**. Una capa más, un parámetro con otras mayúsculas u otro token son otra clave y otra llamada;
+- corta la autorización a los 5 s (`proxy_read_timeout`): un backend colgado deja la tesela en blanco, no el mapa.
 
-Cada tesela es una llamada al endpoint (la definición del objeto sale de la caché de metadatos de core). catastro-ui
-manda el Bearer en cada tesela con el `transformRequest` de sus mapas; las páginas propias de `@wasichai/gis` (la vista
-previa de `/gis/layers`) no lo mandan y sus teselas WMS salen 401 (ver el README de catastro-ui).
+Cada tesela que no está en esa caché es una llamada al endpoint (la definición del objeto sale de la caché de metadatos
+de core). catastro-ui manda el Bearer en cada tesela con el `transformRequest` de sus mapas. Las páginas propias de
+`@wasichai/gis` (la vista previa de `/gis/layers`) no lo mandan, y sus teselas WMS salen 401 (ver el README de
+catastro-ui).
+
+**La red de GeoServer.** `compose.geoserver.yml` pone a GeoServer solo en la red interna `catastro-geoserver`
+(`internal: true`: sin puerto en el host y sin salida). En un despliegue, a esa red se unen solo catastro-core (que
+publica las capas por REST) y el nginx de catastro-ui; nada más (Metabase, srtm-backend, otro proxy) llega a GeoServer.
+El perfil `geoserver-local` publica `127.0.0.1:8085` para un backend que corre en la máquina (`./gradlew bootRun`): es
+**inseguro fuera de una máquina de desarrollo**, porque quien llegue a ese puerto lee las capas de todas las
+organizaciones (docs/develop/README.md, 3.1). Sin `WASICHAI_GEOSERVER_PASSWORD` compose no arranca: GeoServer usaría su
+clave pública por defecto (`admin`/`geoserver`), y con ella el REST y la administración.
+
+**Endurecer GeoServer.** Además del proxy, en la administración web de GeoServer (`/geoserver/web`, alcanzable solo por
+la red interna o por un túnel al contenedor), una vez, después de levantarlo:
+
+1. **La clave del administrador.** *Seguridad → Usuarios, grupos, roles → Usuarios/Grupos* (*Security → Users, Groups, Roles*): `admin` con la clave de
+   `WASICHAI_GEOSERVER_PASSWORD` (el contenedor la crea así la primera vez; si el volumen es de antes, cámbiala aquí).
+   *Seguridad → Contraseñas* (*Passwords*): cambia la contraseña maestra, que por defecto es la de `admin` de fábrica. La clave es
+   la misma que usa catastro-core y no se versiona.
+2. **Apagar lo que nadie usa.** *Servicios → WFS*, *Servicios → WCS* y, si está instalado, *Servicios → WPS*: desmarca
+   «Habilitar» (*Enable*) en cada uno y guarda. *Caché de teselas → Valores por defecto* (*Tile Caching → Caching Defaults*): desmarca los servicios WMTS, TMS y
+   WMS-C. Si un workspace tiene servicios propios (*Espacios de trabajo → catastro → Servicios*), apágalos también ahí.
+   Si hace falta el WFS para `vistas_de_mapa.py`, déjalo encendido pero restringido: *Seguridad → Servicios*, una
+   regla `wfs.*` con el rol `ADMIN`, y el script con las credenciales del administrador.
+3. **Límites del WMS.** *Servicios → WMS → Límites de consumo de recursos* (*Resource consumption limits*): memoria máxima de render (por ejemplo
+   65536 KB), tiempo máximo de render (por ejemplo 30 s) y errores máximos de render (por ejemplo 1000).
+
+**Después de cada despliegue**, [docs/deploy/smoke-wms.sh](docs/deploy/smoke-wms.sh) revisa el WMS desde el origen
+público. Comprueba que un `GetMap` de una capa propia da 200 `image/png`, y que dan error:
+
+- sin token, 401;
+- una capa de otra organización (sola o en la lista), o la capa con el token de la otra organización, 403;
+- `GetCapabilities` y `POST`, 403;
+- `/geoserver/rest`, `/geoserver/web` y `/geoserver/wfs`, 404.
+
+Los tokens van solo por el entorno y nunca se imprimen:
+
+```sh
+read -rs WMS_TOKEN_PROPIO; read -rs WMS_TOKEN_AJENO; export WMS_TOKEN_PROPIO WMS_TOKEN_AJENO
+docs/deploy/smoke-wms.sh https://<origen de catastro-ui> catastro:tramo_via__<prefijo>__geom catastro:tramo_via__<otro>__geom
+```
 
 Sin puerto de GeoServer en el host, `vistas_de_mapa.py` no llega al WFS para revisar las columnas de una capa: avisa,
 y `--recrear-capas` la rehace sin mirarlo (ver «Vistas de mapa»).

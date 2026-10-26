@@ -13,9 +13,11 @@ data class CapaPedida(
 )
 
 // what nginx asks about (X-Original-URI, the browser's request uri as it came), read from the uri alone, before anyone
-// looks at the caller. it lets through only a GetMap, GetFeatureInfo or GetLegendGraphic of WMS, on the paths the
-// proxy protects, naming at least one layer of `workspace`, with no parameter that could reach another layer (an SLD,
-// a CQL filter) or that it does not know. everything else is Rechazado, never passed on: fail closed
+// looks at the caller. it lets through only what catastro-ui's maps ask: a raster GetMap of WMS on
+// /geoserver/<workspace>/wms, of at most MAX_CAPAS layers of `workspace`, at most MAX_LADO pixels a side, in an image
+// format. no GetFeatureInfo, GetLegendGraphic or vector/text format (KML, UTFGrid, GeoRSS, SVG, PDF...), which hand
+// out the attributes of every row; no parameter that could reach another layer (an SLD, a CQL filter) or that it does
+// not know. everything else is Rechazado, never passed on: fail closed
 sealed interface PedidoWms {
     data class Capas(
         val capas: List<CapaPedida>
@@ -26,6 +28,9 @@ sealed interface PedidoWms {
     ) : PedidoWms
 
     companion object {
+        const val MAX_CAPAS = 10
+        const val MAX_LADO = 2048
+
         fun leer(
             uri: String?,
             workspace: String
@@ -33,9 +38,7 @@ sealed interface PedidoWms {
             if (uri.isNullOrBlank()) return Rechazado("sin X-Original-URI")
             val corte = uri.indexOf('?')
             val ruta = decodificar(if (corte < 0) uri else uri.substring(0, corte), ruta = true) ?: return Rechazado("ruta ilegible")
-            val servicio = RUTA.matchEntire(ruta) ?: return Rechazado("ruta que no es de WMS: $ruta")
-            val enLaRuta = servicio.groupValues[1].ifEmpty { null }
-            if (enLaRuta != null && enLaRuta != workspace) return Rechazado("workspace $enLaRuta")
+            if (ruta != "/geoserver/$workspace/wms") return Rechazado("ruta que no es el WMS del workspace: $ruta")
 
             val params = mutableMapOf<String, MutableList<String>>()
             for (par in (if (corte < 0) "" else uri.substring(corte + 1)).split('&')) {
@@ -46,23 +49,40 @@ sealed interface PedidoWms {
                 params.getOrPut(nombre.lowercase()) { mutableListOf() } += valor
             }
             params.keys.firstOrNull { it !in PERMITIDOS }?.let { return Rechazado("parámetro $it") }
-            params["service"]?.firstOrNull { !it.equals("WMS", ignoreCase = true) }?.let { return Rechazado("servicio $it") }
-            val pedido = params["request"].orEmpty().map { it.lowercase() }.toSet()
-            if (pedido.size != 1 || pedido.single() !in PEDIDOS) return Rechazado("request ${params["request"]}")
+
+            // exactly one value, the same however many times it comes
+            fun unico(clave: String): String? =
+                params[clave]
+                    .orEmpty()
+                    .map { it.trim().lowercase() }
+                    .toSet()
+                    .singleOrNull()
+
+            if (unico("service") != "wms") return Rechazado("service ${params["service"]}")
+            if (unico("request") !in PEDIDOS) return Rechazado("request ${params["request"]}")
+            if (unico("format") !in FORMATOS) return Rechazado("format ${params["format"]}")
+            for (lado in listOf("width", "height")) {
+                if (unico(lado)?.toIntOrNull() !in 1..MAX_LADO) return Rechazado("$lado ${params[lado]}")
+            }
+            // only the rendering's: dpi and antialias, `clave:valor` separated by ';'
+            for (opcion in params["format_options"].orEmpty().flatMap { it.split(';') }.filter { it.isNotBlank() }) {
+                if (opcion.substringBefore(':').trim().lowercase() !in OPCIONES) return Rechazado("format_options $opcion")
+            }
 
             // every name of a layer in the request, qualified or not, without its workspace
             fun nombres(claves: Set<String>): List<String>? =
                 claves.flatMap { params[it].orEmpty() }.flatMap { it.split(',') }.map { it.trim() }.filter { it.isNotEmpty() }.map { nombre ->
                     val partes = nombre.split(':')
                     when {
-                        partes.size == 1 && enLaRuta != null -> nombre
+                        partes.size == 1 -> nombre
                         partes.size == 2 && partes[0] == workspace -> partes[1]
                         else -> return null
                     }
                 }
 
-            val nombresDeCapas = nombres(CAPAS) ?: return Rechazado("capa de otro workspace, o sin workspace")
+            val nombresDeCapas = nombres(CAPAS) ?: return Rechazado("capa de otro workspace")
             if (nombresDeCapas.isEmpty()) return Rechazado("sin capas")
+            if (nombresDeCapas.distinct().size > MAX_CAPAS) return Rechazado("más de $MAX_CAPAS capas")
             val capas = nombresDeCapas.distinct().map { capa(it) ?: return Rechazado("capa $it") }
             // a layer's style is named after it (wasichai-gis): one of its layers', or none (the default)
             val estilos = nombres(ESTILOS) ?: return Rechazado("estilo de otro workspace")
@@ -84,12 +104,12 @@ sealed interface PedidoWms {
                 null
             }
 
-        // the locations of the proxy: GeoServer's WMS, of a workspace or global, its OWS endpoint and the tile cache's
-        private val RUTA = Regex("/geoserver/(?:([A-Za-z0-9_-]+)/)?(?:wms|ows|gwc/service/wms)")
         private val CAPA = Regex("([a-z][a-z0-9_]*?)__([0-9a-f]{8})(?:__([a-z][a-z0-9_]*))?")
-        private val PEDIDOS = setOf("getmap", "getfeatureinfo", "getlegendgraphic")
-        private val CAPAS = setOf("layers", "query_layers", "layer", "typename", "typenames")
-        private val ESTILOS = setOf("styles", "style")
+        private val PEDIDOS = setOf("getmap")
+        private val FORMATOS = setOf("image/png", "image/png8", "image/jpeg", "image/webp")
+        private val OPCIONES = setOf("dpi", "antialias")
+        private val CAPAS = setOf("layers", "typename", "typenames")
+        private val ESTILOS = setOf("styles")
         private val PERMITIDOS =
             CAPAS + ESTILOS +
                 setOf(
@@ -99,7 +119,6 @@ sealed interface PedidoWms {
                     "format",
                     "transparent",
                     "bgcolor",
-                    "exceptions",
                     "width",
                     "height",
                     "srs",
@@ -107,16 +126,7 @@ sealed interface PedidoWms {
                     "bbox",
                     "tiled",
                     "tilesorigin",
-                    "format_options",
-                    "info_format",
-                    "feature_count",
-                    "x",
-                    "y",
-                    "i",
-                    "j",
-                    "legend_options",
-                    "scale",
-                    "sld_version"
+                    "format_options"
                 )
     }
 }

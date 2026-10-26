@@ -9,8 +9,13 @@ import org.springframework.web.bind.annotation.RestController
 import wasichai.core.common.Actions
 import wasichai.core.common.ForbiddenException
 import wasichai.core.common.NotFoundException
+import wasichai.core.data.RecordReadMasks
+import wasichai.core.data.RecordReadScopes
+import wasichai.core.identity.AccessPolicy
+import wasichai.core.identity.AuthenticatedUser
 import wasichai.core.identity.CurrentUser
 import wasichai.core.metadata.MetadataService
+import wasichai.core.metadata.ObjectDefinition
 import wasichai.gis.GeoServerProperties
 import wasichai.gis.geometryFields
 
@@ -34,12 +39,19 @@ class AutorizacionWmsController(
 
 // a WMS request passes when the caller is signed in, and every layer it names (PedidoWms) is a geometry of an object
 // of the caller's organization (its prefix is the first 8 hex digits of the organizationId, and the object's physical
-// table is that one) on which the caller has READ. GeoServer has no notion of either: it serves whatever it is asked
+// table is that one) on which the caller has READ. GeoServer has no notion of either: it serves whatever it is asked.
+// a tile draws every row of the layer and colours it by an attribute, so it cannot honour a rule that hides rows or
+// fields: a caller under any of them is refused (403), fail closed, rather than shown what the API would not show.
+// those are an owner filter (ownRecordsOnly), an app's read scope (ADR-048), a field it cannot read, or a read mask
+// (ADR-065). such a caller reads the lotes and tramos as GeoJSON from the API, which applies them
 @Service
 class AutorizacionWms(
     private val currentUser: CurrentUser,
     private val metadata: MetadataService,
-    private val geoserver: GeoServerProperties
+    private val geoserver: GeoServerProperties,
+    private val access: AccessPolicy,
+    private val readScopes: RecordReadScopes,
+    private val masks: RecordReadMasks
 ) {
     suspend fun autorizar(uri: String?) {
         val usuario = currentUser.require()
@@ -70,6 +82,20 @@ class AutorizacionWms(
             if (!currentUser.hasPermission(usuario, Actions.READ, definicion.obj.id)) {
                 throw ForbiddenException("Missing permission ${Actions.READ} on ${capa.objeto}")
             }
+            restriccion(usuario, definicion)?.let { throw ForbiddenException("La capa $nombre no se sirve por WMS a este usuario: $it") }
         }
+    }
+
+    // what keeps the caller from reading every row and field of the object, or null when nothing does
+    private suspend fun restriccion(
+        usuario: AuthenticatedUser,
+        definicion: ObjectDefinition
+    ): String? {
+        if (access.ownerFilter(usuario) != null) return "solo lee sus propios registros"
+        if (readScopes.criteria(usuario, definicion).isNotEmpty()) return "tiene un alcance de lectura"
+        val campos = access.fieldAccess(usuario, definicion.obj.id)
+        definicion.fields.firstOrNull { !campos.canRead(it.id) }?.let { return "no lee el campo ${it.name}" }
+        if (masks.appliesTo(usuario, definicion)) return "una máscara de lectura reescribe sus registros"
+        return null
     }
 }
