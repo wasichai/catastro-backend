@@ -60,4 +60,45 @@ class ModeloBrechaTest : CatastroApiTest() {
             )
         assertEquals(HttpStatus.FORBIDDEN, estado, respuesta)
     }
+
+    // the niveles of a ficha (catastro-backend#72): listed by the corte, the ficha an id the loader compares as text, a
+    // piso and the areas answered as the numbers it sent, and the nivel deleted before its ficha on --reemplazar
+    @Test
+    fun `los niveles de una ficha como los carga el cargador`() {
+        val marca = uniqueName("bn")
+        val corte = registro("corte_brecha", mapOf("clave" to "$marca|2026-10-27", "org_slug" to marca, "fecha" to "2026-10-27", "anio" to 2026))
+        val ficha = registro("brecha_ficha", mapOf("clave" to "$corte|1-2-3", "corte" to corte, "categoria" to "SUBVALUADO"))
+        val nivel =
+            registro(
+                "brecha_nivel_ficha",
+                mapOf(
+                    "clave" to "$corte|1-2-3|2",
+                    "ficha" to ficha,
+                    "corte" to corte,
+                    "piso" to 2,
+                    "area_catastro" to "80.5",
+                    "estado" to "SOLO_CATASTRO"
+                )
+            )
+
+        val niveles = arbol(send("GET", "/api/objects/brecha_nivel_ficha/records?corte=$corte&size=200", null, HttpStatus.OK, admin))["content"].lista()
+        assertEquals(listOf(nivel), niveles.map { it["id"].asString() })
+        val atributos = niveles[0]["attributes"]
+        assertEquals(ficha, atributos["ficha"].asString())
+        assertEquals(2, atributos["piso"].asInt())
+        assertEquals(0, BigDecimal("80.5").compareTo(atributos["area_catastro"].decimalValue()))
+        assertEquals("SOLO_CATASTRO", atributos["estado"].asString())
+
+        val (status, cuerpo) =
+            exchange(
+                "POST",
+                "/api/objects/brecha_nivel_ficha/records",
+                mapOf("attributes" to mapOf("clave" to "$corte|1-2-3|2", "ficha" to ficha, "corte" to corte, "estado" to "PAR")),
+                admin
+            )
+        assertEquals(HttpStatus.CONFLICT, status, cuerpo)
+
+        send("DELETE", "/api/objects/brecha_nivel_ficha/records/$nivel", null, HttpStatus.NO_CONTENT, admin)
+        send("DELETE", "/api/objects/brecha_ficha/records/$ficha", null, HttpStatus.NO_CONTENT, admin)
+    }
 }

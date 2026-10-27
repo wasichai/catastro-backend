@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
-"""Loads a corte analítico of srtm's brecha (srtm-backend docs/informes/brecha) into corte_brecha and brecha_ficha.
+"""Loads a corte analítico of srtm's brecha (srtm-backend docs/informes/brecha) into corte_brecha, brecha_ficha and
+brecha_nivel_ficha.
 
 A corte is a folder <org>/<fecha>/ with manifiesto.json and one Parquet per table; --corte names the folder, --s3 its
 S3 prefix (s3://…/analitica/<org>/<fecha>, copied with `aws s3 cp --recursive` into a temporary folder that is removed
@@ -9,7 +10,9 @@ missing or different, or a manifest without srtm_brecha_corrida.parquet and srtm
 It reads, with duckdb (requirements-corte.txt, the same pin as the corte's own venv), the corte's brecha_corrida
 (the manifest's brecha_corrida.id) and its srtm_brecha_predio rows, and the UIT of the year from srtm_parametro
 (tipo UIT, VIGENTE or blank, in force on 1 January of the corrida's year); a corte without it takes --uit, and with
-neither supera_5_uit stays empty. Each row is matched to its ficha (predio_catastral) by Brecha.llave() of srtm:
+neither supera_5_uit stays empty. When the manifest lists srtm_brecha_nivel.parquet (srtm-backend#257), its rows of the
+corrida become brecha_nivel_ficha, each on the ficha of its brecha_predio; a corte without it (an older srtm) loads
+as before, and an empty one loads no nivel. Each row is matched to its ficha (predio_catastral) by Brecha.llave() of srtm:
 trimmed, upper case, and every run of digits without its leading zeros, so 01-01-0006 is 1-1-6. codigo_catastro is
 srtm's code of the catastro item (its código municipal, else its CPU, else sector-manzana-lote), so it is looked up
 first among the fichas' codigo_municipal, then among their codigo_cpu, then their sector|manzana|lote; a key two
@@ -25,10 +28,11 @@ construcciones, obras and titulares.
 
 Idempotent upsert by clave: corte_brecha by <org>|<fecha>, brecha_ficha by <id of the corte>|<codigo_catastro>
 (<id of the corte>|id:<srtm's row id> when the row has no codigo_catastro, or shares it with another row of the
-corte). A row Core lacks is created, one that differs is updated (PATCH, a None clears), and an equal corte writes
+corte), brecha_nivel_ficha by <clave of its ficha>|<piso> (<clave of its ficha>|id:<srtm's row id> without piso, or
+with a piso the ficha repeats). A row Core lacks is created, one that differs is updated (PATCH, a None clears), and an equal corte writes
 nothing, not even cargado_en. cargado_en is written last, after every ficha: the API shows only cortes that have it,
-so a corte is never seen half loaded (a reload clears it first). Fichas of the stored corte the corte no longer has
-stop the load (exit 2, nothing written) unless --reemplazar, which deletes them. Every write carries X-Change-Reason corte-brecha:<org>:<fecha>. Only counts are printed: no
+so a corte is never seen half loaded (a reload clears it first). Fichas or niveles of the stored corte the corte no
+longer has stop the load (exit 2, nothing written) unless --reemplazar, which deletes them (the niveles first). Every write carries X-Change-Reason corte-brecha:<org>:<fecha>. Only counts are printed: no
 code, no amount of a predio. --org refuses to write unless the account of --email belongs to that organization (its
 id, as import_vias.py). --dry-run reads Core and says what it would write, writing nothing.
 
@@ -62,6 +66,7 @@ from core_client import Client, CoreError  # noqa: E402
 from tabular import LoadError, clean_text, load_enums, write_all  # noqa: E402
 
 CORTE, FICHA, PREDIO, DECISION = "corte_brecha", "brecha_ficha", "predio_catastral", "decision_brecha"
+NIVEL = "brecha_nivel_ficha"
 # the ficha's copy of its predio's lote (POLYGON, the srid of predio_catastral.lote_geom)
 LOTE = "lote_geom"
 PENDIENTE = "PENDIENTE"
@@ -70,8 +75,8 @@ TOLERANCIA = 1e-6
 MANIFIESTO = "manifiesto.json"
 # the manifest format srtm writes (herramientas/manifiesto.py FORMATO)
 FORMATO = 1
-CORRIDA_PARQUET, PREDIO_PARQUET, PARAMETRO_PARQUET = (
-    "srtm_brecha_corrida.parquet", "srtm_brecha_predio.parquet", "srtm_parametro.parquet")
+CORRIDA_PARQUET, PREDIO_PARQUET, PARAMETRO_PARQUET, NIVEL_PARQUET = (
+    "srtm_brecha_corrida.parquet", "srtm_brecha_predio.parquet", "srtm_parametro.parquet", "srtm_brecha_nivel.parquet")
 MODEL_PATH = os.path.join(HERE, "model.json")
 # the S3 CLI; a test points it at a fake
 AWS = "aws"
@@ -87,6 +92,8 @@ TEXTOS_FICHA = ("codigo_predio", "confianza_motivo", "sector", "manzana", "lote"
 COLUMNAS_CORRIDA = ("id", "anio", "version_catastro", "declarado", "catastro", "delta_impuesto", "delta_arbitrios",
                     "delta_impuesto_confiable", "delta_impuesto_dudoso", "delta_impuesto_sin_levantar")
 COLUMNAS_PREDIO = ("id", "codigo_catastro", "categoria", "confianza", "estimado", "orden") + DECIMALES_FICHA + TEXTOS_FICHA
+DECIMALES_NIVEL = ("area_rentas", "area_catastro")
+COLUMNAS_NIVEL = ("id", "brecha_predio", "piso", "estado") + DECIMALES_NIVEL
 # the corrida's totals copied as they are; the three by confianza are summed from the rows when the corte predates
 # srtm-backend#204 and leaves them empty
 TOTALES = ("declarado", "catastro", "delta_impuesto", "delta_arbitrios")
@@ -184,7 +191,8 @@ def _vigente(parametro, primero_enero):
 
 
 def leer(carpeta, manifiesto):
-    """(corrida, rows, uit or None) of the corte: the manifest's brecha_corrida and its rows of srtm_brecha_predio."""
+    """(corrida, rows, uit or None, niveles) of the corte: the manifest's brecha_corrida, its rows of
+    srtm_brecha_predio and of srtm_brecha_nivel (none when the manifest does not list it)."""
     elegida = manifiesto.get("brecha_corrida")
     if not isinstance(elegida, dict) or not elegida.get("id"):
         raise CorteError("el corte no trae brecha_corrida: srtm no tenía una corrida TERMINADA ese año")
@@ -214,11 +222,16 @@ def leer(carpeta, manifiesto):
                     if _vigente(p, primero_enero)]
             if uits:
                 uit = Decimal(max(uits, key=lambda p: p.get("vigencia_desde") or date.min)["valor_numerico"])
+        niveles = []
+        if any(e["archivo"] == NIVEL_PARQUET for e in manifiesto["archivos"]):
+            niveles = _filas(con, os.path.join(carpeta, NIVEL_PARQUET),
+                             f"SELECT {', '.join(COLUMNAS_NIVEL)} FROM {{tabla}} WHERE corrida = ?"
+                             " ORDER BY brecha_predio, piso, id", [elegida["id"]])
     except duckdb.Error as e:
         raise CorteError(f"no se pudo leer el corte con duckdb: {e}") from None
     finally:
         con.close()
-    return corridas[0], filas, uit
+    return corridas[0], filas, uit, niveles
 
 
 def descargar(uri, destino):
@@ -382,6 +395,31 @@ def fichas(filas, corte_id, capas, uit, enums, estados=None):
     return resultado, problemas
 
 
+def niveles_de(filas_nivel, filas, nuevas, enums):
+    """(ficha clave, the brecha_nivel_ficha attributes) of every nivel, and the problems that keep them out (an unknown
+    estado, a brecha_predio that is no row of the corte). `nuevas` are the fichas of `filas`, in their order."""
+    clave_de_fila = {str(f.get("id")): a["clave"] for f, a in zip(filas, nuevas)}
+    pisos = Counter((str(n.get("brecha_predio")), n.get("piso")) for n in filas_nivel)
+    resultado, problemas = [], []
+    for n, nivel in enumerate(filas_nivel, start=1):
+        predio, piso, estado = str(nivel.get("brecha_predio")), nivel.get("piso"), clean_text(nivel.get("estado"))
+        ficha = clave_de_fila.get(predio)
+        if ficha is None:
+            problemas.append(f"nivel {n}: su brecha_predio no es una fila del corte")
+            continue
+        if estado not in enums["estado_nivel"]:
+            problemas.append(f"nivel {n}: estado '{estado}' no es de estado_nivel")
+            continue
+        sufijo = str(piso) if piso is not None and pisos[(predio, piso)] == 1 else f"id:{nivel.get('id')}"
+        resultado.append((ficha, {
+            "clave": f"{ficha}|{sufijo}",
+            "piso": None if piso is None else int(piso),
+            "estado": estado,
+            **{c: _texto_decimal(_decimal(nivel.get(c))) for c in DECIMALES_NIVEL},
+        }))
+    return resultado, problemas
+
+
 def _suma(valores):
     return sum((v for v in valores if v is not None), Decimal(0))
 
@@ -416,7 +454,8 @@ def atributos_del_corte(manifiesto, sha, corrida, filas):
 
 
 # the fields compared as numbers: Core answers a DECIMAL as a JSON number, never as the text that was sent
-NUMERICOS = frozenset(DECIMALES_FICHA + TOTALES + tuple(POR_CONFIANZA) + ("omisos_estimado", "anio", "total_fichas"))
+NUMERICOS = frozenset(DECIMALES_FICHA + DECIMALES_NIVEL + TOTALES + tuple(POR_CONFIANZA)
+                      + ("omisos_estimado", "anio", "total_fichas", "piso"))
 
 
 def _igual(campo, nuevo, guardado):
@@ -487,7 +526,7 @@ def _ahora():
     return datetime.now(timezone.utc).isoformat(timespec="seconds").replace("+00:00", "Z")
 
 
-def _report(fichas_, uit, ambiguas):
+def _report(fichas_, uit, ambiguas, niveles):
     por_categoria = Counter(f["categoria"] for f in fichas_)
     con_codigo = [f for f in fichas_ if f["codigo_catastro"]]
     empatadas = sum(1 for f in con_codigo if f["codigo_municipal"])
@@ -497,11 +536,13 @@ def _report(fichas_, uit, ambiguas):
     print(f"sin ficha: {len(con_codigo) - empatadas} con codigo_catastro, {len(fichas_) - len(con_codigo)} sin codigo")
     print(f"llaves de fichas repetidas (no empatan): {ambiguas}")
     print(f"supera 5 UIT: {sum(1 for f in fichas_ if f['supera_5_uit'])}" + ("" if uit is not None else " (sin UIT)"))
+    por_estado = Counter(a["estado"] for _, a in niveles)
+    print(f"niveles: {len(niveles)}" + "".join(f", {k} {por_estado[k]}" for k in sorted(por_estado)))
 
 
 def cargar(args, carpeta):
     manifiesto, sha = verificar(carpeta)
-    corrida, filas, uit = leer(carpeta, manifiesto)
+    corrida, filas, uit, filas_nivel = leer(carpeta, manifiesto)
     if uit is None and args.uit is not None:
         uit = _decimal(args.uit)
         if uit is None or uit <= 0:
@@ -523,12 +564,21 @@ def cargar(args, carpeta):
     corte_id = guardado["id"] if guardado else "<corte nuevo>"
     estados = estados_de(client.list_all(DECISION, anio=corte["anio"]))
     nuevas, problemas = fichas(filas, corte_id, capas, uit, enums, estados)
+    niveles, problemas_nivel = niveles_de(filas_nivel, filas, nuevas, enums) if not problemas else ([], [])
+    problemas += problemas_nivel
     if problemas:
         for problema in problemas:
             print(f"problem: {problema}", file=sys.stderr)
         raise CorteError(f"{len(problemas)} filas no caben en el modelo: nothing was sent to Core")
-    _report(nuevas, uit, ambiguas)
+    _report(nuevas, uit, ambiguas, niveles)
     existentes = client.list_all(FICHA, corte=guardado["id"]) if guardado else []
+    # a nivel's ficha is a relation: the id of a stored ficha, or the ficha this load creates (resolved after it)
+    id_de_ficha = {(r.get("attributes") or {}).get("clave"): r["id"] for r in existentes}
+    for ficha, atributos in niveles:
+        atributos["ficha"] = id_de_ficha.get(ficha, f"<ficha nueva>{ficha}")
+        atributos["corte"] = corte_id
+    niveles_guardados = client.list_all(NIVEL, corte=guardado["id"]) if guardado else []
+    plan_niveles = plan_fichas([a for _, a in niveles], niveles_guardados, args.reemplazar)
     # the lotes go only on the most recent corte: the map view and the WMS layer draw one corte
     reciente = es_el_mas_reciente(corte, cortes)
     todos_los_lotes, repetidos = lotes_de(predios)
@@ -547,24 +597,33 @@ def cargar(args, carpeta):
     cambio_corte = cambios(corte, guardado.get("attributes") or {}) if guardado else corte
     # a corte without cargado_en is one a load left half done: it is finished even if nothing else changed
     a_medias = guardado is not None and not (guardado.get("attributes") or {}).get("cargado_en")
-    escribe = bool(cambio_corte or todo["create"] or todo["update"] or todo["delete"] or a_medias)
+    escribe = bool(cambio_corte or todo["create"] or todo["update"] or todo["delete"] or a_medias
+                   or plan_niveles["create"] or plan_niveles["update"] or plan_niveles["delete"])
     accion = "create" if guardado is None else ("update" if escribe else "unchanged")
     resumen = (f"corte {corte['clave']}: {accion}; fichas: {len(todo['create'])} {{create}}, {len(todo['update'])}"
                f" {{update}}, {len(todo['delete'])} {{delete}}, {todo['unchanged']} unchanged, "
                + (f"{len(todo['absent'])} absent from the corte deleted" if args.reemplazar
                   else f"{len(todo['absent'])} absent from the corte kept (--reemplazar deletes them)"))
-    if todo["absent"] and not args.reemplazar:
+    resumen_niveles = (f"niveles: {len(plan_niveles['create'])} {{create}}, {len(plan_niveles['update'])} {{update}},"
+                       f" {len(plan_niveles['delete'])} {{delete}}, {plan_niveles['unchanged']} unchanged, "
+                       + (f"{len(plan_niveles['absent'])} absent from the corte deleted" if args.reemplazar
+                          else f"{len(plan_niveles['absent'])} absent from the corte kept"))
+    if (todo["absent"] or plan_niveles["absent"]) and not args.reemplazar:
         # the same org|fecha is the same corte: fichas it no longer has would stay in the panel and its total would
         # not add up, so nothing is written until --reemplazar says to delete them
         print(resumen.format(create="to create", update="to update", delete="to delete"))
-        raise CorteError(f"{len(todo['absent'])} fichas del corte guardado ya no vienen en el corte: --reemplazar las"
-                         " borra; nothing was written")
+        print(resumen_niveles.format(create="to create", update="to update", delete="to delete"))
+        ausentes = [f"{len(todo['absent'])} fichas"] * bool(todo["absent"]) + [
+            f"{len(plan_niveles['absent'])} niveles"] * bool(plan_niveles["absent"])
+        raise CorteError(f"{' y '.join(ausentes)} del corte guardado ya no vienen en el corte: --reemplazar los borra;"
+                         " nothing was written")
     lotes_resumen = (f"lotes: {sum(1 for g in con_lote if g)} fichas del corte con lote"
                      + ("" if reciente else " (hay un corte más reciente: este no lleva lotes)")
                      + (f", {repetidos} códigos de dos o más predios sin lote" if repetidos else "")
                      + f"; {len(anteriores)} fichas de cortes anteriores con lote {{clear}}")
     if args.dry_run:
         print(resumen.format(create="to create", update="to update", delete="to delete"))
+        print(resumen_niveles.format(create="to create", update="to update", delete="to delete"))
         print(lotes_resumen.format(clear="to clear"))
         return
     if escribe:
@@ -578,13 +637,27 @@ def cargar(args, carpeta):
         else:
             write_all(client, [("corte", 0, "PATCH", CORTE, corte_id, {**cambio_corte, "cargado_en": None})], 1, razon)
         ops = ([(n, n, "POST", FICHA, None, a, g) for n, a, g in todo["create"]]
-               + [(n, n, "PATCH", FICHA, i, a, g) for i, n, a, g in todo["update"]]
-               + [(f"d{r['id']}", 0, "DELETE", FICHA, r["id"], None) for r in todo["delete"]])
-        write_all(client, ops, args.workers, razon)
+               + [(n, n, "PATCH", FICHA, i, a, g) for i, n, a, g in todo["update"]])
+        creadas = write_all(client, ops, args.workers, razon)
+        # a ficha's niveles go before it: a nivel cannot outlive its ficha
+        write_all(client, [(f"d{r['id']}", 0, "DELETE", NIVEL, r["id"], None) for r in plan_niveles["delete"]],
+                  args.workers, razon)
+        write_all(client, [(f"d{r['id']}", 0, "DELETE", FICHA, r["id"], None) for r in todo["delete"]],
+                  args.workers, razon)
+        id_de_ficha.update({nuevas[n - 1]["clave"]: i for n, i in creadas.items()})
+        for _, atributos in niveles:
+            atributos["corte"] = corte_id
+            atributos["clave"] = atributos["clave"].replace("<corte nuevo>", corte_id, 1)
+            if str(atributos["ficha"]).startswith("<ficha nueva>"):
+                atributos["ficha"] = id_de_ficha[atributos["ficha"][len("<ficha nueva>"):].replace("<corte nuevo>",
+                                                                                                    corte_id, 1)]
+        write_all(client, [(n, n, "POST", NIVEL, None, a) for n, a, _ in plan_niveles["create"]]
+                  + [(n, n, "PATCH", NIVEL, i, a) for i, n, a, _ in plan_niveles["update"]], args.workers, razon)
         write_all(client, [("corte", 0, "PATCH", CORTE, corte_id, {"cargado_en": _ahora()})], 1, razon)
     # after the corte shows: the map is never left without a corte
     write_all(client, [(r["id"], 0, "PATCH", FICHA, r["id"], {}, {LOTE: None}) for r in anteriores], args.workers, razon)
     print("done: " + resumen.format(create="created", update="updated", delete="deleted"))
+    print(resumen_niveles.format(create="created", update="updated", delete="deleted"))
     print(lotes_resumen.format(clear="cleared"))
     print(RECORDATORIO)
 
