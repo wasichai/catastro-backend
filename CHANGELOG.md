@@ -1,5 +1,14 @@
 # Changelog
 
+## [1.1.0](https://github.com/wasichai/catastro-backend/compare/v1.0.0...v1.1.0) (2026-10-26)
+
+
+### Features
+
+* **api:** las valuaciones traen las construcciones (piso, sección y área) ([#71](https://github.com/wasichai/catastro-backend/issues/71)) ([4be92a1](https://github.com/wasichai/catastro-backend/commit/4be92a121e02cd37b1dc85d7a87cd90076f23ccb))
+* **gis:** el WMS de GeoServer pide un usuario y solo sirve las capas de su organización ([#68](https://github.com/wasichai/catastro-backend/issues/68)) ([46403ac](https://github.com/wasichai/catastro-backend/commit/46403ac9f6475fcba30ed69c66d7e5567c785007))
+* **vias:** alias revisados de nombres de vía (--alias, --proponer-alias) ([#65](https://github.com/wasichai/catastro-backend/issues/65)) ([9d1b92b](https://github.com/wasichai/catastro-backend/commit/9d1b92b310a9c0298fc2ce32bfac9b7c68128e44))
+
 ## [1.0.0](https://github.com/wasichai/catastro-backend/compare/v0.1.0...v1.0.0) (2026-10-25)
 
 
