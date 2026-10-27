@@ -18,7 +18,8 @@
     "asignacion_tramo": ["NOMBRE_UNICO", "CERCANIA", "LOTES", "SIN_ARANCEL"],
     "categoria_brecha": ["OMISO", "SIN_CATASTRO", "SIN_VALOR", "SUBVALUADO", "SOBREVALUADO", "COINCIDE", "SIN_LEVANTAR"],
     "confianza_brecha": ["CONFIABLE", "DUDOSO", "SIN_LEVANTAR"],
-    "estado_decision": ["PENDIENTE", "A_INSPECCIONAR", "INSPECCIONADO", "A_FISCALIZAR", "DESCARTADO"]
+    "estado_decision": ["PENDIENTE", "A_INSPECCIONAR", "INSPECCIONADO", "A_FISCALIZAR", "DESCARTADO"],
+    "estado_nivel": ["PAR", "SOLO_RENTAS", "SOLO_CATASTRO", "AMBIGUO"]
   },
   "objects": [
     {
@@ -842,6 +843,49 @@
       ]
     },
     {
+      "name": "brecha_nivel_ficha",
+      "label": "Nivel de brecha",
+      "pluralLabel": "Niveles de brecha",
+      "description": "Una fila de srtm_brecha_nivel de un corte (srtm-backend#257): las áreas de un piso de una ficha de brecha, la declarada y la catastral, y cómo empataron. Sin datos personales.",
+      "indexes": [
+        ["corte"],
+        ["ficha"]
+      ],
+      "fields": [
+        {
+          "name": "clave",
+          "label": "Clave",
+          "type": "TEXT",
+          "required": true,
+          "unique": true,
+          "description": "<clave de la ficha>|<piso>; sin piso, <clave de la ficha>|id:<id de la fila en srtm>."
+        },
+        {
+          "name": "piso",
+          "label": "Piso",
+          "type": "INTEGER"
+        },
+        {
+          "name": "area_rentas",
+          "label": "Área declarada (m²)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "area_catastro",
+          "label": "Área catastral (m²)",
+          "type": "DECIMAL"
+        },
+        {
+          "name": "estado",
+          "label": "Estado",
+          "type": "ENUM",
+          "enum": "estado_nivel",
+          "required": true,
+          "description": "PAR: el piso está en rentas y en catastro; SOLO_RENTAS o SOLO_CATASTRO: solo en uno; AMBIGUO: srtm no pudo emparejarlo."
+        }
+      ]
+    },
+    {
       "name": "decision_brecha",
       "label": "Decisión de brecha",
       "pluralLabel": "Decisiones de brecha",
@@ -953,6 +997,24 @@
       "label": "Corte",
       "inverseLabel": "Fichas",
       "source": "brecha_ficha",
+      "target": "corte_brecha",
+      "fieldName": "corte",
+      "required": true
+    },
+    {
+      "name": "brecha_nivel_ficha_ficha",
+      "label": "Ficha",
+      "inverseLabel": "Niveles",
+      "source": "brecha_nivel_ficha",
+      "target": "brecha_ficha",
+      "fieldName": "ficha",
+      "required": true
+    },
+    {
+      "name": "brecha_nivel_ficha_corte",
+      "label": "Corte",
+      "inverseLabel": "Niveles",
+      "source": "brecha_nivel_ficha",
       "target": "corte_brecha",
       "fieldName": "corte",
       "required": true

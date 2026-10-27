@@ -18,7 +18,8 @@ ROLES_PATH = os.path.join(HERE, "roles.json")
 MODEL_PATH = os.path.join(HERE, "model.json")
 # lo que lee CATASTRO_LECTOR, en el orden de roles.json (decision_brecha al final)
 LEE_EL_LECTOR = ("predio_catastral", "construccion", "obra_complementaria", "arancel", "configuracion_catastro",
-                 "entrega_catastral", "tramo_via", "corte_brecha", "brecha_ficha", "decision_brecha")
+                 "entrega_catastral", "tramo_via", "corte_brecha", "brecha_ficha", "brecha_nivel_ficha",
+                 "decision_brecha")
 
 
 def load(path):
@@ -47,7 +48,7 @@ class RolesJsonTests(unittest.TestCase):
         # aranceles los manda srtm (su normativa los verifica) y los copia aquí: CREATE, UPDATE y DELETE solo sobre arancel.
         # los cortes de brecha salen de srtm: no los lee de vuelta; sí la bandeja, para saber qué pasa a fiscalizar
         escribe = {("arancel", a) for a in ("CREATE", "UPDATE", "DELETE")}
-        lee = {(o, "READ") for o in self.objetos if o not in ("corte_brecha", "brecha_ficha")}
+        lee = {(o, "READ") for o in self.objetos if o not in ("corte_brecha", "brecha_ficha", "brecha_nivel_ficha")}
         self.assertEqual(permisos(self.roles["SRTM_LECTOR"]), lee | escribe)
         self.assertIn(("decision_brecha", "READ"), lee)
 
@@ -62,7 +63,7 @@ class RolesJsonTests(unittest.TestCase):
         self.assertEqual(permisos(lector), esperado)
         self.assertIn(("tramo_via", "READ"), esperado)
         self.assertIn(("arancel", "READ"), esperado)
-        for objeto in ("corte_brecha", "brecha_ficha", "decision_brecha"):
+        for objeto in ("corte_brecha", "brecha_ficha", "brecha_nivel_ficha", "decision_brecha"):
             self.assertIn((objeto, "READ"), esperado)
 
     def test_el_analista_lee_lo_del_lector_y_decide_sobre_las_brechas(self):

@@ -39,6 +39,10 @@ COLUMNAS_CORRIDA = [
     ("catastro", DECIMAL), ("delta_impuesto", DECIMAL), ("delta_arbitrios", DECIMAL), ("origen", "VARCHAR"),
     ("predios_confiable", "BIGINT"), ("predios_dudoso", "BIGINT"), ("predios_sin_levantar", "BIGINT"),
     ("delta_impuesto_confiable", DECIMAL), ("delta_impuesto_dudoso", DECIMAL), ("delta_impuesto_sin_levantar", DECIMAL)]
+# srtm_brecha_nivel (srtm-backend#257)
+COLUMNAS_NIVEL = [
+    ("id", "VARCHAR"), ("corrida", "VARCHAR"), ("brecha_predio", "VARCHAR"), ("piso", "BIGINT"),
+    ("area_rentas", DECIMAL), ("area_catastro", DECIMAL), ("estado", "VARCHAR")]
 COLUMNAS_PARAMETRO = [
     ("id", "VARCHAR"), ("tipo", "VARCHAR"), ("clave", "VARCHAR"), ("vigencia_desde", "DATE"),
     ("vigencia_hasta", "DATE"), ("valor_numerico", DECIMAL), ("texto", "VARCHAR"), ("norma", "VARCHAR"),
@@ -69,6 +73,20 @@ UIT = [{"id": "u1", "tipo": "UIT", "clave": "", "vigencia_desde": "2026-01-01", 
         "valor_numerico": "5350", "texto": None, "norma": "DS", "estado": "VIGENTE"}]
 
 
+def nivel(n, predio, piso, area_rentas, area_catastro, estado):
+    return {"id": f"bn-{n}", "corrida": CORRIDA, "brecha_predio": f"bp-{predio}", "piso": piso,
+            "area_rentas": area_rentas, "area_catastro": area_catastro, "estado": estado}
+
+
+# PR-1 with two pisos, the second only in catastro; PR-2 with one only in rentas; PR-4 (no codigo_catastro) one AMBIGUO
+NIVELES = [
+    nivel(1, 1, 1, "120.5", "120.5", "PAR"),
+    nivel(2, 1, 2, None, "80", "SOLO_CATASTRO"),
+    nivel(3, 2, 1, "60", None, "SOLO_RENTAS"),
+    nivel(4, 4, 1, "50", "75.25", "AMBIGUO"),
+]
+
+
 def corrida(**otros):
     return {"id": CORRIDA, "anio": 2026, "estado": "TERMINADA", "version_catastro": "valuacion-v3",
             "iniciado": "2026-10-25 10:00:00+00", "terminado": "2026-10-25 10:05:00+00", "total_predios": 5,
@@ -91,7 +109,8 @@ def escribir_parquet(con, ruta, columnas, filas):
     con.execute(f"COPY t TO '{ruta}' (FORMAT parquet)")
 
 
-def armar_corte(testcase, filas=FILAS, parametros=UIT, la_corrida=None, fecha=FECHA, listar_parametro=True):
+def armar_corte(testcase, filas=FILAS, parametros=UIT, la_corrida=None, fecha=FECHA, listar_parametro=True,
+                niveles=None):
     """A corte <org>/<fecha>/ as srtm's make corte writes it: the Parquet and a manifiesto.json with their sha256."""
     raiz = tempfile.TemporaryDirectory()
     testcase.addCleanup(raiz.cleanup)
@@ -101,6 +120,8 @@ def armar_corte(testcase, filas=FILAS, parametros=UIT, la_corrida=None, fecha=FE
     tablas = {"srtm_brecha_corrida.parquet": (COLUMNAS_CORRIDA, [la_corrida or corrida()]),
               "srtm_brecha_predio.parquet": (COLUMNAS_PREDIO, filas),
               "srtm_parametro.parquet": (COLUMNAS_PARAMETRO, parametros)}
+    if niveles is not None:
+        tablas["srtm_brecha_nivel.parquet"] = (COLUMNAS_NIVEL, niveles)
     archivos = []
     for nombre, (columnas, contenido) in tablas.items():
         ruta = os.path.join(carpeta, nombre)
@@ -565,6 +586,122 @@ def lote(codigo, dx=0.0):
     """A small fictitious square in Ica (EPSG:4326), a different one per code."""
     x, y = -75.73 + int(codigo[-1]) * 0.001 + dx, -14.07
     return {"type": "Polygon", "coordinates": [[[x, y], [x + 0.0001, y], [x + 0.0001, y + 0.0001], [x, y]]]}
+
+
+
+@unittest.skipIf(duckdb is None, "duckdb no está instalado (requirements-corte.txt)")
+class NivelesTests(unittest.TestCase):
+    def setUp(self):
+        self.core = FakeCore(login_response={"token": "t", "user": {"organizationId": "org-ica"}})
+        self.addCleanup(self.core.stop)
+        for codigo, cpu in (("01-02-0003", None), ("01-02-0002", "CPU-77"), ("01-02-0005", None)):
+            self.core.add_record("predio_catastral", {"codigo_municipal": codigo, "codigo_cpu": cpu})
+
+    def cli(self, carpeta, *extra):
+        return run(corte.main, ["--corte", carpeta, "--core", self.core.base_url, *extra])
+
+    def escrituras(self):
+        return [(m, p) for m, p, _, _ in self.core.requests if m in ("POST", "PATCH", "PUT", "DELETE")
+                and p != "/api/auth/login"]
+
+    def niveles(self):
+        fichas = {r["id"]: r["attributes"]["codigo_predio"] for r in self.core.records.get("brecha_ficha", [])}
+        return {(fichas[r["attributes"]["ficha"]], r["attributes"].get("piso")): r["attributes"]
+                for r in self.core.records.get("brecha_nivel_ficha", [])}
+
+    def test_cada_nivel_va_en_la_ficha_de_su_fila(self):
+        code, out, err = self.cli(armar_corte(self, niveles=NIVELES))
+        self.assertEqual(code, 0, err)
+        [registro] = self.core.records["corte_brecha"]
+        n = self.niveles()
+        self.assertEqual(sorted(n), [("PR-1", 1), ("PR-1", 2), ("PR-2", 1), ("PR-4", 1)])
+        ficha = {r["attributes"]["codigo_predio"]: r for r in self.core.records["brecha_ficha"]}
+        self.assertEqual(n[("PR-1", 2)]["clave"], f"{ficha['PR-1']['attributes']['clave']}|2")
+        self.assertEqual(n[("PR-4", 1)]["clave"], f"{registro['id']}|id:bp-4|1")
+        self.assertTrue(all(a["corte"] == registro["id"] for a in n.values()))
+        self.assertEqual((n[("PR-1", 2)]["estado"], n[("PR-1", 2)]["area_catastro"]), ("SOLO_CATASTRO", "80"))
+        self.assertNotIn("area_rentas", n[("PR-1", 2)])
+        self.assertEqual(n[("PR-4", 1)]["area_catastro"], "75.25")
+        self.assertIn("niveles: 4, AMBIGUO 1, PAR 1, SOLO_CATASTRO 1, SOLO_RENTAS 1", out)
+        self.assertIn("niveles: 4 created, 0 updated, 0 deleted, 0 unchanged", out)
+        # cargado_en still goes last, after the niveles
+        ultimo = [p for m, p, _, _ in self.core.requests if m in ("POST", "PATCH")][-1]
+        self.assertTrue(ultimo.startswith("/api/objects/corte_brecha/records/"), ultimo)
+        for dato in ("PR-1", "1-2-3", "120.5", "75.25"):
+            self.assertNotIn(dato, out)
+
+    def test_un_corte_sin_la_tabla_o_con_la_tabla_vacia_carga_sin_niveles(self):
+        for niveles in (None, []):
+            with self.subTest(niveles=niveles):
+                code, out, err = self.cli(armar_corte(self, niveles=niveles))
+                self.assertEqual(code, 0, err)
+                self.assertEqual(self.core.records.get("brecha_nivel_ficha", []), [])
+                self.assertIn("niveles: 0\n", out)
+
+    def test_el_dry_run_dice_los_niveles_que_crearia(self):
+        code, out, err = self.cli(armar_corte(self, niveles=NIVELES), "--dry-run")
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.escrituras(), [])
+        self.assertIn("niveles: 4 to create, 0 to update, 0 to delete, 0 unchanged", out)
+
+    def test_la_recarga_del_mismo_corte_no_escribe_nada(self):
+        carpeta = armar_corte(self, niveles=NIVELES)
+        self.assertEqual(self.cli(carpeta)[0], 0)
+        self.core.requests.clear()
+        code, out, err = self.cli(carpeta)
+        self.assertEqual(code, 0, err)
+        self.assertEqual(self.escrituras(), [])
+        self.assertIn("niveles: 0 created, 0 updated, 0 deleted, 4 unchanged", out)
+
+    def test_un_corte_ya_cargado_sin_niveles_los_gana_al_recargarlo(self):
+        self.assertEqual(self.cli(armar_corte(self))[0], 0)
+        code, out, err = self.cli(armar_corte(self, niveles=NIVELES))
+        self.assertEqual(code, 0, err)
+        self.assertIn("fichas: 0 created, 0 updated, 0 deleted, 5 unchanged", out)
+        self.assertEqual(len(self.niveles()), 4)
+
+    def test_un_nivel_que_cambia_se_actualiza_y_uno_que_falta_pide_reemplazar(self):
+        self.assertEqual(self.cli(armar_corte(self, niveles=NIVELES))[0], 0)
+        cambiados = [nivel(1, 1, 1, "120.5", "130", "PAR")] + NIVELES[1:3]
+        self.core.requests.clear()
+        code, out, err = self.cli(armar_corte(self, niveles=cambiados))
+        self.assertEqual(code, 2)
+        self.assertIn("1 niveles del corte guardado ya no vienen en el corte: --reemplazar", err)
+        self.assertEqual(self.escrituras(), [])
+        code, out, err = self.cli(armar_corte(self, niveles=cambiados), "--reemplazar")
+        self.assertEqual(code, 0, err)
+        self.assertIn("niveles: 0 created, 1 updated, 1 deleted, 2 unchanged, 1 absent from the corte deleted", out)
+        n = self.niveles()
+        self.assertEqual(sorted(n), [("PR-1", 1), ("PR-1", 2), ("PR-2", 1)])
+        self.assertEqual(n[("PR-1", 1)]["area_catastro"], "130")
+
+    def test_reemplazar_borra_los_niveles_antes_que_su_ficha(self):
+        self.assertEqual(self.cli(armar_corte(self, niveles=NIVELES))[0], 0)
+        self.core.requests.clear()
+        # PR-4 and its AMBIGUO nivel no longer come
+        code, out, err = self.cli(armar_corte(self, filas=FILAS[:3] + FILAS[4:], niveles=NIVELES[:3]), "--reemplazar")
+        self.assertEqual(code, 0, err)
+        borrados = [p.split("/")[3] for m, p, _, _ in self.core.requests if m == "DELETE"]
+        self.assertEqual(borrados, ["brecha_nivel_ficha", "brecha_ficha"])
+        self.assertEqual(sorted(self.niveles()), [("PR-1", 1), ("PR-1", 2), ("PR-2", 1)])
+
+    def test_un_piso_repetido_en_la_ficha_lleva_la_clave_de_su_fila(self):
+        repetidos = [nivel(1, 1, 1, "10", "10", "PAR"), nivel(2, 1, 1, "20", None, "SOLO_RENTAS")]
+        code, _, err = self.cli(armar_corte(self, niveles=repetidos))
+        self.assertEqual(code, 0, err)
+        claves = sorted(r["attributes"]["clave"].split("|", 2)[-1] for r in self.core.records["brecha_nivel_ficha"])
+        self.assertEqual(claves, ["id:bn-1", "id:bn-2"])
+
+    def test_un_nivel_que_no_cabe_sale_con_2_sin_escribir(self):
+        for malo, mensaje in ((nivel(9, 1, 3, "1", "1", "OTRO"), "estado 'OTRO' no es de estado_nivel"),
+                              (nivel(9, 99, 1, "1", "1", "PAR"), "su brecha_predio no es una fila del corte")):
+            with self.subTest(mensaje=mensaje):
+                self.core.requests.clear()
+                code, _, err = self.cli(armar_corte(self, niveles=NIVELES + [malo]))
+                self.assertEqual(code, 2)
+                self.assertIn(mensaje, err)
+                self.assertEqual(self.escrituras(), [])
+                self.assertNotIn("bp-99", err)
 
 
 if __name__ == "__main__":

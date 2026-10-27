@@ -52,6 +52,9 @@ OBJETOS = {
          "impuesto_declarado", "impuesto_catastro", "delta_impuesto", "delta_arbitrios", "estimado", "motivo",
          "supera_5_uit", "estado", "lote_geom"],
         {"clave", "categoria"}, {"clave"}),
+    "brecha_nivel_ficha": (
+        ["clave", "piso", "area_rentas", "area_catastro", "estado"],
+        {"clave", "estado"}, {"clave"}),
     "decision_brecha": (
         ["clave", "codigo_municipal", "anio", "estado", "responsable", "nota", "motivo_descarte", "decidido_en",
          "corte_origen"],
@@ -218,6 +221,21 @@ class ModelTests(unittest.TestCase):
         r = {x["name"]: x for x in self.model["relationships"]}["brecha_ficha_corte"]
         self.assertEqual((r["source"], r["target"], r["fieldName"], r["required"]),
                          ("brecha_ficha", "corte_brecha", "corte", True))
+
+    def test_los_niveles_de_una_ficha_de_brecha(self):
+        # srtm_brecha_nivel (srtm-backend#257): un piso de una ficha, con sus dos áreas y cómo empataron
+        self.assertEqual(self.model["enums"]["estado_nivel"], ["PAR", "SOLO_RENTAS", "SOLO_CATASTRO", "AMBIGUO"])
+        nivel = {x["name"]: x for x in self.objects["brecha_nivel_ficha"]["fields"]}
+        self.assertEqual((nivel["piso"]["type"], nivel["area_rentas"]["type"], nivel["area_catastro"]["type"]),
+                         ("INTEGER", "DECIMAL", "DECIMAL"))
+        self.assertEqual((nivel["estado"]["type"], nivel["estado"]["enum"]), ("ENUM", "estado_nivel"))
+        relaciones = {x["name"]: x for x in self.model["relationships"]}
+        for nombre, destino, campo in (("brecha_nivel_ficha_ficha", "brecha_ficha", "ficha"),
+                                       ("brecha_nivel_ficha_corte", "corte_brecha", "corte")):
+            r = relaciones[nombre]
+            self.assertEqual((r["source"], r["target"], r["fieldName"], r["required"]),
+                             ("brecha_nivel_ficha", destino, campo, True))
+        self.assertEqual(self.objects["brecha_nivel_ficha"]["indexes"], [["corte"], ["ficha"]])
 
 
 if __name__ == "__main__":
