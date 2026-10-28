@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.2.0](https://github.com/wasichai/catastro-backend/compare/v1.1.0...v1.2.0) (2026-10-28)
+
+
+### Features
+
+* **brechas:** importar srtm_brecha_nivel del corte analítico ([#73](https://github.com/wasichai/catastro-backend/issues/73)) ([6f713a7](https://github.com/wasichai/catastro-backend/commit/6f713a7d8e22abb1c2350620de3d67fd90865ecf)), closes [#72](https://github.com/wasichai/catastro-backend/issues/72)
+* **brechas:** los niveles de una ficha en la API de brechas ([#76](https://github.com/wasichai/catastro-backend/issues/76)) ([55d729e](https://github.com/wasichai/catastro-backend/commit/55d729e0707712ed13d61f9d04d0d4dc6d399f98)), closes [#75](https://github.com/wasichai/catastro-backend/issues/75)
+
 ## [1.1.0](https://github.com/wasichai/catastro-backend/compare/v1.0.0...v1.1.0) (2026-10-26)
 
 
