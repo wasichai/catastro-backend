@@ -92,6 +92,33 @@ class BrechasService(
         return Pagina(contenido, page, size, filas.size.toLong(), (filas.size + size - 1) / size)
     }
 
+    // one ficha of the corte, its row as /fichas gives it, and its niveles. a ficha that is not of the corte is a 404;
+    // the niveles are read only when the caller may read brecha_nivel_ficha (SRTM_LECTOR may not, on purpose), and a
+    // refusal of core is no niveles either: what the niveles lack never takes the ficha with it
+    suspend fun ficha(
+        corte: String?,
+        id: String
+    ): DetalleFicha {
+        val vista = vista(corte).vista
+        val fila =
+            vista.filas.firstOrNull { it.id == id }
+                ?: throw BrechaNoEncontrada("No existe la ficha '$id' en el corte '${vista.corte.clave ?: vista.corte.id}'")
+        return DetalleFicha(fila, nivelesDe(id))
+    }
+
+    private suspend fun nivelesDe(ficha: String): List<Nivel> {
+        val usuario = currentUser.require()
+        return try {
+            val definicion = metadata.loadDefinition(usuario.organizationId, BRECHA_NIVEL_FICHA)
+            if (!currentUser.hasPermission(usuario, Actions.READ, definicion.obj.id)) return emptyList()
+            niveles(registros.todas(BRECHA_NIVEL_FICHA, NivelDeFicha::class.java, sort = "clave", filters = mapOf("ficha" to ficha)))
+        } catch (e: WasichaiException) {
+            // an organization without the object (a model older than #72) or a 403 of core: no niveles
+            if (e.status.value() !in setOf(403, 404)) throw e
+            emptyList()
+        }
+    }
+
     // the lotes of the fichas that match and have one, from the Base: one Feature per codigo_municipal (the ficha of
     // largest Δ), with `fichas`, how many fichas of the corte share that code
     suspend fun lotes(

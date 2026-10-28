@@ -106,4 +106,31 @@ class BrechasTest {
         assertTrue(linea.contains(",ana,"), linea)
         assertFalse(linea.contains("muni.test"), linea)
     }
+
+    @Test
+    fun `los niveles van por piso, sin piso al final, con su Δ cuando hay las dos áreas`() {
+        val niveles =
+            niveles(
+                listOf(
+                    NivelDeFicha(id = "n3", clave = "f|id:9", estado = "AMBIGUO", areaRentas = BigDecimal("12.5000000000")),
+                    NivelDeFicha(id = "n2", clave = "f|2", piso = 2, estado = "SOLO_CATASTRO", areaCatastro = BigDecimal("40.0000000000")),
+                    NivelDeFicha(
+                        id = "n1",
+                        clave = "f|1",
+                        piso = 1,
+                        estado = "PAR",
+                        areaRentas = BigDecimal("80.0000000000"),
+                        areaCatastro = BigDecimal("95.2500000000")
+                    ),
+                    NivelDeFicha(id = "n0", clave = "f|-1", piso = -1, estado = "SOLO_RENTAS", areaRentas = BigDecimal("30"))
+                )
+            )
+        assertEquals(listOf(-1, 1, 2, null), niveles.map { it.piso })
+        assertEquals(listOf("SOLO_RENTAS", "PAR", "SOLO_CATASTRO", "AMBIGUO"), niveles.map { it.estado })
+        // catastro − rentas, without the column's trailing zeros; one area missing leaves it empty
+        assertEquals(listOf(null, "15.25", null, null), niveles.map { it.delta?.toPlainString() })
+        assertEquals("80", niveles[1].areaRentas?.toPlainString())
+        assertEquals("12.5", niveles[3].areaRentas?.toPlainString())
+        assertEquals(emptyList<Nivel>(), niveles(emptyList()))
+    }
 }

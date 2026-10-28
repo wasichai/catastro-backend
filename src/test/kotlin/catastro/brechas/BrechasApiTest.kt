@@ -267,6 +267,76 @@ class BrechasApiTest : CatastroApiTest() {
     }
 
     @Test
+    fun `el detalle de una ficha trae sus niveles por piso, y vacíos a quien no los lee`() {
+        val clave = cargarCorte("2026-10-25")
+        decidir(listOf("01-01-0001"), "A_INSPECCIONAR")
+        val p1 = idDeFicha("P1")
+        val p2 = idDeFicha("P2")
+        nivel(p1, "2", 2, "SOLO_CATASTRO", null, "40")
+        nivel(p1, "1", 1, "PAR", "80", "95.25")
+        nivel(p1, "id:7", null, "AMBIGUO", "12.5", null)
+        nivel(p1, "-1", -1, "SOLO_RENTAS", "30", null)
+
+        val detalle = arbol(send("GET", "/api/catastro/brechas/fichas/$p1", null, HttpStatus.OK, org))
+        // the row of /fichas, as is, and then the niveles
+        assertEquals(CAMPOS_DE_FILA + "niveles", detalle.properties().map { it.key })
+        assertEquals("P1", detalle["codigo_predio"].asString())
+        assertEquals("A_INSPECCIONAR", detalle["estado"].asString())
+        assertTrue(detalle["con_geometria"].asBoolean())
+        val niveles = detalle["niveles"].lista()
+        assertEquals(listOf("piso", "area_rentas", "area_catastro", "estado", "delta"), niveles[0].properties().map { it.key })
+        assertEquals(listOf("-1", "1", "2", "null"), niveles.map { it["piso"].toString() })
+        assertEquals(listOf("SOLO_RENTAS", "PAR", "SOLO_CATASTRO", "AMBIGUO"), niveles.map { it["estado"].asString() })
+        numero("80", niveles[1]["area_rentas"])
+        numero("95.25", niveles[1]["area_catastro"])
+        numero("15.25", niveles[1]["delta"])
+        assertTrue(niveles[0]["delta"].isNull, niveles[0].toString())
+        assertTrue(niveles[2]["area_rentas"].isNull, niveles[2].toString())
+
+        // by the corte's clave too; a ficha without niveles has none
+        assertEquals(4, arbol(send("GET", "/api/catastro/brechas/fichas/$p1?corte=$clave", null, HttpStatus.OK, org))["niveles"].size())
+        assertEquals(0, arbol(send("GET", "/api/catastro/brechas/fichas/$p2", null, HttpStatus.OK, org))["niveles"].size())
+
+        // CATASTRO_LECTOR reads them; a role that reads the brecha but not brecha_nivel_ficha gets the ficha without
+        // them, never a 403 of the whole ficha
+        val lector = cuentaDeServicio(listOf("CATASTRO_LECTOR"), org)
+        assertEquals(4, arbol(send("GET", "/api/catastro/brechas/fichas/$p1", null, HttpStatus.OK, lector))["niveles"].size())
+        val lee = mapOf(BRECHA_FICHA to listOf("READ"), CORTE_BRECHA to listOf("READ"), PREDIO_CATASTRAL to listOf("READ"), DECISION_BRECHA to listOf("READ"))
+        val sinNiveles = cuentaDeServicio(listOf(rol("BR_SIN_NIVELES", lee)), org)
+        val sinEllos = arbol(send("GET", "/api/catastro/brechas/fichas/$p1", null, HttpStatus.OK, sinNiveles))
+        assertEquals("P1", sinEllos["codigo_predio"].asString())
+        assertEquals(0, sinEllos["niveles"].size())
+
+        // a ficha of no corte, a corte that does not exist, an unknown parameter, no READ on the brecha, no token
+        val (status, cuerpo) = exchange("GET", "/api/catastro/brechas/fichas/no-existe", null, org)
+        assertEquals(HttpStatus.NOT_FOUND, status, cuerpo)
+        assertTrue(arbol(cuerpo)["message"].asString().contains("no-existe"), cuerpo)
+        assertEquals(HttpStatus.NOT_FOUND, exchange("GET", "/api/catastro/brechas/fichas/$p1?corte=otra", null, org).first)
+        val (malo, error) = exchange("GET", "/api/catastro/brechas/fichas/$p1?orden=codigo", null, org)
+        assertEquals(HttpStatus.BAD_REQUEST, malo, error)
+        assertEquals("orden", arbol(error)["errors"][0]["field"].asString(), error)
+        assertEquals(HttpStatus.FORBIDDEN, exchange("GET", "/api/catastro/brechas/fichas/$p1", null, cuentaDeServicio(emptyList(), org)).first)
+        client
+            .get()
+            .uri("/api/catastro/brechas/fichas/$p1")
+            .exchange()
+            .expectStatus()
+            .isUnauthorized
+    }
+
+    @Test
+    fun `la ficha de un corte anterior se pide con su corte`() {
+        cargarCorte("2026-09-30")
+        val anterior = idDeFicha("P1")
+        cargarCorte("2026-10-25")
+        // the default corte is the most recent one: the ficha of the older corte is not in it
+        assertEquals(HttpStatus.NOT_FOUND, exchange("GET", "/api/catastro/brechas/fichas/$anterior", null, org).first)
+        val detalle = arbol(send("GET", "/api/catastro/brechas/fichas/$anterior?corte=ica-prueba|2026-09-30", null, HttpStatus.OK, org))
+        assertEquals(anterior, detalle["id"].asString())
+        assertEquals(0, detalle["niveles"].size())
+    }
+
+    @Test
     fun `una decisión sobrevive a un corte nuevo`() {
         cargarCorte("2026-09-30")
         decidir(listOf("01-01-0001"), "A_FISCALIZAR", nota = "prioridad")
@@ -593,6 +663,33 @@ class BrechasApiTest : CatastroApiTest() {
             "supera_5_uit" to supera,
             "estimado" to (categoria == "OMISO")
         ).filterValues { it != null }
+
+    // the id of the ficha of `codigoPredio` in the last corte cargarCorte made
+    private fun idDeFicha(codigoPredio: String): String =
+        arbol(send("GET", "/api/objects/$BRECHA_FICHA/records?clave=$idDelCorte|$codigoPredio", null, HttpStatus.OK, org))["content"][0]["id"]
+            .asString()
+
+    // a nivel of `ficha` in the last corte, as importar_corte_brecha.py leaves it
+    private fun nivel(
+        ficha: String,
+        sufijo: String,
+        piso: Int?,
+        estado: String,
+        areaRentas: String?,
+        areaCatastro: String?
+    ) = registro(
+        BRECHA_NIVEL_FICHA,
+        mapOf(
+            "corte" to idDelCorte,
+            "ficha" to ficha,
+            "clave" to "$ficha|$sufijo",
+            "piso" to piso,
+            "estado" to estado,
+            "area_rentas" to areaRentas,
+            "area_catastro" to areaCatastro
+        ).filterValues { it != null },
+        token = org
+    )
 
     private fun decidir(
         codigos: List<String>,

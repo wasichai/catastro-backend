@@ -1245,8 +1245,8 @@ El dashboard «Brechas» de catastro-ui muestra la brecha de recaudación de los
 `/api/catastro/brechas`.
 
 - **Permisos.** Sin token, **401**. Cada ruta exige `READ` sobre `brecha_ficha` (si no, **403**) y lee como quien
-  llama, así que también necesita `READ` sobre `corte_brecha`, `decision_brecha` y `predio_catastral`. El rol
-  `CATASTRO_LECTOR` alcanza para leer. `POST /decisiones` exige además `UPDATE` sobre `decision_brecha` (si no,
+  llama, así que también necesita `READ` sobre `corte_brecha`, `decision_brecha` y `predio_catastral` (y sobre
+  `brecha_nivel_ficha` para ver los niveles de `/fichas/{id}`). El rol `CATASTRO_LECTOR` alcanza para leer. `POST /decisiones` exige además `UPDATE` sobre `decision_brecha` (si no,
   **403**), y crear una decisión, `CREATE`: los da `CATASTRO_ANALISTA`. **Es la única puerta**: un
   `RecordWriteGuard` (`DecisionesSoloPorLaApi`) rechaza con 403 cualquier otra escritura de `decision_brecha` (la API
   genérica de registros, el admin, automatizaciones), así que `responsable`, `decidido_en`, `corte_origen` y el motivo
@@ -1256,7 +1256,7 @@ El dashboard «Brechas» de catastro-ui muestra la brecha de recaudación de los
 - **Cortes completos.** Solo se ven los cortes con `cargado_en`, que el cargador escribe al final: un corte a medio
   cargar no aparece en `/cortes` ni es el corte por omisión.
 - **El corte.** `corte` es la clave del corte (`<org>|<fecha>`). Sin él, se usa el más reciente por fecha. Si no hay
-  ningún corte, `/panel`, `/fichas`, `/lotes` y `/fichas.csv` responden **404**
+  ningún corte, `/panel`, `/fichas`, `/fichas/{id}`, `/lotes` y `/fichas.csv` responden **404**
   `{"message": "No hay cortes de brecha cargados"}`. Una clave que no existe también da 404, con su propio mensaje.
 - **Parámetros.** Uno que la ruta no conoce, o que no se puede leer, es un **400** que lo nombra
   (`errors[0].field`), como en `/vias/aranceles`.
@@ -1287,6 +1287,17 @@ El dashboard «Brechas» de catastro-ui muestra la brecha de recaudación de los
     sector, manzana, lote, uso, autoavaluo_declarado, autoavaluo_catastro, delta_autoavaluo, impuesto_declarado,
     impuesto_catastro, delta_impuesto, delta_arbitrios, estimado, motivo, supera_5_uit, estado, responsable, nota,
     decidido_en, con_geometria}`. La decisión es la del año del corte.
+- `GET /fichas/{id}?corte=`: una ficha del corte (`id` es el de la fila de `/fichas`), con los mismos campos de la
+  fila y además `niveles` (#75):
+  - `niveles`: `[{piso, area_rentas, area_catastro, estado, delta}]`, uno por piso de `brecha_nivel_ficha`, ordenados
+    por piso (un sótano, negativo, primero; los que no tienen piso, al final). `estado` es `PAR`, `SOLO_RENTAS`,
+    `SOLO_CATASTRO` o `AMBIGUO`, y `delta` es `area_catastro − area_rentas` cuando están las dos áreas (si no, `null`);
+  - quien no puede leer `brecha_nivel_ficha` (`SRTM_LECTOR`, a propósito; `CATASTRO_LECTOR` y `CATASTRO_ANALISTA` sí)
+    recibe la ficha con `niveles: []`, igual que la ficha de un corte sin niveles (srtm anterior a #257): nunca un
+    403 ni un 500 de la ficha entera;
+  - una ficha que no es del corte (sin `corte`, el más reciente) da 404 `{message}`. Solo acepta `corte`.
+
+  La fila sale de la caché del corte; los niveles se leen en cada pedido (los de una ficha son pocos).
 - `GET /lotes?…`: los mismos filtros, sin `page` ni `size` (`orden` se acepta, pero no cambia nada). Responde un
   `FeatureCollection` en EPSG:4326 con un `Feature` por `codigo_municipal` (`id`):
   - el `lote_geom` de su ficha;
