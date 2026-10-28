@@ -1,13 +1,15 @@
 package catastro.brechas
 
 import com.fasterxml.jackson.annotation.JsonProperty
+import com.fasterxml.jackson.annotation.JsonUnwrapped
 import tools.jackson.databind.PropertyNamingStrategies
 import tools.jackson.databind.annotation.JsonNaming
 import java.math.BigDecimal
 
-// the objects of model/model.json behind the brechas dashboard (importar_corte_brecha.py loads the first two)
+// the objects of model/model.json behind the brechas dashboard (importar_corte_brecha.py loads the first three)
 const val CORTE_BRECHA = "corte_brecha"
 const val BRECHA_FICHA = "brecha_ficha"
+const val BRECHA_NIVEL_FICHA = "brecha_nivel_ficha"
 const val DECISION_BRECHA = "decision_brecha"
 
 // the model's enums, in its order: categoria_brecha, confianza_brecha and estado_decision
@@ -75,6 +77,17 @@ data class DecisionBrecha(
     val responsable: String? = null,
     val nota: String? = null,
     val decididoEn: String? = null
+)
+
+// a piso of a ficha (srtm_brecha_nivel): its two areas and how srtm matched them (estado_nivel)
+@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
+data class NivelDeFicha(
+    val id: String,
+    val clave: String? = null,
+    val piso: Int? = null,
+    val areaRentas: BigDecimal? = null,
+    val areaCatastro: BigDecimal? = null,
+    val estado: String? = null
 )
 
 // a ficha read only for its code: whether it has a lote (the criterion asks for one) or exists at all
@@ -200,6 +213,23 @@ data class FilaFicha(
             )
     }
 }
+
+// GET /fichas/{id}: the row of /fichas, as is, and the niveles of the ficha (empty for a role that may not read them,
+// or a corte without them)
+data class DetalleFicha(
+    @get:JsonUnwrapped val ficha: FilaFicha,
+    val niveles: List<Nivel>
+)
+
+// a piso of the ficha: delta is area_catastro − area_rentas, when it has both
+@JsonNaming(PropertyNamingStrategies.SnakeCaseStrategy::class)
+data class Nivel(
+    val piso: Int?,
+    val areaRentas: BigDecimal?,
+    val areaCatastro: BigDecimal?,
+    val estado: String?,
+    val delta: BigDecimal?
+)
 
 data class CorteDelPanel(
     val clave: String?,
@@ -339,6 +369,17 @@ internal fun fila(
         decididoEn = decision?.decididoEn,
         conGeometria = conGeometria
     )
+
+// the niveles of a ficha by piso (a sótano is negative, so it goes first), the ones without piso last; the clave breaks
+// a tie
+internal fun niveles(leidos: List<NivelDeFicha>): List<Nivel> =
+    leidos
+        .sortedWith(compareBy<NivelDeFicha, Int?>(nullsLast()) { it.piso }.thenBy(nullsLast()) { it.clave }.thenBy { it.id })
+        .map {
+            val rentas = it.areaRentas?.limpio()
+            val catastro = it.areaCatastro?.limpio()
+            Nivel(it.piso, rentas, catastro, it.estado, if (rentas != null && catastro != null) (catastro - rentas).limpio() else null)
+        }
 
 // the panel in one pass over every ficha of the corte: the kpis, the counts by categoria, confianza and estado (every
 // option of the model, also those without fichas; a confianza left empty by a corte older than srtm-backend#204 as a

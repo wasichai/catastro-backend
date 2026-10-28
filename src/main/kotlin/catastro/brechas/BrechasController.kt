@@ -8,6 +8,7 @@ import org.springframework.http.ProblemDetail
 import org.springframework.http.ResponseEntity
 import org.springframework.web.bind.annotation.ExceptionHandler
 import org.springframework.web.bind.annotation.GetMapping
+import org.springframework.web.bind.annotation.PathVariable
 import org.springframework.web.bind.annotation.PostMapping
 import org.springframework.web.bind.annotation.RequestBody
 import org.springframework.web.bind.annotation.RequestMapping
@@ -20,11 +21,11 @@ import java.math.BigDecimal
 import java.nio.charset.StandardCharsets
 
 // catastro-ui's brechas dashboard: the cortes of srtm's brecha that importar_corte_brecha.py loaded, their fichas with
-// the decision of the corte's year, their lotes as GeoJSON in EPSG:4326, and the decisions' inbox. it needs a token
-// (401 without one) and READ on brecha_ficha (403 otherwise); POST /decisiones also UPDATE on decision_brecha.
-// without `corte` the most recent one by fecha is read, and with no corte at all /panel, /fichas, /lotes and
-// /fichas.csv are a 404 {message}. a parameter it does not know, or cannot read, is a 400 that names it
-// (errors[].field), as ViasController
+// the decision of the corte's year (one ficha also with its niveles), their lotes as GeoJSON in EPSG:4326, and the
+// decisions' inbox. it needs a token (401 without one) and READ on brecha_ficha (403 otherwise); POST /decisiones also
+// UPDATE on decision_brecha. without `corte` the most recent one by fecha is read, and with no corte at all /panel,
+// /fichas, /fichas/{id}, /lotes and /fichas.csv are a 404 {message}. a parameter it does not know, or cannot read, is
+// a 400 that names it (errors[].field), as ViasController
 @RestController
 @RequestMapping("/api/catastro/brechas")
 class BrechasController(
@@ -54,6 +55,16 @@ class BrechasController(
         val page = params["page"]?.let { entero("page", it, 0..Int.MAX_VALUE) } ?: 0
         val size = params["size"]?.let { entero("size", it, 1..TAMANO_MAXIMO) } ?: TAMANO
         return brechas.fichas(corte(params), filtro(params), orden(params), page, size)
+    }
+
+    // a ficha of the corte with its niveles: the id is the brecha_ficha's, as /fichas gives it
+    @GetMapping("/fichas/{id}")
+    suspend fun ficha(
+        @PathVariable id: String,
+        @RequestParam params: Map<String, String>
+    ): DetalleFicha {
+        conocidos(params, setOf("corte"))
+        return brechas.ficha(corte(params), id)
     }
 
     @GetMapping("/lotes")
