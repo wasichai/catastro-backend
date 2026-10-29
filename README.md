@@ -701,7 +701,11 @@ La plantilla:
   único que cambia de una tesela a otra y lo único que la autorización no lee. Así un mapa cuesta una llamada al backend
   por capa y no una por tesela. El precio: **un token revocado, o un READ retirado, sigue recibiendo teselas hasta
   60 s**. Una capa más, un parámetro con otras mayúsculas u otro token son otra clave y otra llamada;
-- corta la autorización a los 5 s (`proxy_read_timeout`): un backend colgado deja la tesela en blanco, no el mapa.
+- corta la autorización a los 5 s (`proxy_read_timeout`): un backend colgado deja la tesela en blanco, no el mapa;
+- sirve `index.html` con `Cache-Control: no-cache`, también cuando es el fallback de una ruta de la SPA
+  (`/brechas/panel`): después de un despliegue el navegador pide el que nombra los chunks nuevos. `/assets/` (los
+  chunks con hash de Vite) va con `Cache-Control: public, max-age=31536000, immutable`, y un chunk que no existe es un
+  **404** sin ese `Cache-Control`, no `index.html` con un 200 que rompe el import dinámico (el css/js del mapa).
 
 Cada tesela que no está en esa caché es una llamada al endpoint (la definición del objeto sale de la caché de metadatos
 de core). catastro-ui manda el Bearer en cada tesela con el `transformRequest` de sus mapas. Las páginas propias de
