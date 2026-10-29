@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.1](https://github.com/wasichai/catastro-backend/compare/v1.2.0...v1.2.1) (2026-10-29)
+
+
+### Bug Fixes
+
+* **deploy:** index.html sin caché y chunks de /assets/ inmutables en el nginx de catastro-ui ([#79](https://github.com/wasichai/catastro-backend/issues/79)) ([ef7d270](https://github.com/wasichai/catastro-backend/commit/ef7d270ee33a42bd2126ad4681bb6496aa440267)), closes [#77](https://github.com/wasichai/catastro-backend/issues/77)
+
 ## [1.2.0](https://github.com/wasichai/catastro-backend/compare/v1.1.0...v1.2.0) (2026-10-28)
 
 
